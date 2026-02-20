@@ -213,11 +213,31 @@ class MemoryStore:
             embedding_function=self._embedding_fn,
         )
 
+    def close(self) -> None:
+        """Best-effort shutdown for ChromaDB client resources."""
+        if self._client is None:
+            return
+        server = getattr(self._client, "_server", None)
+        if server is not None and hasattr(server, "stop"):
+            try:
+                server.stop()
+            except Exception:
+                pass
+        self._client = None
+        self._collection = None
+
     def _ensure_connected(self) -> Any:
         if self._collection is None:
             self.connect()
         assert self._collection is not None
         return self._collection
+
+    def get_client(self) -> Any:
+        """Return active vector-store client (connect lazily if needed)."""
+        if self._client is None:
+            self.connect()
+        assert self._client is not None
+        return self._client
 
     async def save(
         self,

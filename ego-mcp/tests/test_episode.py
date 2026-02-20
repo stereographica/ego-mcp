@@ -41,7 +41,8 @@ def episode_store(config: EgoConfig) -> tuple[MemoryStore, EpisodeStore]:
     memory.connect()
     client = chromadb.PersistentClient(path=str(config.data_dir / "chroma"))
     collection = client.get_or_create_collection(name="ego_episodes", embedding_function=fn)
-    return memory, EpisodeStore(memory, collection)
+    yield memory, EpisodeStore(memory, collection)
+    memory.close()
 
 
 class TestEpisodeStore:

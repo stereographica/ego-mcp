@@ -36,7 +36,8 @@ def store(config: EgoConfig) -> MemoryStore:
     fn = EgoEmbeddingFunction(provider)
     s = MemoryStore(config, fn)
     s.connect()
-    return s
+    yield s
+    s.close()
 
 
 class TestConsolidationEngine:
