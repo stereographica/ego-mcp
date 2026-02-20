@@ -1,0 +1,51 @@
+name: ego-mcp CI
+
+on:
+  pull_request:
+    paths:
+      - "ego-mcp/**"
+      - ".github/workflows/ego-mcp-ci.yml"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "ego-mcp/**"
+      - ".github/workflows/ego-mcp-ci.yml"
+
+jobs:
+  test-and-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ego-mcp
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run focused test suite (includes integration + tool size gate)
+        env:
+          GEMINI_API_KEY: test-key
+        run: |
+          uv run pytest \
+            tests/test_embedding.py \
+            tests/test_memory.py \
+            tests/test_desire.py \
+            tests/test_scaffolds.py \
+            tests/test_integration.py \
+            -v
+
+      - name: Run mypy
+        run: uv run mypy src tests
