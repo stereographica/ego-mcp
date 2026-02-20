@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_chromadb_systems() -> None:
+def _cleanup_chromadb_systems() -> Iterator[None]:
     """Ensure ChromaDB systems are stopped between tests to avoid FD leaks."""
     yield
     try:
@@ -14,7 +16,7 @@ def _cleanup_chromadb_systems() -> None:
     except Exception:
         return
 
-    systems = list(SharedSystemClient._identifier_to_system.values())  # type: ignore[attr-defined]
+    systems = list(SharedSystemClient._identifier_to_system.values())
     for system in systems:
         try:
             system.stop()
