@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from mcp.types import TextContent
@@ -52,7 +53,9 @@ def embedding_fn() -> EgoEmbeddingFunction:
 
 
 @pytest.fixture
-def memory(config: EgoConfig, embedding_fn: EgoEmbeddingFunction) -> MemoryStore:
+def memory(
+    config: EgoConfig, embedding_fn: EgoEmbeddingFunction
+) -> Iterator[MemoryStore]:
     s = MemoryStore(config, embedding_fn)
     s.connect()
     yield s

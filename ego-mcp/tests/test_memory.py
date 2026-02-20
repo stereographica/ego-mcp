@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -53,7 +54,7 @@ def config(tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> EgoConfig:
 
 
 @pytest.fixture
-def store(config: EgoConfig) -> MemoryStore:
+def store(config: EgoConfig) -> Iterator[MemoryStore]:
     """Create a MemoryStore with fake embeddings."""
     provider: EmbeddingProvider = FakeEmbeddingProvider()
     fn = EgoEmbeddingFunction(provider)

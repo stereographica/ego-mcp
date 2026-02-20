@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -34,7 +35,7 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EgoConfig:
 
 
 @pytest.fixture
-def episode_store(config: EgoConfig) -> tuple[MemoryStore, EpisodeStore]:
+def episode_store(config: EgoConfig) -> Iterator[tuple[MemoryStore, EpisodeStore]]:
     provider: EmbeddingProvider = FakeEmbeddingProvider()
     fn = EgoEmbeddingFunction(provider)
     memory = MemoryStore(config, fn)
