@@ -86,7 +86,9 @@ class SelfModelStore:
         question_log = self._data.get("question_log", [])
         if not isinstance(question_log, list):
             question_log = []
-        question_log.append({"id": question_id, "question": question, "resolved": False})
+        question_log.append(
+            {"id": question_id, "question": question, "resolved": False}
+        )
         self._data["question_log"] = question_log
 
         unresolved = self._data.get("unresolved_questions", [])
@@ -104,7 +106,9 @@ class SelfModelStore:
         if not isinstance(unresolved, list) or question_id not in unresolved:
             return False
 
-        self._data["unresolved_questions"] = [qid for qid in unresolved if qid != question_id]
+        self._data["unresolved_questions"] = [
+            qid for qid in unresolved if qid != question_id
+        ]
         question_log = self._data.get("question_log", [])
         if isinstance(question_log, list):
             for item in question_log:

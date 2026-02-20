@@ -40,14 +40,18 @@ def episode_store(config: EgoConfig) -> tuple[MemoryStore, EpisodeStore]:
     memory = MemoryStore(config, fn)
     memory.connect()
     client = chromadb.PersistentClient(path=str(config.data_dir / "chroma"))
-    collection = client.get_or_create_collection(name="ego_episodes", embedding_function=fn)
+    collection = client.get_or_create_collection(
+        name="ego_episodes", embedding_function=fn
+    )
     yield memory, EpisodeStore(memory, collection)
     memory.close()
 
 
 class TestEpisodeStore:
     @pytest.mark.asyncio
-    async def test_create_search_get(self, episode_store: tuple[MemoryStore, EpisodeStore]) -> None:
+    async def test_create_search_get(
+        self, episode_store: tuple[MemoryStore, EpisodeStore]
+    ) -> None:
         memory, store = episode_store
         m1 = await memory.save(content="Went for a morning walk")
         m2 = await memory.save(content="Had coffee and planned the day")

@@ -11,7 +11,6 @@ import respx
 
 from ego_mcp.config import EgoConfig
 from ego_mcp.embedding import (
-    EgoEmbeddingFunction,
     GeminiEmbeddingProvider,
     OpenAIEmbeddingProvider,
     create_embedding_provider,
@@ -29,9 +28,7 @@ class TestGeminiEmbeddingProvider:
     async def test_single_text(self) -> None:
         route = respx.post(
             url__startswith="https://generativelanguage.googleapis.com/"
-        ).respond(
-            json={"embeddings": [{"values": [0.1, 0.2, 0.3]}]}
-        )
+        ).respond(json={"embeddings": [{"values": [0.1, 0.2, 0.3]}]})
 
         provider = GeminiEmbeddingProvider(api_key="test-key")
         result = await provider.embed(["hello"])
@@ -63,7 +60,7 @@ class TestGeminiEmbeddingProvider:
     @respx.mock
     @pytest.mark.asyncio
     async def test_429_retry(self) -> None:
-        route = respx.post(
+        respx.post(
             url__startswith="https://generativelanguage.googleapis.com/"
         ).side_effect = [
             httpx.Response(429, json={"error": "rate limited"}),
@@ -130,9 +127,7 @@ class TestOpenAIEmbeddingProvider:
         respx.post("https://api.openai.com/v1/embeddings").side_effect = [
             httpx.Response(429, json={"error": "rate limited"}),
             httpx.Response(429, json={"error": "rate limited"}),
-            httpx.Response(
-                200, json={"data": [{"index": 0, "embedding": [0.9]}]}
-            ),
+            httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.9]}]}),
         ]
 
         provider = OpenAIEmbeddingProvider(api_key="sk-test")

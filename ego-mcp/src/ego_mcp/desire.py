@@ -11,15 +11,15 @@ from typing import Any
 
 # Desire definitions: name → {satisfaction_hours, level (Maslow tier)}
 DESIRES: dict[str, dict[str, Any]] = {
-    "information_hunger":  {"satisfaction_hours": 4,  "level": 1},
-    "social_thirst":       {"satisfaction_hours": 8,  "level": 1},
-    "cognitive_coherence":  {"satisfaction_hours": 12, "level": 1},
-    "pattern_seeking":     {"satisfaction_hours": 24, "level": 2},
-    "predictability":      {"satisfaction_hours": 24, "level": 2},
-    "recognition":         {"satisfaction_hours": 12, "level": 3},
-    "resonance":           {"satisfaction_hours": 8,  "level": 3},
-    "expression":          {"satisfaction_hours": 16, "level": 4},
-    "curiosity":           {"satisfaction_hours": 6,  "level": 4},
+    "information_hunger": {"satisfaction_hours": 4, "level": 1},
+    "social_thirst": {"satisfaction_hours": 8, "level": 1},
+    "cognitive_coherence": {"satisfaction_hours": 12, "level": 1},
+    "pattern_seeking": {"satisfaction_hours": 24, "level": 2},
+    "predictability": {"satisfaction_hours": 24, "level": 2},
+    "recognition": {"satisfaction_hours": 12, "level": 3},
+    "resonance": {"satisfaction_hours": 8, "level": 3},
+    "expression": {"satisfaction_hours": 16, "level": 4},
+    "curiosity": {"satisfaction_hours": 6, "level": 4},
 }
 
 

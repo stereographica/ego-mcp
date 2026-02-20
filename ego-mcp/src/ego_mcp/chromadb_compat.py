@@ -27,6 +27,7 @@ def ensure_chromadb_pydantic_compat() -> None:
         return
 
     if inspect.getattr_static(pydantic, "BaseSettings", None) is None:
+
         class CompatBaseSettings(PydanticSettingsBase):
             model_config = SettingsConfigDict(
                 ignored_types=(str, int, float, bool, list, dict, set, tuple)

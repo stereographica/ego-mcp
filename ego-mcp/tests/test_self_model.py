@@ -17,7 +17,9 @@ class TestSelfModelStore:
 
     def test_update_partial(self, tmp_path: Path) -> None:
         store = SelfModelStore(tmp_path / "self_model.json")
-        model = store.update({"confidence_calibration": 0.8, "current_goals": ["learn"]})
+        model = store.update(
+            {"confidence_calibration": 0.8, "current_goals": ["learn"]}
+        )
         assert model.confidence_calibration == 0.8
         assert model.current_goals == ["learn"]
         assert model.last_updated != ""
