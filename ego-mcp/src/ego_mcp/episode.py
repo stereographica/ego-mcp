@@ -62,9 +62,7 @@ class Episode:
 class EpisodeStore:
     """ChromaDB-backed episode storage."""
 
-    def __init__(
-        self, memory_store: "MemoryStore", collection: Any
-    ) -> None:
+    def __init__(self, memory_store: "MemoryStore", collection: Any) -> None:
         self._memory_store = memory_store
         self._collection = collection
 
@@ -94,7 +92,9 @@ class EpisodeStore:
             summary=summary,
             memory_ids=[m.id for m in memories],
             start_time=memories[0].timestamp,
-            end_time=memories[-1].timestamp if len(memories) > 1 else memories[0].timestamp,
+            end_time=memories[-1].timestamp
+            if len(memories) > 1
+            else memories[0].timestamp,
             importance=max(m.importance for m in memories),
         )
 

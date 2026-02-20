@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -34,19 +35,24 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EgoConfig:
 
 
 @pytest.fixture
-def episode_store(config: EgoConfig) -> tuple[MemoryStore, EpisodeStore]:
+def episode_store(config: EgoConfig) -> Iterator[tuple[MemoryStore, EpisodeStore]]:
     provider: EmbeddingProvider = FakeEmbeddingProvider()
     fn = EgoEmbeddingFunction(provider)
     memory = MemoryStore(config, fn)
     memory.connect()
     client = chromadb.PersistentClient(path=str(config.data_dir / "chroma"))
-    collection = client.get_or_create_collection(name="ego_episodes", embedding_function=fn)
-    return memory, EpisodeStore(memory, collection)
+    collection = client.get_or_create_collection(
+        name="ego_episodes", embedding_function=fn
+    )
+    yield memory, EpisodeStore(memory, collection)
+    memory.close()
 
 
 class TestEpisodeStore:
     @pytest.mark.asyncio
-    async def test_create_search_get(self, episode_store: tuple[MemoryStore, EpisodeStore]) -> None:
+    async def test_create_search_get(
+        self, episode_store: tuple[MemoryStore, EpisodeStore]
+    ) -> None:
         memory, store = episode_store
         m1 = await memory.save(content="Went for a morning walk")
         m2 = await memory.save(content="Had coffee and planned the day")

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
@@ -75,9 +74,7 @@ class GeminiEmbeddingProvider:
 class OpenAIEmbeddingProvider:
     """OpenAI embedding provider using /v1/embeddings endpoint."""
 
-    def __init__(
-        self, api_key: str, model: str = "text-embedding-3-small"
-    ) -> None:
+    def __init__(self, api_key: str, model: str = "text-embedding-3-small") -> None:
         self._api_key = api_key
         self._model = model
         self._client = httpx.AsyncClient(timeout=30.0)
@@ -146,6 +143,14 @@ class EgoEmbeddingFunction:
     def get_config(self) -> dict[str, str]:
         """Return serializable config for ChromaDB compatibility."""
         return {"name": self.name()}
+
+    def is_legacy(self) -> bool:
+        """Use legacy embedding-function config path for compatibility."""
+        return True
+
+    def embed_query(self, input: Documents) -> Embeddings:
+        """ChromaDB query embedding hook."""
+        return self.__call__(input)
 
     def __call__(self, input: Documents) -> Embeddings:
         """Synchronous embedding call for ChromaDB."""

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from ego_mcp.hopfield import ModernHopfieldNetwork, HopfieldRecallResult
 

@@ -60,7 +60,7 @@ class WorkspaceMemorySync:
         lines = text.splitlines()
         if len(lines) >= 4 and lines[0].startswith("# "):
             if lines[2].startswith("Updated: "):
-                updated = lines[2][len("Updated: "):].strip()
+                updated = lines[2][len("Updated: ") :].strip()
             content = "\n".join(lines[4:]).strip()
             if not content:
                 content = text
@@ -90,11 +90,7 @@ class WorkspaceMemorySync:
         if not normalized:
             return
 
-        payload = (
-            "# Latest Inner Monologue\n\n"
-            f"Updated: {timestamp}\n\n"
-            f"{normalized}\n"
-        )
+        payload = f"# Latest Inner Monologue\n\nUpdated: {timestamp}\n\n{normalized}\n"
         self._latest_monologue.write_text(payload, encoding="utf-8")
 
     def _append_daily_log(self, memory: Memory) -> bool:
@@ -120,10 +116,7 @@ class WorkspaceMemorySync:
         return True
 
     def _append_curated(self, memory: Memory) -> bool:
-        if (
-            memory.importance < 4
-            and memory.category not in CURATION_CATEGORIES
-        ):
+        if memory.importance < 4 and memory.category not in CURATION_CATEGORIES:
             return False
 
         if self._curated_memory.exists():

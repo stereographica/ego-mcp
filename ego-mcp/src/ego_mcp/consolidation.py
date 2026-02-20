@@ -40,7 +40,9 @@ class ConsolidationEngine:
         self._embedding_provider = embedding_provider
 
     @staticmethod
-    def _collect_replay_targets(memories: Sequence["Memory"], cutoff: datetime) -> list["Memory"]:
+    def _collect_replay_targets(
+        memories: Sequence["Memory"], cutoff: datetime
+    ) -> list["Memory"]:
         selected: list["Memory"] = []
         for memory in memories:
             if ConsolidationEngine._is_after(memory.timestamp, cutoff):

@@ -98,6 +98,7 @@ def calculate_final_score(
 
 # --- Helper functions ---
 
+
 def _memory_from_chromadb(
     memory_id: str, content: str, metadata: dict[str, Any]
 ) -> Memory:
@@ -122,12 +123,14 @@ def _memory_from_chromadb(
             link_list = json.loads(linked_json)
             for link_data in link_list:
                 try:
-                    linked_ids.append(MemoryLink(
-                        target_id=link_data.get("target_id", ""),
-                        link_type=LinkType(link_data.get("link_type", "related")),
-                        confidence=float(link_data.get("confidence", 0.5)),
-                        note=link_data.get("note", ""),
-                    ))
+                    linked_ids.append(
+                        MemoryLink(
+                            target_id=link_data.get("target_id", ""),
+                            link_type=LinkType(link_data.get("link_type", "related")),
+                            confidence=float(link_data.get("confidence", 0.5)),
+                            note=link_data.get("note", ""),
+                        )
+                    )
                 except (ValueError, TypeError):
                     pass
         except (json.JSONDecodeError, TypeError):
@@ -177,25 +180,26 @@ def _memory_from_chromadb(
 
 def _links_to_json(links: list[MemoryLink]) -> str:
     """Serialize MemoryLinks to JSON string for ChromaDB metadata."""
-    return json.dumps([
-        {
-            "target_id": l.target_id,
-            "link_type": l.link_type.value,
-            "confidence": l.confidence,
-            "note": l.note,
-        }
-        for l in links
-    ])
+    return json.dumps(
+        [
+            {
+                "target_id": link.target_id,
+                "link_type": link.link_type.value,
+                "confidence": link.confidence,
+                "note": link.note,
+            }
+            for link in links
+        ]
+    )
 
 
 # --- MemoryStore ---
 
+
 class MemoryStore:
     """ChromaDB-backed memory storage with semantic search, Hopfield recall, and auto-linking."""
 
-    def __init__(
-        self, config: EgoConfig, embedding_fn: EgoEmbeddingFunction
-    ) -> None:
+    def __init__(self, config: EgoConfig, embedding_fn: EgoEmbeddingFunction) -> None:
         self._config = config
         self._embedding_fn = embedding_fn
         self._client: Any = None
@@ -213,11 +217,31 @@ class MemoryStore:
             embedding_function=self._embedding_fn,
         )
 
+    def close(self) -> None:
+        """Best-effort shutdown for ChromaDB client resources."""
+        if self._client is None:
+            return
+        server = getattr(self._client, "_server", None)
+        if server is not None and hasattr(server, "stop"):
+            try:
+                server.stop()
+            except Exception:
+                pass
+        self._client = None
+        self._collection = None
+
     def _ensure_connected(self) -> Any:
         if self._collection is None:
             self.connect()
         assert self._collection is not None
         return self._collection
+
+    def get_client(self) -> Any:
+        """Return active vector-store client (connect lazily if needed)."""
+        if self._client is None:
+            self.connect()
+        assert self._client is not None
+        return self._client
 
     async def save(
         self,
@@ -403,7 +427,7 @@ class MemoryStore:
             return False
 
         # Check if already linked
-        if any(l.target_id == target_id for l in source.linked_ids):
+        if any(link.target_id == target_id for link in source.linked_ids):
             return False
 
         # Add forward link
@@ -527,7 +551,7 @@ class MemoryStore:
             # Post-filter by date range (ISO string comparison works for dates)
             if date_from and memory.timestamp < date_from:
                 continue
-            if date_to and memory.timestamp[:len(date_to)] > date_to:
+            if date_to and memory.timestamp[: len(date_to)] > date_to:
                 continue
             if has_valence_filter and valence_range is not None:
                 valence = memory.emotional_trace.valence
@@ -539,7 +563,9 @@ class MemoryStore:
                     continue
 
             time_decay = calculate_time_decay(memory.timestamp)
-            emotion_boost = calculate_emotion_boost(memory.emotional_trace.primary.value)
+            emotion_boost = calculate_emotion_boost(
+                memory.emotional_trace.primary.value
+            )
             importance_boost = calculate_importance_boost(memory.importance)
             score = calculate_final_score(
                 dist, time_decay, emotion_boost, importance_boost
@@ -608,12 +634,16 @@ class MemoryStore:
                             if hr.memory_id in id_to_semantic:
                                 sr = id_to_semantic[hr.memory_id]
                                 # Blend scores: lower semantic + higher hopfield → better
-                                blended_score = sr.score * 0.6 + (1.0 - hr.hopfield_score) * 0.4
-                                merged.append(MemorySearchResult(
-                                    memory=sr.memory,
-                                    distance=sr.distance,
-                                    score=blended_score,
-                                ))
+                                blended_score = (
+                                    sr.score * 0.6 + (1.0 - hr.hopfield_score) * 0.4
+                                )
+                                merged.append(
+                                    MemorySearchResult(
+                                        memory=sr.memory,
+                                        distance=sr.distance,
+                                        score=blended_score,
+                                    )
+                                )
                         if merged:
                             merged.sort(key=lambda r: r.score)
                             return merged[:n_results]

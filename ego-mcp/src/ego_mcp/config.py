@@ -63,10 +63,7 @@ class EgoConfig:
         api_key = os.environ.get(api_key_env, "")
         if not api_key:
             url = _API_KEY_URLS[provider]
-            raise ValueError(
-                f"{api_key_env} is not set. "
-                f"Get your API key at: {url}"
-            )
+            raise ValueError(f"{api_key_env} is not set. Get your API key at: {url}")
 
         data_dir_str = os.environ.get(
             "EGO_MCP_DATA_DIR",
