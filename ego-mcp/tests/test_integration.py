@@ -54,7 +54,8 @@ def embedding_fn() -> EgoEmbeddingFunction:
 def memory(config: EgoConfig, embedding_fn: EgoEmbeddingFunction) -> MemoryStore:
     s = MemoryStore(config, embedding_fn)
     s.connect()
-    return s
+    yield s
+    s.close()
 
 
 @pytest.fixture

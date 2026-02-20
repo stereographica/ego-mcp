@@ -147,6 +147,14 @@ class EgoEmbeddingFunction:
         """Return serializable config for ChromaDB compatibility."""
         return {"name": self.name()}
 
+    def is_legacy(self) -> bool:
+        """Use legacy embedding-function config path for compatibility."""
+        return True
+
+    def embed_query(self, input: Documents) -> Embeddings:
+        """ChromaDB query embedding hook."""
+        return self.__call__(input)
+
     def __call__(self, input: Documents) -> Embeddings:
         """Synchronous embedding call for ChromaDB."""
         try:

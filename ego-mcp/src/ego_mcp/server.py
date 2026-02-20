@@ -865,6 +865,10 @@ def init_server(config: EgoConfig | None = None) -> None:
 
     if config is None:
         config = EgoConfig.from_env()
+
+    if _memory is not None:
+        _memory.close()
+
     _config = config
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -877,9 +881,8 @@ def init_server(config: EgoConfig | None = None) -> None:
 
     _desire = DesireEngine(config.data_dir / "desires.json")
 
-    # Initialize episode store using a separate ChromaDB collection
-    import chromadb
-    client = chromadb.PersistentClient(path=str(config.data_dir / "chroma"))
+    # Initialize episode store using the same vector-store client as memories.
+    client = _memory.get_client()
     episodes_collection = client.get_or_create_collection(
         name="ego_episodes",
         embedding_function=cast(Any, embedding_fn),

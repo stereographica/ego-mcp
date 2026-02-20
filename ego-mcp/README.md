@@ -48,9 +48,24 @@ uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 0.1.0
 uv run python -m ego_mcp  # Starts the server
 ```
 
-## Connecting to OpenClaw
+## Connecting to OpenClaw (via mcporter)
 
-Add to your `openclaw.json` (or equivalent MCP config):
+OpenClaw does **not** support a root-level `mcpServers` key in `~/.openclaw/openclaw.json`.
+Use the bundled `mcporter` skill + mcporter config instead.
+
+1. Enable `mcporter` in `~/.openclaw/openclaw.json`:
+
+```json5
+{
+  skills: {
+    entries: {
+      mcporter: { enabled: true }
+    }
+  }
+}
+```
+
+2. Add `ego` to mcporter config (`~/.mcporter/mcporter.json`):
 
 ```json
 {
@@ -67,15 +82,36 @@ Add to your `openclaw.json` (or equivalent MCP config):
 }
 ```
 
-### Verify `wake_up` from OpenClaw
+If you use a custom mcporter config path, pass it via OpenClaw skill env:
 
-1. Keep `uv run python -m ego_mcp` running in a terminal.
-2. Restart OpenClaw (or reload MCP servers) after updating `openclaw.json`.
-3. Open the `ego` MCP server tools and call `wake_up` with an empty input `{}`.
+```json5
+{
+  skills: {
+    entries: {
+      mcporter: {
+        enabled: true,
+        env: { MCPORTER_CONFIG: "/absolute/path/to/mcporter.json" }
+      }
+    }
+  }
+}
+```
+
+### Verify `wake_up` via mcporter
+
+1. `npx mcporter list ego`
+2. `npx mcporter call ego.wake_up "{}"`
+3. In OpenClaw, ask the agent to call `ego.wake_up` through `mcporter`.
 4. Confirm the response contains:
    - last introspection summary (`No introspection yet.` on first run is expected)
    - desire summary
    - scaffold separator `---`
+
+References:
+- OpenClaw Skills Config: <https://docs.openclaw.ai/tools/skills-config>
+- OpenClaw Skills: <https://docs.openclaw.ai/tools/skills>
+- OpenClaw Configuration (strict validation): <https://docs.openclaw.ai/gateway/configuration>
+- mcporter CLI/config: <https://github.com/flux159/mcporter>
 
 ## Environment Variables
 
