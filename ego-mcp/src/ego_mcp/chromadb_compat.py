@@ -10,21 +10,30 @@ logger = logging.getLogger(__name__)
 
 
 def ensure_chromadb_pydantic_compat() -> None:
-    """Ensure ChromaDB can import pydantic BaseSettings on Python 3.14.
+    """Ensure ChromaDB config models can be created on Python 3.14.
 
-    ChromaDB first tries `from pydantic import BaseSettings` and falls back to
-    `pydantic.v1` if unavailable. The fallback currently breaks on Python 3.14.
-    Providing `BaseSettings` from `pydantic_settings` keeps ChromaDB on the
-    non-v1 branch.
+    ChromaDB 1.5.x defines a few unannotated config class attributes that
+    trigger hard errors with modern pydantic. We provide a compatible
+    BaseSettings subclass that ignores unannotated plain builtins while keeping
+    normal annotated fields intact.
     """
     try:
         import pydantic
-        from pydantic_settings import BaseSettings
+        from pydantic_settings import (
+            BaseSettings as PydanticSettingsBase,
+            SettingsConfigDict,
+        )
     except ImportError:
         return
 
     if inspect.getattr_static(pydantic, "BaseSettings", None) is None:
-        setattr(pydantic, "BaseSettings", BaseSettings)
+
+        class CompatBaseSettings(PydanticSettingsBase):
+            model_config = SettingsConfigDict(
+                ignored_types=(str, int, float, bool, list, dict, set, tuple)
+            )
+
+        setattr(pydantic, "BaseSettings", CompatBaseSettings)
 
 
 def load_chromadb() -> ModuleType:

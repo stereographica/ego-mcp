@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
-import shutil
-import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +20,7 @@ from ego_mcp.memory import (
 
 
 # --- Fake embedding provider for tests ---
+
 
 class FakeEmbeddingProvider:
     """Returns deterministic embeddings for testing."""
@@ -55,16 +54,18 @@ def config(tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> EgoConfig:
 
 
 @pytest.fixture
-def store(config: EgoConfig) -> MemoryStore:
+def store(config: EgoConfig) -> Iterator[MemoryStore]:
     """Create a MemoryStore with fake embeddings."""
     provider: EmbeddingProvider = FakeEmbeddingProvider()
     fn = EgoEmbeddingFunction(provider)
     s = MemoryStore(config, fn)
     s.connect()
-    return s
+    yield s
+    s.close()
 
 
 # --- Scoring function tests ---
+
 
 class TestScoringFunctions:
     def test_time_decay_fresh(self) -> None:
@@ -103,6 +104,7 @@ class TestScoringFunctions:
 
 # --- MemoryStore tests ---
 
+
 class TestMemorySave:
     @pytest.mark.asyncio
     async def test_save_returns_memory(self, store: MemoryStore) -> None:
@@ -128,7 +130,11 @@ class TestMemorySave:
             intensity=0.8,
             valence=-0.2,
             arousal=0.3,
-            body_state={"time_phase": "evening", "system_load": "low", "uptime_hours": 1.5},
+            body_state={
+                "time_phase": "evening",
+                "system_load": "low",
+                "uptime_hours": 1.5,
+            },
         )
         loaded = await store.get_by_id(mem.id)
         assert loaded is not None
@@ -213,7 +219,9 @@ class TestMemoryFilters:
         assert all(0.0 <= r.memory.emotional_trace.arousal <= 0.4 for r in results)
 
     @pytest.mark.asyncio
-    async def test_emotional_post_filter_uses_overfetch(self, store: MemoryStore) -> None:
+    async def test_emotional_post_filter_uses_overfetch(
+        self, store: MemoryStore
+    ) -> None:
         class FakeCollection:
             def __init__(self) -> None:
                 self.last_n_results = 0

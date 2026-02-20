@@ -22,7 +22,9 @@ class AssociationResult:
 class AssociationEngine:
     """Expand candidates from seed memories using explicit and implicit links."""
 
-    def __init__(self, explicit_weight: float = 1.0, implicit_weight: float = 0.7) -> None:
+    def __init__(
+        self, explicit_weight: float = 1.0, implicit_weight: float = 0.7
+    ) -> None:
         self._explicit_weight = explicit_weight
         self._implicit_weight = implicit_weight
 
@@ -57,7 +59,9 @@ class AssociationEngine:
                 score = self._explicit_weight * max(0.0, min(1.0, link.confidence))
                 if score <= 0.0:
                     continue
-                self._update_result(scored, candidate_id, score, current_depth + 1, "explicit")
+                self._update_result(
+                    scored, candidate_id, score, current_depth + 1, "explicit"
+                )
                 if candidate_id not in visited:
                     visited.add(candidate_id)
                     frontier.append((candidate_id, current_depth + 1))
@@ -73,12 +77,16 @@ class AssociationEngine:
                 score = self._implicit_weight * max(0.0, min(1.0, 1.0 - item.distance))
                 if score <= 0.0:
                     continue
-                self._update_result(scored, candidate_id, score, current_depth + 1, "implicit")
+                self._update_result(
+                    scored, candidate_id, score, current_depth + 1, "implicit"
+                )
                 if candidate_id not in visited:
                     visited.add(candidate_id)
                     frontier.append((candidate_id, current_depth + 1))
 
-        results = [result for memory_id, result in scored.items() if memory_id not in seed_set]
+        results = [
+            result for memory_id, result in scored.items() if memory_id not in seed_set
+        ]
         results.sort(key=lambda r: (-r.score, r.depth, r.memory_id))
         return results[:top_k]
 

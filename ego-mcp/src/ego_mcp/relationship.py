@@ -73,7 +73,9 @@ class RelationshipStore:
         self._save()
         return self.get(person_id)
 
-    def add_interaction(self, person_id: str, timestamp: str, tone: str) -> RelationshipModel:
+    def add_interaction(
+        self, person_id: str, timestamp: str, tone: str
+    ) -> RelationshipModel:
         raw = self._get_raw(person_id)
         interaction_log = raw.get("interaction_log", [])
         if not isinstance(interaction_log, list):

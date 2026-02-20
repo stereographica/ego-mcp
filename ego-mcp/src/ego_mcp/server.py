@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import Counter
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -276,7 +275,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     episodes = _get_episodes()
     consolidation = _get_consolidation()
 
-    text = await _dispatch(name, arguments, config, memory, desire, episodes, consolidation)
+    text = await _dispatch(
+        name, arguments, config, memory, desire, episodes, consolidation
+    )
     return [TextContent(type="text", text=text)]
 
 
@@ -332,6 +333,7 @@ async def _dispatch(
 #  Surface Tool Handlers
 # =====================================================================
 
+
 def _truncate_for_quote(text: str, limit: int = 220) -> str:
     """Trim long text snippets for concise tool responses."""
     compact = " ".join(text.split()).strip()
@@ -346,7 +348,9 @@ async def _relationship_snapshot(
     """Build a compact relationship summary line for surface tools."""
     store = _relationship_store(config)
     rel = store.get(person)
-    frequency, dominant_tone, _, _ = await _summarize_conversation_tendency(memory, person)
+    frequency, dominant_tone, _, _ = await _summarize_conversation_tendency(
+        memory, person
+    )
     parts = [
         f"{person}: trust={rel.trust_level:.2f}",
         f"interactions={rel.total_interactions}",
@@ -373,22 +377,38 @@ async def _derive_desire_modulation(
 
     categories = Counter(m.category.value for m in recent)
     if categories.get("technical", 0) >= 3:
-        context_boosts["pattern_seeking"] = context_boosts.get("pattern_seeking", 0.0) + 0.08
-        context_boosts["predictability"] = context_boosts.get("predictability", 0.0) + 0.06
+        context_boosts["pattern_seeking"] = (
+            context_boosts.get("pattern_seeking", 0.0) + 0.08
+        )
+        context_boosts["predictability"] = (
+            context_boosts.get("predictability", 0.0) + 0.06
+        )
     if categories.get("introspection", 0) >= 2:
-        context_boosts["cognitive_coherence"] = context_boosts.get("cognitive_coherence", 0.0) + 0.07
+        context_boosts["cognitive_coherence"] = (
+            context_boosts.get("cognitive_coherence", 0.0) + 0.07
+        )
     if categories.get("conversation", 0) >= 3:
         context_boosts["resonance"] = context_boosts.get("resonance", 0.0) + 0.06
-        context_boosts["social_thirst"] = context_boosts.get("social_thirst", 0.0) - 0.04
+        context_boosts["social_thirst"] = (
+            context_boosts.get("social_thirst", 0.0) - 0.04
+        )
 
     valences = [m.emotional_trace.valence for m in recent]
     avg_valence = sum(valences) / len(valences)
     if avg_valence <= -0.2:
-        emotional_modulation["social_thirst"] = emotional_modulation.get("social_thirst", 0.0) + 0.10
-        emotional_modulation["cognitive_coherence"] = emotional_modulation.get("cognitive_coherence", 0.0) + 0.07
+        emotional_modulation["social_thirst"] = (
+            emotional_modulation.get("social_thirst", 0.0) + 0.10
+        )
+        emotional_modulation["cognitive_coherence"] = (
+            emotional_modulation.get("cognitive_coherence", 0.0) + 0.07
+        )
     elif avg_valence >= 0.2:
-        emotional_modulation["curiosity"] = emotional_modulation.get("curiosity", 0.0) + 0.06
-        emotional_modulation["expression"] = emotional_modulation.get("expression", 0.0) + 0.04
+        emotional_modulation["curiosity"] = (
+            emotional_modulation.get("curiosity", 0.0) + 0.06
+        )
+        emotional_modulation["expression"] = (
+            emotional_modulation.get("expression", 0.0) + 0.04
+        )
 
     surprise_strength = max(
         (
@@ -416,7 +436,9 @@ async def _handle_wake_up(
 
     if latest_text:
         since = latest_since or "workspace-sync"
-        intro_line = f'Last introspection ({since}):\n"{_truncate_for_quote(latest_text)}"'
+        intro_line = (
+            f'Last introspection ({since}):\n"{_truncate_for_quote(latest_text)}"'
+        )
     else:
         recent_introspections = await memory.list_recent(
             n=1, category_filter="introspection"
@@ -424,12 +446,16 @@ async def _handle_wake_up(
         if recent_introspections:
             m = recent_introspections[0]
             since = m.timestamp[:16] if len(m.timestamp) >= 16 else m.timestamp
-            intro_line = f'Last introspection ({since}):\n"{_truncate_for_quote(m.content)}"'
+            intro_line = (
+                f'Last introspection ({since}):\n"{_truncate_for_quote(m.content)}"'
+            )
         else:
             intro_line = "No introspection yet."
 
     desire_summary = desire.format_summary()
-    relationship_line = await _relationship_snapshot(config, memory, config.companion_name)
+    relationship_line = await _relationship_snapshot(
+        config, memory, config.companion_name
+    )
 
     parts = [intro_line, f"\nDesires: {desire_summary}", relationship_line]
     data = "\n".join(parts)
@@ -441,7 +467,11 @@ async def _handle_feel_desires(
     config: EgoConfig, memory: MemoryStore, desire: DesireEngine
 ) -> str:
     """Check desire levels with scaffold."""
-    context_boosts, emotional_modulation, prediction_error = await _derive_desire_modulation(memory)
+    (
+        context_boosts,
+        emotional_modulation,
+        prediction_error,
+    ) = await _derive_desire_modulation(memory)
     levels = desire.compute_levels_with_modulation(
         context_boosts=context_boosts,
         emotional_modulation=emotional_modulation,
@@ -452,13 +482,18 @@ async def _handle_feel_desires(
     load = body_state.get("system_load", "unknown")
 
     if phase == "late_night":
-        levels["cognitive_coherence"] = min(1.0, levels.get("cognitive_coherence", 0.0) + 0.1)
+        levels["cognitive_coherence"] = min(
+            1.0, levels.get("cognitive_coherence", 0.0) + 0.1
+        )
         levels["social_thirst"] = max(0.0, levels.get("social_thirst", 0.0) - 0.1)
     elif phase == "morning":
         levels["curiosity"] = min(1.0, levels.get("curiosity", 0.0) + 0.05)
 
     if load == "high":
-        levels = {name: round(max(0.0, min(1.0, level * 0.9)), 3) for name, level in levels.items()}
+        levels = {
+            name: round(max(0.0, min(1.0, level * 0.9)), 3)
+            for name, level in levels.items()
+        }
 
     sorted_desires = sorted(levels.items(), key=lambda x: -x[1])
 
@@ -495,10 +530,11 @@ async def _handle_introspect(
     desire_summary = desire.format_summary()
     self_store = SelfModelStore(config.data_dir / "self_model.json")
     self_model = self_store.get()
-    goals = ", ".join(self_model.current_goals[:2]) if self_model.current_goals else "none"
+    goals = (
+        ", ".join(self_model.current_goals[:2]) if self_model.current_goals else "none"
+    )
     self_summary = (
-        f"Self model: confidence={self_model.confidence_calibration:.2f}, "
-        f"goals={goals}"
+        f"Self model: confidence={self_model.confidence_calibration:.2f}, goals={goals}"
     )
     if self_model.last_updated:
         self_summary += f", last_updated={self_model.last_updated[:10]}"
@@ -514,7 +550,9 @@ async def _handle_introspect(
         category_counts: dict[str, int] = {}
         emotion_counts: dict[str, int] = {}
         for m in recent_all:
-            category_counts[m.category.value] = category_counts.get(m.category.value, 0) + 1
+            category_counts[m.category.value] = (
+                category_counts.get(m.category.value, 0) + 1
+            )
             emotion = m.emotional_trace.primary.value
             emotion_counts[emotion] = emotion_counts.get(emotion, 0) + 1
         top_category = max(category_counts.items(), key=lambda x: x[1])[0]
@@ -573,7 +611,11 @@ async def _summarize_conversation_tendency(
             continue
 
     dominant_tone = max(tones.items(), key=lambda x: x[1])[0]
-    frequency = f"{last_7d} mentions in last 7d" if filtered else f"{last_7d} conversations in last 7d"
+    frequency = (
+        f"{last_7d} mentions in last 7d"
+        if filtered
+        else f"{last_7d} conversations in last 7d"
+    )
     preferred_topics, sensitive_topics = _infer_topics_from_memories(pool)
     return frequency, dominant_tone, preferred_topics, sensitive_topics
 
@@ -592,8 +634,7 @@ def _infer_topics_from_memories(memories: list[Any]) -> tuple[list[str], list[st
     for m in memories:
         content = m.content.lower()
         is_sensitive_mood = (
-            m.emotional_trace.primary.value == "sad"
-            or m.emotional_trace.valence < -0.3
+            m.emotional_trace.primary.value == "sad" or m.emotional_trace.valence < -0.3
         )
         for topic, keywords in topic_keywords.items():
             if any(keyword in content for keyword in keywords):
@@ -614,7 +655,12 @@ async def _handle_consider_them(
     """ToM: relationship summary + scaffold."""
     person = args.get("person", config.companion_name)
     store = _relationship_store(config)
-    frequency, dominant_tone, preferred_topics, sensitive_topics = await _summarize_conversation_tendency(memory, person)
+    (
+        frequency,
+        dominant_tone,
+        preferred_topics,
+        sensitive_topics,
+    ) = await _summarize_conversation_tendency(memory, person)
 
     now_iso = datetime.now(timezone.utc).isoformat()
     if dominant_tone != "unknown tone":
@@ -632,9 +678,13 @@ async def _handle_consider_them(
         f"shared_episodes={len(rel.shared_episode_ids)}"
     )
     if rel.preferred_topics:
-        relationship_summary += f", preferred_topics={','.join(rel.preferred_topics[:2])}"
+        relationship_summary += (
+            f", preferred_topics={','.join(rel.preferred_topics[:2])}"
+        )
     if rel.sensitive_topics:
-        relationship_summary += f", sensitive_topics={','.join(rel.sensitive_topics[:2])}"
+        relationship_summary += (
+            f", sensitive_topics={','.join(rel.sensitive_topics[:2])}"
+        )
     if rel.last_interaction:
         relationship_summary += f", last_interaction={rel.last_interaction[:10]}"
 
@@ -642,10 +692,13 @@ async def _handle_consider_them(
     recent_moods = rel.recent_mood_trajectory[-3:]
     if recent_moods:
         mood_tail = " > ".join(
-            str(item.get("mood", "unknown")) for item in recent_moods
+            str(item.get("mood", "unknown"))
+            for item in recent_moods
             if isinstance(item, dict)
         )
-        data = f"{relationship_summary}\n{tendency}\nRecent mood trajectory: {mood_tail}"
+        data = (
+            f"{relationship_summary}\n{tendency}\nRecent mood trajectory: {mood_tail}"
+        )
     else:
         data = f"{relationship_summary}\n{tendency}"
     return render_with_data(data, SCAFFOLD_CONSIDER_THEM, config.companion_name)
@@ -686,10 +739,7 @@ async def _handle_remember(memory: MemoryStore, args: dict[str, Any]) -> str:
         except OSError as exc:
             logger.warning("Workspace sync failed: %s", exc)
 
-    return (
-        f"Saved (id: {mem.id}). Linked to {num_links} existing memories."
-        f"{sync_note}"
-    )
+    return f"Saved (id: {mem.id}). Linked to {num_links} existing memories.{sync_note}"
 
 
 async def _handle_recall(
@@ -745,6 +795,7 @@ def _handle_am_i_genuine() -> str:
 #  Backend Tool Handlers
 # =====================================================================
 
+
 def _handle_satisfy_desire(desire: DesireEngine, args: dict[str, Any]) -> str:
     """Satisfy a desire."""
     name = args["name"]
@@ -799,9 +850,7 @@ def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
     return f"Updated self.{field_name}"
 
 
-async def _handle_search_memories(
-    memory: MemoryStore, args: dict[str, Any]
-) -> str:
+async def _handle_search_memories(memory: MemoryStore, args: dict[str, Any]) -> str:
     """Search memories with filters including date range."""
     query = args["query"]
     emotion_filter = args.get("emotion_filter")
@@ -845,9 +894,7 @@ async def _handle_get_episode(episodes: EpisodeStore, args: dict[str, Any]) -> s
     )
 
 
-async def _handle_create_episode(
-    episodes: EpisodeStore, args: dict[str, Any]
-) -> str:
+async def _handle_create_episode(episodes: EpisodeStore, args: dict[str, Any]) -> str:
     """Create episode from memories."""
     memory_ids = args["memory_ids"]
     summary = args["summary"]
@@ -859,12 +906,17 @@ async def _handle_create_episode(
 #  Server Startup
 # =====================================================================
 
+
 def init_server(config: EgoConfig | None = None) -> None:
     """Initialize all dependencies. Called from main() or tests."""
     global _config, _memory, _desire, _episodes, _consolidation, _workspace_sync
 
     if config is None:
         config = EgoConfig.from_env()
+
+    if _memory is not None:
+        _memory.close()
+
     _config = config
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -877,9 +929,8 @@ def init_server(config: EgoConfig | None = None) -> None:
 
     _desire = DesireEngine(config.data_dir / "desires.json")
 
-    # Initialize episode store using a separate ChromaDB collection
-    import chromadb
-    client = chromadb.PersistentClient(path=str(config.data_dir / "chroma"))
+    # Initialize episode store using the same vector-store client as memories.
+    client = _memory.get_client()
     episodes_collection = client.get_or_create_collection(
         name="ego_episodes",
         embedding_function=cast(Any, embedding_fn),
