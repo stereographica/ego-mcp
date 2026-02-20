@@ -163,7 +163,9 @@ class PersistentClient:
         self._path = path
         _STORE_BY_PATH.setdefault(path, {})
 
-    def get_or_create_collection(self, name: str, embedding_function: Any) -> Collection:
+    def get_or_create_collection(
+        self, name: str, embedding_function: Any
+    ) -> Collection:
         collections = _STORE_BY_PATH[self._path]
         if name not in collections:
             collections[name] = Collection(embedding_function)

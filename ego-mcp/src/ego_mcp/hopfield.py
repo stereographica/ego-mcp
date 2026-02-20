@@ -79,9 +79,7 @@ class ModernHopfieldNetwork:
             self.beta,
         )
 
-    def retrieve(
-        self, query_embedding: list[float]
-    ) -> tuple[np.ndarray, list[float]]:
+    def retrieve(self, query_embedding: list[float]) -> tuple[np.ndarray, list[float]]:
         """Retrieve via Hopfield update rule.
 
         Returns:

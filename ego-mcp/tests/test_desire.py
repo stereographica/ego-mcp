@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -62,9 +60,7 @@ class TestDesireEngine:
         state_path = tmp_path / "desires.json"
         return DesireEngine(state_path)
 
-    def test_compute_levels_returns_all_desires(
-        self, engine: DesireEngine
-    ) -> None:
+    def test_compute_levels_returns_all_desires(self, engine: DesireEngine) -> None:
         levels = engine.compute_levels()
         assert set(levels.keys()) == set(DESIRES.keys())
         for level in levels.values():
@@ -114,11 +110,10 @@ class TestDesireEngine:
         assert len(summary) > 0
         # Should contain [high], [mid], or [low]
         import re
+
         assert re.search(r"\[(high|mid|low)\]", summary)
 
-    def test_format_summary_sorted_descending(
-        self, engine: DesireEngine
-    ) -> None:
+    def test_format_summary_sorted_descending(self, engine: DesireEngine) -> None:
         summary = engine.format_summary()
         parts = summary.split()
         # Extract levels from [high/mid/low]
@@ -147,7 +142,7 @@ class TestDesirePersistence:
 
     def test_state_file_created(self, tmp_path: Path) -> None:
         state_path = tmp_path / "desires.json"
-        engine = DesireEngine(state_path)
+        DesireEngine(state_path)
         assert state_path.exists()
 
     def test_corrupt_file_reinits(self, tmp_path: Path) -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
@@ -75,9 +74,7 @@ class GeminiEmbeddingProvider:
 class OpenAIEmbeddingProvider:
     """OpenAI embedding provider using /v1/embeddings endpoint."""
 
-    def __init__(
-        self, api_key: str, model: str = "text-embedding-3-small"
-    ) -> None:
+    def __init__(self, api_key: str, model: str = "text-embedding-3-small") -> None:
         self._api_key = api_key
         self._model = model
         self._client = httpx.AsyncClient(timeout=30.0)
