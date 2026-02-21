@@ -47,6 +47,25 @@ uv run pytest tests/ -v
 uv run mypy src/ego_mcp/
 ```
 
+## Mandatory CI Gate After Code Changes
+
+If any code under `ego-mcp/` is changed, run all checks defined in
+`.github/workflows/ego-mcp-ci.yml` before finishing work.
+
+Required sequence:
+
+```bash
+cd ego-mcp
+uv sync --extra dev
+GEMINI_API_KEY=test-key uv run pytest tests -v
+uv run ruff check src tests
+uv run mypy src tests
+```
+
+Rule:
+- Do not conclude the task while any check is failing.
+- Fix issues and rerun the failed checks until all required checks pass.
+
 ## Troubleshooting: `hashlib blake2*` with `uv`
 
 If `uv` shows `unsupported hash type blake2b/blake2s`, a broken Python (often `pyenv`) is being selected.
