@@ -74,6 +74,7 @@ class TestDataclassDefaults:
         assert m.category == Category.DAILY
         assert m.linked_ids == []
         assert m.tags == []
+        assert m.is_private is False
 
     def test_memory_search_result(self) -> None:
         msr = MemorySearchResult()
