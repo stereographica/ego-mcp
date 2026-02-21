@@ -5,6 +5,7 @@ Uses Modern Continuous Hopfield Networks (Ramsauer et al., 2020).
 """
 
 from __future__ import annotations
+# mypy: disable-error-code=import-not-found
 
 import logging
 from dataclasses import dataclass, field
