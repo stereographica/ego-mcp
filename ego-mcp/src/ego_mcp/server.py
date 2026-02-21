@@ -269,15 +269,26 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()  # type: ignore[untyped-decorator]
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Dispatch tool calls."""
+    logger.info("Tool invocation", extra={"tool_name": name, "tool_args": arguments})
+
     config = _get_config()
     memory = _get_memory()
     desire = _get_desire()
     episodes = _get_episodes()
     consolidation = _get_consolidation()
 
-    text = await _dispatch(
-        name, arguments, config, memory, desire, episodes, consolidation
-    )
+    try:
+        text = await _dispatch(
+            name, arguments, config, memory, desire, episodes, consolidation
+        )
+    except Exception:
+        logger.exception(
+            "Tool execution failed",
+            extra={"tool_name": name, "tool_args": arguments},
+        )
+        raise
+
+    logger.debug("Tool execution completed", extra={"tool_name": name})
     return [TextContent(type="text", text=text)]
 
 
@@ -291,6 +302,7 @@ async def _dispatch(
     consolidation: ConsolidationEngine,
 ) -> str:
     """Route tool call to handler."""
+    logger.debug("Routing tool call", extra={"tool_name": name, "tool_args": args})
 
     # --- Surface tools ---
     if name == "wake_up":
