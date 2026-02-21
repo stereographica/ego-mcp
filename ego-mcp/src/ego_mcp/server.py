@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 import logging
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any, cast
 
 from mcp.server import Server
@@ -292,6 +293,22 @@ def _sanitize_tool_args_for_logging(
     return safe_args
 
 
+def _sanitize_tool_output_for_logging(
+    name: str, args: dict[str, Any] | None, output: str
+) -> str:
+    """Mask sensitive values before writing tool output to logs."""
+    del args
+    if name != "recall":
+        return output
+
+    return re.sub(
+        r"^([0-9]+\. \[[^\]]+\] ).*\(emotion: ([^,]+), private: true\)$",
+        r"\1[REDACTED_PRIVATE_MEMORY] (emotion: \2, private: true)",
+        output,
+        flags=re.MULTILINE,
+    )
+
+
 @server.call_tool()  # type: ignore[untyped-decorator]
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Dispatch tool calls."""
@@ -315,7 +332,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         )
         raise
 
-    output_excerpt, output_truncated = _truncate_for_log(text)
+    safe_output = _sanitize_tool_output_for_logging(name, arguments, text)
+    output_excerpt, output_truncated = _truncate_for_log(safe_output)
     logger.info(
         "Tool execution completed",
         extra={
