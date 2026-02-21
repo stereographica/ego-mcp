@@ -115,9 +115,17 @@ def install_global_exception_hooks() -> None:
         sys.__excepthook__(exc_type, exc, tb)
 
     def _thread_hook(args: threading.ExceptHookArgs) -> None:
+        if args.exc_value is not None:
+            exc_info: (
+                tuple[type[BaseException], BaseException, Any]
+                | tuple[None, None, None]
+            ) = (args.exc_type, args.exc_value, args.exc_traceback)
+        else:
+            exc_info = (None, None, None)
+
         logging.getLogger("ego_mcp.unhandled").error(
             "Unhandled thread exception",
-            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+            exc_info=exc_info,
         )
         threading.__excepthook__(args)
 
