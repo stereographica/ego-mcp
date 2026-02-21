@@ -842,6 +842,50 @@ class TestToolLoggingPrivacy:
         )
         assert all(secret not in str(getattr(record, "tool_args", {})) for record in invocation_records)
 
+    @pytest.mark.asyncio
+    async def test_recall_masks_private_content_in_logs(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        secret = "super secret private recall payload"
+        await _call(
+            "remember",
+            {"content": secret, "private": True},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+
+        with caplog.at_level(logging.INFO, logger="ego_mcp.server"):
+            await _call(
+                "recall",
+                {"context": "super secret private recall payload", "n_results": 5},
+                config,
+                memory,
+                desire,
+                episodes,
+                consolidation,
+            )
+
+        completion_records = [
+            record
+            for record in caplog.records
+            if record.name == "ego_mcp.server"
+            and record.getMessage() == "Tool execution completed"
+            and getattr(record, "tool_name", "") == "recall"
+        ]
+        assert completion_records
+        logged_output = str(getattr(completion_records[-1], "tool_output", ""))
+        assert "[REDACTED_PRIVATE_MEMORY]" in logged_output
+        assert secret not in logged_output
+
 
 class TestAmIBeingGenuine:
     @pytest.mark.asyncio
