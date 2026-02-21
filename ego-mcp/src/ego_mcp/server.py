@@ -123,6 +123,13 @@ SURFACE_TOOLS: list[Tool] = [
                 "valence": {"type": "number", "default": 0.0},
                 "arousal": {"type": "number", "default": 0.5},
                 "body_state": {"type": "object"},
+                "private": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "When true, keep this memory internal and skip workspace sync."
+                    ),
+                },
             },
             "required": ["content"],
         },
@@ -266,10 +273,30 @@ async def list_tools() -> list[Tool]:
     return SURFACE_TOOLS + BACKEND_TOOLS
 
 
+def _sanitize_tool_args_for_logging(
+    name: str, args: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Mask sensitive values before writing tool arguments to logs."""
+    if args is None:
+        return {}
+
+    safe_args = dict(args)
+    if name == "remember" and bool(safe_args.get("private", False)):
+        content = safe_args.get("content")
+        if isinstance(content, str):
+            safe_args["content_length"] = len(content)
+        safe_args["content"] = "[REDACTED_PRIVATE_MEMORY]"
+        for key in ("secondary", "body_state", "tags"):
+            if key in safe_args:
+                safe_args[key] = "[REDACTED_PRIVATE_FIELD]"
+    return safe_args
+
+
 @server.call_tool()  # type: ignore[untyped-decorator]
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Dispatch tool calls."""
-    logger.info("Tool invocation", extra={"tool_name": name, "tool_args": arguments})
+    safe_args = _sanitize_tool_args_for_logging(name, arguments)
+    logger.info("Tool invocation", extra={"tool_name": name, "tool_args": safe_args})
 
     config = _get_config()
     memory = _get_memory()
@@ -284,7 +311,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     except Exception:
         logger.exception(
             "Tool execution failed",
-            extra={"tool_name": name, "tool_args": arguments},
+            extra={"tool_name": name, "tool_args": safe_args},
         )
         raise
 
@@ -311,7 +338,8 @@ async def _dispatch(
     consolidation: ConsolidationEngine,
 ) -> str:
     """Route tool call to handler."""
-    logger.debug("Routing tool call", extra={"tool_name": name, "tool_args": args})
+    safe_args = _sanitize_tool_args_for_logging(name, args)
+    logger.debug("Routing tool call", extra={"tool_name": name, "tool_args": safe_args})
 
     # --- Surface tools ---
     if name == "wake_up":
@@ -743,6 +771,7 @@ async def _handle_remember(memory: MemoryStore, args: dict[str, Any]) -> str:
     category = args.get("category", "daily")
     valence = args.get("valence", 0.0)
     arousal = args.get("arousal", 0.5)
+    private = bool(args.get("private", False))
     body_state = args.get("body_state") or get_body_state()
 
     mem, num_links = await memory.save_with_auto_link(
@@ -755,10 +784,11 @@ async def _handle_remember(memory: MemoryStore, args: dict[str, Any]) -> str:
         valence=valence,
         arousal=arousal,
         body_state=body_state,
+        private=private,
     )
     sync = _get_workspace_sync()
     sync_note = ""
-    if sync is not None:
+    if sync is not None and not mem.is_private:
         try:
             result = sync.sync_memory(mem)
             if result.latest_monologue_updated:
@@ -807,8 +837,11 @@ async def _handle_recall(
             m = r.memory
             ts = m.timestamp[:10] if len(m.timestamp) >= 10 else m.timestamp
             emotion = m.emotional_trace.primary.value
+            private_flag = "true" if m.is_private else "false"
             content = m.content[:80] + "..." if len(m.content) > 80 else m.content
-            lines.append(f"{i}. [{ts}] {content} (emotion: {emotion})")
+            lines.append(
+                f"{i}. [{ts}] {content} (emotion: {emotion}, private: {private_flag})"
+            )
         data = "\n".join(lines)
 
     return render_with_data(data, SCAFFOLD_RECALL, config.companion_name)
@@ -904,7 +937,10 @@ async def _handle_search_memories(memory: MemoryStore, args: dict[str, Any]) -> 
         m = r.memory
         ts = m.timestamp[:10] if len(m.timestamp) >= 10 else m.timestamp
         content = m.content[:60] + "..." if len(m.content) > 60 else m.content
-        lines.append(f"{i}. [{ts}] {content} (score: {r.score:.3f})")
+        private_flag = "true" if m.is_private else "false"
+        lines.append(
+            f"{i}. [{ts}] {content} (score: {r.score:.3f}, private: {private_flag})"
+        )
     return "\n".join(lines)
 
 

@@ -185,6 +185,11 @@ Recent dialog tendency: 3 mentions in last 7d, dominant tone=focused
     },
     "body_state": {
       "type": "object"
+    },
+    "private": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, keep this memory internal and skip workspace sync."
     }
   },
   "required": ["content"]
@@ -197,7 +202,7 @@ Recent dialog tendency: 3 mentions in last 7d, dominant tone=focused
 Saved (id: mem_a1b2c3d4). Linked to 3 existing memories.
 ```
 
-> If `EGO_MCP_WORKSPACE_DIR` is configured, the response may include a workspace sync note.
+> If `EGO_MCP_WORKSPACE_DIR` is configured, the response may include a workspace sync note for non-private memories.
 
 ---
 
@@ -248,9 +253,9 @@ Saved (id: mem_a1b2c3d4). Linked to 3 existing memories.
 
 ```
 3 related memories:
-1. [2025-02-18] Watched sunset, deeply moved (emotion: moved)
-2. [2025-02-15] Master said "I've been busy lately" (emotion: neutral)
-3. [2025-02-10] Enjoyed researching new tech (emotion: curious)
+1. [2025-02-18] Watched sunset, deeply moved (emotion: moved, private: false)
+2. [2025-02-15] Master said "I've been busy lately" (emotion: neutral, private: true)
+3. [2025-02-10] Enjoyed researching new tech (emotion: curious, private: false)
 
 ---
 How do these memories connect to the current moment?
@@ -482,9 +487,9 @@ Updated self.unresolved_questions
 
 ```
 Found 3 memories:
-1. [2025-02-19] Discussed OpenClaw config with master... (score: 0.892)
-2. [2025-02-18] Set up ego-mcp for the first time... (score: 0.756)
-3. [2025-02-15] Read about MCP protocol design... (score: 0.601)
+1. [2025-02-19] Discussed OpenClaw config with master... (score: 0.892, private: false)
+2. [2025-02-18] Set up ego-mcp for the first time... (score: 0.756, private: true)
+3. [2025-02-15] Read about MCP protocol design... (score: 0.601, private: false)
 ```
 
 ---

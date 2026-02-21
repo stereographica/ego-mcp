@@ -145,6 +145,16 @@ class TestMemorySave:
         assert loaded.emotional_trace.body_state is not None
         assert loaded.emotional_trace.body_state.time_phase == "evening"
 
+    @pytest.mark.asyncio
+    async def test_save_private_roundtrip(self, store: MemoryStore) -> None:
+        mem = await store.save(
+            content="This is private context",
+            private=True,
+        )
+        loaded = await store.get_by_id(mem.id)
+        assert loaded is not None
+        assert loaded.is_private is True
+
 
 class TestMemoryAutoLink:
     @pytest.mark.asyncio
@@ -156,6 +166,17 @@ class TestMemoryAutoLink:
         # May or may not link depending on embedding similarity
         assert isinstance(num_links, int)
         assert num_links >= 0
+
+    @pytest.mark.asyncio
+    async def test_auto_link_preserves_private_flag(self, store: MemoryStore) -> None:
+        await store.save(content="anchor context for links")
+        mem, _num_links = await store.save_with_auto_link(
+            content="anchor context for links with private notes",
+            private=True,
+        )
+        loaded = await store.get_by_id(mem.id)
+        assert loaded is not None
+        assert loaded.is_private is True
 
 
 class TestMemoryRecall:
