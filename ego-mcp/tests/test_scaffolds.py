@@ -43,6 +43,9 @@ class TestScaffoldConstants:
                 f"Japanese found in scaffold: {scaffold!r}"
             )
 
+    def test_wake_up_mentions_private_memory_option(self) -> None:
+        assert "remember(private=true)" in SCAFFOLD_WAKE_UP
+
 
 class TestRender:
     """render() replaces {companion_name}."""
