@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 import logging
 from pathlib import Path
+import re
 from typing import Any
 
 import pytest
@@ -546,6 +547,48 @@ class TestRemember:
 
         assert (sync.workspace_dir / "memory" / "inner-monologue-latest.md").exists()
         assert (sync.workspace_dir / "MEMORY.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_reports_positive_links_when_related_memories_exist(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sync = WorkspaceMemorySync(tmp_path / "workspace")
+        monkeypatch.setattr(server_mod, "_workspace_sync", sync)
+
+        content = "I solved a compiler warning by narrowing the generic type."
+
+        await _call(
+            "remember",
+            {"content": content, "category": "technical"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        result = await _call(
+            "remember",
+            {"content": content, "category": "technical"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+
+        match = re.search(
+            r"Linked to (\d+) existing memories\. Synced to workspace memory logs\.",
+            result,
+        )
+        assert match is not None
+        assert int(match.group(1)) >= 1
 
 
 class TestRecall:
