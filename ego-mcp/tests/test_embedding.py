@@ -145,6 +145,21 @@ class TestOpenAIEmbeddingProvider:
         finally:
             asyncio.sleep = original_sleep
 
+    @respx.mock
+    def test_embed_works_across_multiple_event_loops(self) -> None:
+        """Provider should not pin HTTP clients to a single closed loop."""
+        respx.post("https://api.openai.com/v1/embeddings").respond(
+            json={"data": [{"index": 0, "embedding": [0.7, 0.8]}]}
+        )
+
+        provider = OpenAIEmbeddingProvider(api_key="sk-test")
+
+        first = asyncio.run(provider.embed(["hello"]))
+        second = asyncio.run(provider.embed(["world"]))
+
+        assert first == [[0.7, 0.8]]
+        assert second == [[0.7, 0.8]]
+
 
 # --- Factory ---
 
