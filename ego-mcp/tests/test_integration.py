@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -225,6 +226,20 @@ class TestWakeUp:
             "wake_up", {}, config, memory, desire, episodes, consolidation
         )
         assert "Workspace latest introspection text" in result
+
+    @pytest.mark.asyncio
+    async def test_mentions_private_memory_option(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "wake_up", {}, config, memory, desire, episodes, consolidation
+        )
+        assert "remember(private=true)" in result
 
 
 class TestFeelDesires:
@@ -505,6 +520,46 @@ class TestRemember:
         assert (sync.workspace_dir / "memory" / "inner-monologue-latest.md").exists()
         assert (sync.workspace_dir / "MEMORY.md").exists()
 
+    @pytest.mark.asyncio
+    async def test_private_memory_skips_workspace_sync_and_persists_flag(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sync = WorkspaceMemorySync(tmp_path / "workspace")
+        monkeypatch.setattr(server_mod, "_workspace_sync", sync)
+
+        result = await _call(
+            "remember",
+            {
+                "content": "Private introspection should stay internal.",
+                "category": "introspection",
+                "importance": 5,
+                "private": True,
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert "Synced" not in result
+
+        prefix = "Saved (id: "
+        assert prefix in result
+        memory_id = result.split(prefix, 1)[1].split(")", 1)[0]
+        saved = await memory.get_by_id(memory_id)
+        assert saved is not None
+        assert saved.is_private is True
+
+        assert not (sync.workspace_dir / "memory" / "inner-monologue-latest.md").exists()
+        assert not (sync.workspace_dir / "MEMORY.md").exists()
+
 
 class TestRecall:
     @pytest.mark.asyncio
@@ -614,6 +669,94 @@ class TestRecall:
             consolidation,
         )
         assert "drained" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_recall_includes_private_flag(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        await _call(
+            "remember",
+            {
+                "content": "shared token private memory sample",
+                "private": True,
+                "category": "introspection",
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        await _call(
+            "remember",
+            {
+                "content": "shared token public memory sample",
+                "private": False,
+                "category": "daily",
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+
+        result = await _call(
+            "recall",
+            {"context": "shared token", "n_results": 5},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        lowered = result.lower()
+        assert "private: true" in lowered
+        assert "private: false" in lowered
+
+
+class TestToolLoggingPrivacy:
+    @pytest.mark.asyncio
+    async def test_private_remember_masks_content_in_logs(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        secret = "super secret private payload"
+        with caplog.at_level(logging.INFO, logger="ego_mcp.server"):
+            await _call(
+                "remember",
+                {"content": secret, "private": True},
+                config,
+                memory,
+                desire,
+                episodes,
+                consolidation,
+            )
+
+        invocation_records = [
+            record
+            for record in caplog.records
+            if record.name == "ego_mcp.server"
+            and record.getMessage() == "Tool invocation"
+            and getattr(record, "tool_name", "") == "remember"
+        ]
+        assert invocation_records
+        assert all(
+            getattr(record, "tool_args", {}).get("content")
+            == "[REDACTED_PRIVATE_MEMORY]"
+            for record in invocation_records
+        )
+        assert all(secret not in str(getattr(record, "tool_args", {})) for record in invocation_records)
 
 
 class TestAmIBeingGenuine:
@@ -810,6 +953,46 @@ class TestSearchMemories:
             consolidation,
         )
         assert "Found" in result or "No memories found" in result
+
+    @pytest.mark.asyncio
+    async def test_search_results_include_private_flag(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        await _call(
+            "remember",
+            {"content": "search token private entry", "private": True},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        await _call(
+            "remember",
+            {"content": "search token public entry", "private": False},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        result = await _call(
+            "search_memories",
+            {"query": "search token"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        lowered = result.lower()
+        assert "private: true" in lowered
+        assert "private: false" in lowered
 
 
 class TestUpdateRelationship:

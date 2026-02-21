@@ -159,6 +159,9 @@ def _memory_from_chromadb(
         except (json.JSONDecodeError, TypeError, ValueError):
             body_state = None
 
+    private_raw = metadata.get("is_private", False)
+    is_private = private_raw in (True, 1, "1", "true", "True")
+
     return Memory(
         id=memory_id,
         content=content,
@@ -175,6 +178,7 @@ def _memory_from_chromadb(
         category=category,
         tags=metadata.get("tags", "").split(",") if metadata.get("tags") else [],
         linked_ids=linked_ids,
+        is_private=is_private,
     )
 
 
@@ -255,6 +259,7 @@ class MemoryStore:
         arousal: float = 0.5,
         body_state: dict[str, Any] | None = None,
         tags: list[str] | None = None,
+        private: bool = False,
     ) -> Memory:
         """Save a single memory."""
         collection = self._ensure_connected()
@@ -273,6 +278,7 @@ class MemoryStore:
             "body_state": json.dumps(body_state) if body_state else "",
             "tags": ",".join(tags) if tags else "",
             "linked_ids": "[]",
+            "is_private": bool(private),
         }
 
         collection.add(
@@ -325,6 +331,7 @@ class MemoryStore:
             importance=importance,
             category=cat,
             tags=tags or [],
+            is_private=bool(private),
         )
 
     async def save_with_auto_link(
@@ -339,6 +346,7 @@ class MemoryStore:
         arousal: float = 0.5,
         body_state: dict[str, Any] | None = None,
         tags: list[str] | None = None,
+        private: bool = False,
         link_threshold: float = 0.3,
         max_links: int = 5,
     ) -> tuple[Memory, int]:
@@ -358,6 +366,7 @@ class MemoryStore:
             arousal=arousal,
             body_state=body_state,
             tags=tags,
+            private=private,
         )
 
         # Search for similar memories to auto-link

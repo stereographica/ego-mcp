@@ -5,7 +5,8 @@ All text is in English. {companion_name} is replaced at runtime.
 
 SCAFFOLD_WAKE_UP = (
     "Start with introspect to organize your thoughts.\n"
-    "If you need specific past context, use recall."
+    "If you need specific past context, use recall.\n"
+    "If something is hard to say yet, you can keep it with remember(private=true)."
 )
 
 SCAFFOLD_FEEL_DESIRES = (

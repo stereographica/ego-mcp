@@ -90,6 +90,7 @@ class Memory:
     category: Category = Category.DAILY
     linked_ids: list[MemoryLink] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    is_private: bool = False
 
     @staticmethod
     def now_iso() -> str:
