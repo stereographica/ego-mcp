@@ -260,7 +260,7 @@ BACKEND_TOOLS: list[Tool] = [
 ]
 
 
-@server.list_tools()  # type: ignore[untyped-decorator]
+@server.list_tools()  # type: ignore[untyped-decorator,no-untyped-call]
 async def list_tools() -> list[Tool]:
     """Return all available tools."""
     return SURFACE_TOOLS + BACKEND_TOOLS
