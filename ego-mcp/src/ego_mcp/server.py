@@ -288,7 +288,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         )
         raise
 
-    logger.debug("Tool execution completed", extra={"tool_name": name})
+    output_excerpt, output_truncated = _truncate_for_log(text)
+    logger.info(
+        "Tool execution completed",
+        extra={
+            "tool_name": name,
+            "tool_output": output_excerpt,
+            "tool_output_chars": len(text),
+            "tool_output_truncated": output_truncated,
+        },
+    )
     return [TextContent(type="text", text=text)]
 
 
@@ -352,6 +361,14 @@ def _truncate_for_quote(text: str, limit: int = 220) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3].rstrip() + "..."
+
+
+def _truncate_for_log(text: str, limit: int = 1200) -> tuple[str, bool]:
+    """Trim long tool outputs for logs while keeping metadata."""
+    compact = text.strip()
+    if len(compact) <= limit:
+        return compact, False
+    return compact[: limit - 3].rstrip() + "...", True
 
 
 async def _relationship_snapshot(
