@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 import logging
 from pathlib import Path
+import re
 from typing import Any
 
 import pytest
@@ -148,6 +149,47 @@ class TestMcpBoundary:
     async def test_list_tools_exposes_all_names(self) -> None:
         tools = await server_mod.list_tools()
         assert {tool.name for tool in tools} == EXPECTED_TOOL_NAMES
+
+    @pytest.mark.asyncio
+    async def test_call_tool_logs_output(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        caplog.set_level(logging.INFO, logger=server_mod.logger.name)
+
+        result = await _call(
+            "am_i_being_genuine",
+            {},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+
+        assert "Self-check triggered." in result
+        completion_logs = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "Tool execution completed"
+        ]
+        assert completion_logs
+        completion = completion_logs[-1]
+        tool_name = getattr(completion, "tool_name", None)
+        tool_output = getattr(completion, "tool_output", None)
+        tool_output_chars = getattr(completion, "tool_output_chars", None)
+        tool_output_truncated = getattr(completion, "tool_output_truncated", None)
+
+        assert tool_name == "am_i_being_genuine"
+        assert isinstance(tool_output, str)
+        assert "Self-check triggered." in tool_output
+        assert tool_output_chars == len(result)
+        assert tool_output_truncated is False
 
 
 # === Surface Tools ===
@@ -559,6 +601,48 @@ class TestRemember:
 
         assert not (sync.workspace_dir / "memory" / "inner-monologue-latest.md").exists()
         assert not (sync.workspace_dir / "MEMORY.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_reports_positive_links_when_related_memories_exist(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sync = WorkspaceMemorySync(tmp_path / "workspace")
+        monkeypatch.setattr(server_mod, "_workspace_sync", sync)
+
+        content = "I solved a compiler warning by narrowing the generic type."
+
+        await _call(
+            "remember",
+            {"content": content, "category": "technical"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        result = await _call(
+            "remember",
+            {"content": content, "category": "technical"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+
+        match = re.search(
+            r"Linked to (\d+) existing memories\. Synced to workspace memory logs\.",
+            result,
+        )
+        assert match is not None
+        assert int(match.group(1)) >= 1
 
 
 class TestRecall:
