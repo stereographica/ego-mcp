@@ -38,3 +38,24 @@ strict = true
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+
+[[tool.mypy.overrides]]
+module = [
+    "chromadb",
+    "chromadb.*",
+    "numpy",
+    "numpy.*",
+    "httpx",
+    "httpx.*",
+    "pydantic",
+    "pydantic.*",
+    "pydantic_settings",
+    "pydantic_settings.*",
+    "mcp",
+    "mcp.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["ego_mcp.chromadb_compat"]
+disable_error_code = ["misc", "no-any-return"]

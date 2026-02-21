@@ -1,6 +1,7 @@
 """Embedding providers for ego-mcp."""
 
 from __future__ import annotations
+# mypy: disable-error-code=import-not-found
 
 import asyncio
 from typing import Any, Protocol, runtime_checkable
