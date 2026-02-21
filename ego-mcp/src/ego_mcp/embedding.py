@@ -26,11 +26,10 @@ class GeminiEmbeddingProvider:
     def __init__(self, api_key: str, model: str = "gemini-embedding-001") -> None:
         self._api_key = api_key
         self._model = model
-        self._client = httpx.AsyncClient(timeout=30.0)
 
     async def close(self) -> None:
-        """Close the HTTP client."""
-        await self._client.aclose()
+        """No-op close hook for compatibility with provider protocol."""
+        return
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed texts using Gemini batchEmbedContents endpoint."""
@@ -56,7 +55,8 @@ class GeminiEmbeddingProvider:
         last_error: httpx.HTTPStatusError | None = None
 
         for attempt in range(max_retries + 1):
-            resp = await self._client.post(url, json=payload)
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json=payload)
             try:
                 resp.raise_for_status()
                 return resp.json()  # type: ignore[no-any-return]
@@ -77,11 +77,10 @@ class OpenAIEmbeddingProvider:
     def __init__(self, api_key: str, model: str = "text-embedding-3-small") -> None:
         self._api_key = api_key
         self._model = model
-        self._client = httpx.AsyncClient(timeout=30.0)
 
     async def close(self) -> None:
-        """Close the HTTP client."""
-        await self._client.aclose()
+        """No-op close hook for compatibility with provider protocol."""
+        return
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed texts using OpenAI embeddings endpoint."""
@@ -105,7 +104,8 @@ class OpenAIEmbeddingProvider:
         last_error: httpx.HTTPStatusError | None = None
 
         for attempt in range(max_retries + 1):
-            resp = await self._client.post(url, json=payload, headers=headers)
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json=payload, headers=headers)
             try:
                 resp.raise_for_status()
                 return resp.json()  # type: ignore[no-any-return]
