@@ -160,6 +160,11 @@ class EgoMcpLogProjector:
             if isinstance(state, str):
                 params["state"] = state
 
+        if "time_phase" not in params:
+            top_level_time_phase = raw.get("time_phase")
+            if isinstance(top_level_time_phase, str):
+                params["time_phase"] = top_level_time_phase
+
         raw_ts = raw.get("ts")
         if not isinstance(raw_ts, str):
             raw_ts = raw.get("timestamp")
