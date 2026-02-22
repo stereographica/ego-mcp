@@ -146,3 +146,22 @@ def test_projector_creates_event_from_invocation_and_ignores_completion() -> Non
     assert event.emotion_intensity == 0.7
     assert event.string_metrics["time_phase"] == "night"
     assert projector.project(completion) is None
+
+
+def test_projector_reads_top_level_time_phase_from_ego_mcp_logs() -> None:
+    projector = EgoMcpLogProjector()
+    invocation = {
+        "timestamp": "2026-01-01T12:00:00Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool invocation",
+        "tool_name": "wake_up",
+        "tool_args": {},
+        "time_phase": "afternoon",
+    }
+
+    event = projector.project(invocation)
+
+    assert event is not None
+    assert event.tool_name == "wake_up"
+    assert event.string_metrics["time_phase"] == "afternoon"
