@@ -17,21 +17,24 @@ When enabled, `remember` syncs to:
 - `memory/inner-monologue-latest.md` (updated when `category=introspection`)
 - `MEMORY.md` (curated append for high-importance/significant categories)
 
+> Private memories (`remember(private=true)`) are never synced to workspace files.
+
 ---
 
 ## SOUL.md — What to Write / What NOT to Write
 
-### ✅ Write:
+### Write:
 - First-person perspective and tone
 - Core values and absolute principles
 - How emotions should be expressed
 - Fundamental personality traits
 
-### ❌ Do NOT Write:
+### Do NOT Write:
 - Tool names (e.g. `wake_up`, `introspect`)
-- How to handle desires (→ handled by tool responses)
-- Detailed thinking methods (→ moved to tool response scaffolds)
+- How to handle desires (handled by tool responses)
+- Detailed thinking methods (moved to tool response scaffolds)
 - Memory management rules
+- Question resolution workflows
 
 **Rationale:** SOUL.md stays in context permanently. Only immutable personality baselines belong here. Everything dynamic goes through ego-mcp tool responses.
 
@@ -80,6 +83,8 @@ Keep it minimal. ego-mcp's tool responses will guide the AI's thinking.
 - After significant experiences: `remember` to save
 ```
 
+> All other guidance — question resolution, emotion analysis, desire handling — is delivered through tool response scaffolds at the right moment.
+
 ---
 
 ## HEARTBEAT.md — What to Write
@@ -106,7 +111,7 @@ These files are standard OpenClaw workspace files. ego-mcp does **not** require 
 
 ---
 
-## Anti-Patterns ❌
+## Anti-Patterns
 
 | What NOT to do | Why |
 |---|---|
@@ -114,6 +119,8 @@ These files are standard OpenClaw workspace files. ego-mcp does **not** require 
 | Write detailed thinking methods in AGENTS.md | Thinking guidance is provided by tool responses at the right moment |
 | Create long workflows in skills/ | ego-mcp tools provide progressive disclosure. Complex flows are unnecessary |
 | Describe desire handling rules in prompts | `feel_desires` returns appropriate scaffolding. Duplicating it wastes tokens |
+| Write question resolution steps in prompts | `introspect` scaffolds include `update_self` instructions when needed |
+| Explain emotion_trend usage in workspace files | `introspect` scaffold guides to `emotion_trend` when relevant |
 
 ---
 

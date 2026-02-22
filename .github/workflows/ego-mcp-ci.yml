@@ -42,6 +42,9 @@ jobs:
           GEMINI_API_KEY: test-key
         run: uv run pytest tests -v
 
+      - name: Run isort check
+        run: uv run isort --check-only src tests
+
       - name: Run ruff lint
         run: uv run ruff check src tests
 

@@ -8,7 +8,6 @@ from pathlib import Path
 
 from ego_mcp.types import Category, Memory
 
-
 CURATION_CATEGORIES = {
     Category.INTROSPECTION,
     Category.RELATIONSHIP,

@@ -9,9 +9,9 @@ import pytest
 from ego_mcp.scaffolds import (
     SCAFFOLD_AM_I_GENUINE,
     SCAFFOLD_CONSIDER_THEM,
+    SCAFFOLD_EMOTION_TREND,
     SCAFFOLD_FEEL_DESIRES,
     SCAFFOLD_INTROSPECT,
-    SCAFFOLD_RECALL,
     SCAFFOLD_WAKE_UP,
     compose_response,
     render,
@@ -24,7 +24,7 @@ ALL_SCAFFOLDS = [
     SCAFFOLD_INTROSPECT,
     SCAFFOLD_CONSIDER_THEM,
     SCAFFOLD_AM_I_GENUINE,
-    SCAFFOLD_RECALL,
+    SCAFFOLD_EMOTION_TREND,
 ]
 
 
@@ -45,6 +45,9 @@ class TestScaffoldConstants:
 
     def test_wake_up_mentions_private_memory_option(self) -> None:
         assert "remember(private=true)" in SCAFFOLD_WAKE_UP
+
+    def test_introspect_mentions_emotion_trend(self) -> None:
+        assert "Use emotion_trend" in SCAFFOLD_INTROSPECT
 
 
 class TestRender:
@@ -80,7 +83,7 @@ class TestDataScaffoldFormat:
             SCAFFOLD_INTROSPECT,
             SCAFFOLD_CONSIDER_THEM,
             SCAFFOLD_AM_I_GENUINE,
-            SCAFFOLD_RECALL,
+            SCAFFOLD_EMOTION_TREND,
         ],
     )
     def test_each_template_supports_data_scaffold_format(self, template: str) -> None:

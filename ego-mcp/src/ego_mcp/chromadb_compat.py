@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 import inspect
+import logging
 from types import ModuleType
 
 logger = logging.getLogger(__name__)
@@ -19,8 +19,8 @@ def ensure_chromadb_pydantic_compat() -> None:
     """
     try:
         import pydantic
+        from pydantic_settings import BaseSettings as PydanticSettingsBase
         from pydantic_settings import (
-            BaseSettings as PydanticSettingsBase,
             SettingsConfigDict,
         )
     except ImportError:

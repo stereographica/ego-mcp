@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-
-from ego_mcp.hopfield import ModernHopfieldNetwork, HopfieldRecallResult
+from ego_mcp.hopfield import HopfieldRecallResult, ModernHopfieldNetwork
 
 
 class TestHopfieldStore:

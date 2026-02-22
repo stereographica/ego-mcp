@@ -23,6 +23,7 @@ dev = [
     "respx>=0.20.0",
     "mypy>=1.8.0",
     "ruff>=0.6.0",
+    "isort>=5.13.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -38,6 +39,13 @@ strict = true
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+
+[tool.ruff.lint]
+extend-ignore = ["I"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
 
 [[tool.mypy.overrides]]
 module = [

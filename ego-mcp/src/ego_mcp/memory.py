@@ -7,10 +7,10 @@ import logging
 import math
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from ego_mcp.chromadb_compat import load_chromadb
-
 from ego_mcp.config import EgoConfig
 from ego_mcp.embedding import EgoEmbeddingFunction
 from ego_mcp.hopfield import ModernHopfieldNetwork
@@ -19,10 +19,10 @@ from ego_mcp.types import (
     Category,
     Emotion,
     EmotionalTrace,
+    LinkType,
     Memory,
     MemoryLink,
     MemorySearchResult,
-    LinkType,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,10 +35,14 @@ EMOTION_BOOST_MAP: dict[str, float] = {
     "excited": 0.4,
     "surprised": 0.35,
     "moved": 0.3,
+    "frustrated": 0.28,
     "sad": 0.25,
+    "anxious": 0.22,
     "happy": 0.2,
+    "melancholy": 0.18,
     "nostalgic": 0.15,
     "curious": 0.1,
+    "contentment": 0.08,
     "neutral": 0.0,
 }
 
@@ -94,6 +98,17 @@ def calculate_final_score(
     total_boost = emotion_boost * emotion_weight + importance_boost * importance_weight
     final = semantic_distance * semantic_weight + decay_penalty - total_boost
     return max(0.0, final)
+
+
+def count_emotions_weighted(memories: list[Memory]) -> dict[str, float]:
+    """Count primary emotions (1.0) and secondary emotions (0.4)."""
+    counts: dict[str, float] = {}
+    for memory in memories:
+        primary = memory.emotional_trace.primary.value
+        counts[primary] = counts.get(primary, 0.0) + 1.0
+        for secondary in memory.emotional_trace.secondary:
+            counts[secondary.value] = counts.get(secondary.value, 0.0) + 0.4
+    return counts
 
 
 # --- Helper functions ---
@@ -247,6 +262,19 @@ class MemoryStore:
         assert self._client is not None
         return self._client
 
+    @property
+    def data_dir(self) -> Path:
+        """Return configured data directory path."""
+        return self._config.data_dir
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed texts using the configured embedding function."""
+        return self._embedding_fn(texts)
+
+    def collection_count(self) -> int:
+        """Return number of stored memories."""
+        return int(self._ensure_connected().count())
+
     async def save(
         self,
         content: str,
@@ -349,11 +377,11 @@ class MemoryStore:
         private: bool = False,
         link_threshold: float = 0.3,
         max_links: int = 5,
-    ) -> tuple[Memory, int]:
+    ) -> tuple[Memory, int, list[MemorySearchResult]]:
         """Save memory and auto-link bidirectionally to similar existing memories.
 
         Returns:
-            (saved_memory, num_links_created)
+            (saved_memory, num_links_created, linked_results)
         """
         memory = await self.save(
             content=content,
@@ -371,6 +399,7 @@ class MemoryStore:
 
         # Search for similar memories to auto-link
         num_links = 0
+        linked_results: list[MemorySearchResult] = []
         collection = self._ensure_connected()
         try:
             similar = await self.search(content, n_results=max_links + 1)
@@ -378,6 +407,7 @@ class MemoryStore:
                 if result.memory.id == memory.id:
                     continue
                 if result.distance < link_threshold:
+                    linked_results.append(result)
                     confidence = 1.0 - result.distance
                     # Forward link: new memory → existing
                     memory.linked_ids.append(
@@ -414,7 +444,7 @@ class MemoryStore:
         except (ValueError, KeyError) as e:
             logger.warning("Auto-link failed: %s", e)
 
-        return memory, num_links
+        return memory, num_links, linked_results
 
     async def link_memories(
         self, source_id: str, target_id: str, link_type: str = "related"

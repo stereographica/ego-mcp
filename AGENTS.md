@@ -44,6 +44,7 @@ uv run python -m ego_mcp
 ```bash
 cd ego-mcp
 uv run pytest tests/ -v
+uv run isort --check-only src tests
 uv run mypy src/ego_mcp/
 ```
 
@@ -58,6 +59,7 @@ Required sequence:
 cd ego-mcp
 uv sync --extra dev
 GEMINI_API_KEY=test-key uv run pytest tests -v
+uv run isort --check-only src tests
 uv run ruff check src tests
 uv run mypy src tests
 ```

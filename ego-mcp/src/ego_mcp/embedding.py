@@ -1,7 +1,6 @@
 """Embedding providers for ego-mcp."""
 
 from __future__ import annotations
-# mypy: disable-error-code=import-not-found
 
 import asyncio
 from typing import Any, Protocol, runtime_checkable
@@ -9,6 +8,11 @@ from typing import Any, Protocol, runtime_checkable
 import httpx
 
 from ego_mcp.config import EgoConfig
+
+# mypy: disable-error-code=import-not-found
+
+
+
 
 Documents = list[str]
 Embeddings = list[list[float]]

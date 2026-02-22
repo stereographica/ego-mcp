@@ -29,6 +29,10 @@ class TestEnums:
         assert Emotion.NOSTALGIC.value == "nostalgic"
         assert Emotion.CURIOUS.value == "curious"
         assert Emotion.NEUTRAL.value == "neutral"
+        assert Emotion.MELANCHOLY.value == "melancholy"
+        assert Emotion.ANXIOUS.value == "anxious"
+        assert Emotion.CONTENTMENT.value == "contentment"
+        assert Emotion.FRUSTRATED.value == "frustrated"
 
     def test_category_values(self) -> None:
         assert Category.DAILY.value == "daily"
