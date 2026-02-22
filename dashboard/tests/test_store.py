@@ -105,3 +105,35 @@ def test_current_backfills_latest_emotion_from_recent_telemetry() -> None:
 
     assert latest["emotion_primary"] == "curious"
     assert latest["emotion_intensity"] == 0.8
+
+
+def test_current_prefers_log_derived_counts_and_error_rate() -> None:
+    from ego_dashboard.models import LogEvent
+
+    store = TelemetryStore()
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store.ingest(_event(0, "remember", 0.8, "night"))
+    store.ingest_log(
+        LogEvent(
+            ts=base,
+            level="INFO",
+            logger="ego_mcp.server",
+            message="Tool invocation",
+            private=False,
+            fields={"tool_name": "remember"},
+        )
+    )
+    store.ingest_log(
+        LogEvent(
+            ts=base + timedelta(seconds=2),
+            level="ERROR",
+            logger="ego_mcp.server",
+            message="Tool execution failed",
+            private=False,
+        )
+    )
+
+    current = store.current()
+
+    assert current["tool_calls_per_min"] == 1
+    assert current["error_rate"] == 1.0

@@ -56,6 +56,16 @@ const bucketFor = (preset: TimeRangePreset) =>
 const isNearBottom = (el: HTMLElement, threshold = 24) =>
   el.scrollHeight - el.scrollTop - el.clientHeight <= threshold
 
+const TOOL_COLORS = [
+  ['#334155', '#94a3b8'],
+  ['#1e293b', '#475569'],
+  ['#0f766e', '#5eead4'],
+  ['#1d4ed8', '#93c5fd'],
+  ['#7c3aed', '#c4b5fd'],
+  ['#b45309', '#fcd34d'],
+  ['#be123c', '#fda4af'],
+]
+
 const App = () => {
   const [preset, setPreset] = useState<TimeRangePreset>('1h')
   const [customFrom, setCustomFrom] = useState('')
@@ -136,6 +146,37 @@ const App = () => {
     [timeline],
   )
 
+  const toolSeriesKeys = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          usage.flatMap((row) =>
+            Object.keys(row).filter(
+              (key) => key !== 'ts' && typeof row[key] === 'number',
+            ),
+          ),
+        ),
+      ).sort(),
+    [usage],
+  )
+
+  const totalToolCallsInRange = useMemo(
+    () =>
+      usage.reduce((sum, row) => {
+        const rowTotal = Object.entries(row).reduce((acc, [key, value]) => {
+          if (key === 'ts' || typeof value !== 'number') return acc
+          return acc + value
+        }, 0)
+        return sum + rowTotal
+      }, 0),
+    [usage],
+  )
+
+  const toolCallsTitle =
+    preset === 'custom'
+      ? 'tool calls (custom total)'
+      : `tool calls (${preset} total)`
+
   useEffect(() => {
     if (autoScroll && logFeedPinned) {
       const el = logFeedRef.current
@@ -186,8 +227,8 @@ const App = () => {
         <TabsContent value="now">
           <div className="grid grid-3">
             <Card>
-              <p className="title">tool calls / min</p>
-              <p className="value">{current?.tool_calls_per_min ?? 0}</p>
+              <p className="title">{toolCallsTitle}</p>
+              <p className="value">{totalToolCallsInRange}</p>
             </Card>
             <Card>
               <p className="title">error rate</p>
@@ -245,20 +286,20 @@ const App = () => {
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Area
-                    type="monotone"
-                    dataKey="feel_desires"
-                    stackId="1"
-                    stroke="#334155"
-                    fill="#94a3b8"
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="remember"
-                    stackId="1"
-                    stroke="#1e293b"
-                    fill="#475569"
-                  />
+                  {toolSeriesKeys.map((toolName, index) => {
+                    const [stroke, fill] =
+                      TOOL_COLORS[index % TOOL_COLORS.length]
+                    return (
+                      <Area
+                        key={toolName}
+                        type="monotone"
+                        dataKey={toolName}
+                        stackId="1"
+                        stroke={stroke}
+                        fill={fill}
+                      />
+                    )
+                  })}
                 </AreaChart>
               </ResponsiveContainer>
             </Card>
