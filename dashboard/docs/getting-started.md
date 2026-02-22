@@ -25,7 +25,6 @@ npm run dev
 ```bash
 cd dashboard
 cp .env.example .env
-mkdir -p var/log/ego-mcp
 docker compose up --build
 ```
 
@@ -44,9 +43,10 @@ docker compose up --build
 ### 初回導入時の最小手順
 
 1. `.env` を作成して DB/Redis/ログパスを設定する
-2. `DASHBOARD_LOG_PATH` に ego-mcp JSONL ログが出力されるようにする
-3. `docker compose up -d` を実行する
-4. `docker compose logs -f ingestor` で取り込みログを確認する
+2. `ego-mcp` の `EGO_MCP_LOG_DIR`（既定 `/tmp`）配下に `ego-mcp-YYYY-MM-DD.log` が出力されることを確認する
+3. `.env` の `DASHBOARD_LOG_MOUNT_SOURCE` / `DASHBOARD_LOG_PATH` を必要に応じて合わせる
+4. `docker compose up -d` を実行する
+5. `docker compose logs -f ingestor` で取り込みログを確認する
 
 ### 画面簡易図（Now / History / Logs）
 

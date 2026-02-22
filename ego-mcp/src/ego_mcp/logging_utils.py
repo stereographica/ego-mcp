@@ -79,12 +79,13 @@ def _parse_log_level(value: str | None) -> int:
 
 
 def get_log_path() -> Path:
+    log_dir = Path(os.getenv("EGO_MCP_LOG_DIR", "/tmp")).expanduser()
     date_stamp = datetime.now().strftime("%Y-%m-%d")
-    return Path(f"/tmp/ego-mcp-{date_stamp}.log")
+    return log_dir / f"ego-mcp-{date_stamp}.log"
 
 
 def configure_logging() -> Path:
-    """Configure root logger to output JSONL logs to /tmp."""
+    """Configure root logger to output JSONL logs to a configurable directory."""
     log_level = _parse_log_level(os.getenv("LOG_LEVEL", "INFO"))
     log_path = get_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)

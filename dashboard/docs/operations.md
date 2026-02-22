@@ -25,17 +25,17 @@
 
 - TimescaleDB: `pg_dump` / スナップショット運用を採用
 - Redis: `dashboard:current` は再生成可能キャッシュのため優先度低
-- 取り込み元 JSONL (`DASHBOARD_LOG_PATH`) はダッシュボード外の主系ログ保全方針に従う
+- 取り込み元 JSONL (`DASHBOARD_LOG_PATH`, glob 対応) はダッシュボード外の主系ログ保全方針に従う
 
 ### ログローテーション
 
-- ingestor は inode 変更 / truncate を検知して再追従
+- ingestor は inode 変更 / truncate を検知して再追従し、glob 指定時は最新一致ファイルに切替
 - ローテーション方式は `copytruncate` より rename + reopen 推奨
 
 ### 障害対応（よくある事象）
 
 - 画面は開くが数値が増えない:
-  - ingestor が停止している、または `DASHBOARD_LOG_PATH` が誤っている
+  - ingestor が停止している、または `DASHBOARD_LOG_PATH` / `DASHBOARD_LOG_MOUNT_SOURCE` が誤っている
 - Logs タブが空:
   - 取り込み元 JSONL に log event が含まれていない
 - compose 起動時に frontend から API 接続できない:

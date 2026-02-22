@@ -24,7 +24,11 @@ docker compose up --build
 - frontend: `http://localhost:4173`
 - db (TimescaleDB): `localhost:5432`
 - redis: `localhost:6379`
-- ingestor: `DASHBOARD_LOG_PATH` を tail して DB/Redis に反映
+- ingestor: `DASHBOARD_LOG_PATH`（file または glob）を tail して DB/Redis に反映
+
+`ego-mcp` は `EGO_MCP_LOG_DIR`（既定 `/tmp`）配下に
+`ego-mcp-YYYY-MM-DD.log` を出力します。dashboard 側はこの仕様に合わせて、
+既定で `/host-tmp/ego-mcp-*.log` を監視します。
 
 ## backend API
 

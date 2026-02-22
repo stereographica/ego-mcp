@@ -44,3 +44,13 @@ def test_configure_logging_uses_log_level_env(monkeypatch: pytest.MonkeyPatch) -
     assert path == tmp_log
     assert logging.getLogger().level == logging.DEBUG
     assert tmp_log.exists()
+
+
+def test_get_log_path_uses_configurable_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EGO_MCP_LOG_DIR", "/var/tmp/ego-custom")
+
+    path = logging_utils.get_log_path()
+
+    assert path.parent == Path("/var/tmp/ego-custom")
+    assert path.name.startswith("ego-mcp-")
+    assert path.suffix == ".log"

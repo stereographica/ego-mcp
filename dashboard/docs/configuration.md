@@ -10,7 +10,9 @@
 | --- | --- | --- |
 | `DASHBOARD_DATABASE_URL` | なし | TimescaleDB 接続先。backend/ingestor 共通 |
 | `DASHBOARD_REDIS_URL` | なし | Redis 接続先。backend/ingestor 共通 |
-| `DASHBOARD_LOG_PATH` | `/tmp/ego-mcp/telemetry.jsonl` | ingestor が tail する JSONL ログファイル |
+| `DASHBOARD_LOG_MOUNT_SOURCE` | `/tmp` | (compose) ホスト側ログディレクトリ |
+| `DASHBOARD_LOG_MOUNT_TARGET` | `/host-tmp` | (compose) ingestor コンテナ側 mount 先 |
+| `DASHBOARD_LOG_PATH` | `/tmp/ego-mcp-*.log` (ローカル) / `/host-tmp/ego-mcp-*.log` (compose) | ingestor が tail する JSONL ログファイル / glob |
 | `DASHBOARD_INGEST_POLL_SECONDS` | `1.0` | ingestor のファイルポーリング間隔（秒） |
 | `VITE_DASHBOARD_API_BASE` | `http://localhost:8000` | ブラウザから参照する API URL |
 | `VITE_DASHBOARD_WS_BASE` | `ws://localhost:8000` | ブラウザから参照する WS URL |
@@ -20,10 +22,13 @@
 - `DASHBOARD_DATABASE_URL` と `DASHBOARD_REDIS_URL` の両方が設定されると `SqlTelemetryStore` を使用
 - どちらか欠ける場合は `TelemetryStore`（in-memory）へフォールバック
 
-### ログパス設定
+### ログパス設定（ego-mcp 仕様との整合）
 
-- compose では `./var/log/ego-mcp` を ingestor コンテナの `/var/log/ego-mcp` に read-only mount
-- ログローテーション時は inode 変化または truncate を検知して先頭から再追従
+- `ego-mcp` のログ出力先は `EGO_MCP_LOG_DIR`（既定 `/tmp`）で変更可能
+- `ego-mcp` は `ego-mcp-YYYY-MM-DD.log` 形式の日付付き JSONL ログを出力
+- `dashboard` の `DASHBOARD_LOG_PATH` は単一ファイルだけでなく glob も受け付ける
+- compose ではホストの `DASHBOARD_LOG_MOUNT_SOURCE`（既定 `/tmp`）をコンテナに read-only mount
+- ingestor は inode 変更 / truncate と、glob の最新一致ファイルへの切替（日次ローテーション相当）に対応
 
 ## 運用者向け
 
@@ -38,6 +43,7 @@
 
 ### 推奨設定値（本番/常設）
 
-- `DASHBOARD_LOG_PATH=/var/log/ego-mcp/telemetry.jsonl`
+- `DASHBOARD_LOG_MOUNT_SOURCE=/tmp`（compose）
+- `DASHBOARD_LOG_PATH=/host-tmp/ego-mcp-*.log`（compose）
 - `DASHBOARD_INGEST_POLL_SECONDS=1.0`（通常）
 - 高負荷時は `1.5-2.0` 秒へ調整
