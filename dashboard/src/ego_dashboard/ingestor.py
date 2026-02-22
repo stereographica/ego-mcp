@@ -147,7 +147,8 @@ class EgoMcpLogProjector:
             )
             parsed_levels = self._parse_feel_desires_levels(raw)
             if parsed_levels:
-                params = dict(event_raw.get("params", {}))
+                raw_params = event_raw.get("params")
+                params = dict(raw_params) if isinstance(raw_params, dict) else {}
                 params.update(parsed_levels)
                 event_raw["params"] = params
             return normalize_event(event_raw)
