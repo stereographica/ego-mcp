@@ -1,0 +1,82 @@
+:root {
+  font-family: Inter, system-ui, sans-serif;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.grid {
+  display: grid;
+  gap: 16px;
+}
+.grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+}
+.title {
+  font-size: 12px;
+  color: #64748b;
+  margin: 0 0 8px;
+}
+.value {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0;
+}
+.tabs {
+  margin-top: 16px;
+}
+.tab-list {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.tab-trigger {
+  border: 1px solid #cbd5e1;
+  background: white;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.tab-trigger[data-state='active'] {
+  background: #0f172a;
+  color: white;
+}
+.badge {
+  background: #e2e8f0;
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.feed {
+  max-height: 220px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+}
+.feed-item {
+  padding: 10px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  font-size: 14px;
+}
+@media (max-width: 900px) {
+  .grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
