@@ -56,6 +56,32 @@ const bucketFor = (preset: TimeRangePreset) =>
 const isNearBottom = (el: HTMLElement, threshold = 24) =>
   el.scrollHeight - el.scrollTop - el.clientHeight <= threshold
 
+const browserTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
+}
+
+const makeTimestampFormatter = (timeZone: string) =>
+  new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+
+const formatTimestamp = (value: string, formatter: Intl.DateTimeFormat) => {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return formatter.format(parsed)
+}
+
 const TOOL_COLORS = [
   ['#334155', '#94a3b8'],
   ['#1e293b', '#475569'],
@@ -82,6 +108,11 @@ const App = () => {
   const [heatmap, setHeatmap] = useState<HeatmapPoint[]>([])
   const [logs, setLogs] = useState<LogPoint[]>([])
   const logFeedRef = useRef<HTMLDivElement | null>(null)
+  const clientTimeZone = useMemo(() => browserTimeZone(), [])
+  const timestampFormatter = useMemo(
+    () => makeTimestampFormatter(clientTimeZone),
+    [clientTimeZone],
+  )
 
   const range = useMemo<DateRange>(() => {
     if (preset !== 'custom') return makeRange(preset)
@@ -138,13 +169,7 @@ const App = () => {
     }
   }, [range, preset, logLevel, loggerFilter])
 
-  const feed = useMemo(
-    () =>
-      timeline
-        .slice(-8)
-        .map((point) => `${point.ts} / time_phase=${point.value}`),
-    [timeline],
-  )
+  const feed = useMemo(() => timeline.slice(-8), [timeline])
 
   const toolSeriesKeys = useMemo(
     () =>
@@ -253,7 +278,11 @@ const App = () => {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="ts" hide />
                 <YAxis domain={[0, 1]} />
-                <Tooltip />
+                <Tooltip
+                  labelFormatter={(value) =>
+                    formatTimestamp(String(value), timestampFormatter)
+                  }
+                />
                 <Line
                   type="monotone"
                   dataKey="value"
@@ -265,10 +294,12 @@ const App = () => {
           </Card>
           <Card>
             <h3>Event feed</h3>
+            <p className="helper-text">Timestamps: {clientTimeZone}</p>
             <div className="feed">
               {feed.map((item) => (
-                <div className="feed-item" key={item}>
-                  {item}
+                <div className="feed-item" key={item.ts}>
+                  {formatTimestamp(item.ts, timestampFormatter)} / time_phase=
+                  {item.value}
                 </div>
               ))}
             </div>
@@ -284,7 +315,11 @@ const App = () => {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="ts" hide />
                   <YAxis />
-                  <Tooltip />
+                  <Tooltip
+                    labelFormatter={(value) =>
+                      formatTimestamp(String(value), timestampFormatter)
+                    }
+                  />
                   <Legend />
                   {toolSeriesKeys.map((toolName, index) => {
                     const [stroke, fill] =
@@ -305,15 +340,22 @@ const App = () => {
             </Card>
             <Card>
               <h3>time_phase timeline + heatmap</h3>
+              <p className="helper-text">Timestamps: {clientTimeZone}</p>
               <div className="feed feed-tall">
                 {timeline.map((item) => (
                   <div key={item.ts} className="feed-item">
-                    <strong>{item.ts}</strong> <Badge>{item.value}</Badge>
+                    <strong title={item.ts}>
+                      {formatTimestamp(item.ts, timestampFormatter)}
+                    </strong>{' '}
+                    <Badge>{item.value}</Badge>
                   </div>
                 ))}
                 {heatmap.map((item) => (
                   <div key={`heat-${item.ts}`} className="feed-item">
-                    <strong>{item.ts}</strong> {JSON.stringify(item.counts)}
+                    <strong title={item.ts}>
+                      {formatTimestamp(item.ts, timestampFormatter)}
+                    </strong>{' '}
+                    {JSON.stringify(item.counts)}
                   </div>
                 ))}
               </div>
@@ -324,6 +366,7 @@ const App = () => {
         <TabsContent value="logs">
           <Card className="logs-card">
             <h3>Live tail</h3>
+            <p className="helper-text">Timestamps: {clientTimeZone}</p>
             <div className="logs-controls">
               <select
                 value={logLevel}
@@ -361,7 +404,9 @@ const App = () => {
                     key={`log-${item.ts}-${String(item.logger)}-${index}`}
                     className="feed-item log-row"
                   >
-                    <div className="log-ts">{ts}</div>
+                    <div className="log-ts" title={ts}>
+                      {formatTimestamp(ts, timestampFormatter)}
+                    </div>
                     <pre className="log-json">
                       {JSON.stringify(rest, null, 2)}
                     </pre>
