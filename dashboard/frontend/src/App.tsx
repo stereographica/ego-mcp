@@ -17,6 +17,7 @@ import {
   fetchHeatmap,
   fetchIntensity,
   fetchLogs,
+  fetchMetric,
   fetchTimeline,
   fetchUsage,
 } from './api'
@@ -33,6 +34,35 @@ import type {
   TimeRangePreset,
   UsagePoint,
 } from './types'
+
+const DESIRE_METRIC_KEYS = [
+  'information_hunger',
+  'social_thirst',
+  'cognitive_coherence',
+  'pattern_seeking',
+  'predictability',
+  'recognition',
+  'resonance',
+  'expression',
+  'curiosity',
+] as const
+
+type DesireMetricKey = (typeof DESIRE_METRIC_KEYS)[number]
+type DesireMetricSeriesMap = Record<DesireMetricKey, SeriesPoint[]>
+
+const makeEmptyDesireMetricSeriesMap = (): DesireMetricSeriesMap => ({
+  information_hunger: [],
+  social_thirst: [],
+  cognitive_coherence: [],
+  pattern_seeking: [],
+  predictability: [],
+  recognition: [],
+  resonance: [],
+  expression: [],
+  curiosity: [],
+})
+
+const formatMetricLabel = (key: string) => key.replaceAll('_', ' ')
 
 const makeRange = (preset: TimeRangePreset): DateRange => {
   const to = new Date()
@@ -92,7 +122,20 @@ const TOOL_COLORS = [
   ['#be123c', '#fda4af'],
 ]
 
+const DESIRE_LINE_COLORS = [
+  '#0f766e',
+  '#1d4ed8',
+  '#7c3aed',
+  '#b45309',
+  '#be123c',
+  '#047857',
+  '#4338ca',
+  '#a16207',
+  '#e11d48',
+]
+
 const App = () => {
+  const [activeTab, setActiveTab] = useState('now')
   const [preset, setPreset] = useState<TimeRangePreset>('1h')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
@@ -107,6 +150,9 @@ const App = () => {
   const [timeline, setTimeline] = useState<StringPoint[]>([])
   const [heatmap, setHeatmap] = useState<HeatmapPoint[]>([])
   const [logs, setLogs] = useState<LogPoint[]>([])
+  const [desireMetrics, setDesireMetrics] = useState<DesireMetricSeriesMap>(
+    makeEmptyDesireMetricSeriesMap,
+  )
   const logFeedRef = useRef<HTMLDivElement | null>(null)
   const clientTimeZone = useMemo(() => browserTimeZone(), [])
   const timestampFormatter = useMemo(
@@ -127,24 +173,16 @@ const App = () => {
   }, [preset, customFrom, customTo])
 
   useEffect(() => {
-    const load = async () => {
-      const bucket = bucketFor(preset)
-      const [c, i, u, t, h, l] = await Promise.all([
-        fetchCurrent(),
-        fetchIntensity(range, bucket),
-        fetchUsage(range, bucket),
-        fetchTimeline(range),
-        fetchHeatmap(range, bucket),
-        fetchLogs(range, logLevel, loggerFilter),
-      ])
-      setCurrent(c)
-      setIntensity(i)
-      setUsage(u)
-      setTimeline(t)
-      setHeatmap(h)
-      setLogs(l)
+    let disposed = false
+
+    const loadCurrent = async () => {
+      const snapshot = await fetchCurrent()
+      if (!disposed) {
+        setCurrent(snapshot)
+      }
     }
-    void load()
+
+    void loadCurrent()
 
     let socket: WebSocket | null = null
     try {
@@ -162,14 +200,71 @@ const App = () => {
       socket = null
     }
 
-    const timer = setInterval(load, 2000)
+    const timer = setInterval(loadCurrent, 2000)
     return () => {
+      disposed = true
       clearInterval(timer)
       socket?.close()
     }
-  }, [range, preset, logLevel, loggerFilter])
+  }, [])
 
-  const feed = useMemo(() => timeline.slice(-8), [timeline])
+  useEffect(() => {
+    if (activeTab !== 'history') return
+
+    let disposed = false
+    const bucket = bucketFor(preset)
+
+    const loadHistory = async () => {
+      const [i, u, t, h, ...desireSeries] = await Promise.all([
+        fetchIntensity(range, bucket),
+        fetchUsage(range, bucket),
+        fetchTimeline(range),
+        fetchHeatmap(range, bucket),
+        ...DESIRE_METRIC_KEYS.map((key) => fetchMetric(key, range, bucket)),
+      ])
+      if (disposed) return
+      setIntensity(i)
+      setUsage(u)
+      setTimeline(t)
+      setHeatmap(h)
+      setDesireMetrics({
+        information_hunger: desireSeries[0] ?? [],
+        social_thirst: desireSeries[1] ?? [],
+        cognitive_coherence: desireSeries[2] ?? [],
+        pattern_seeking: desireSeries[3] ?? [],
+        predictability: desireSeries[4] ?? [],
+        recognition: desireSeries[5] ?? [],
+        resonance: desireSeries[6] ?? [],
+        expression: desireSeries[7] ?? [],
+        curiosity: desireSeries[8] ?? [],
+      })
+    }
+
+    void loadHistory()
+    const timer = setInterval(loadHistory, 2000)
+    return () => {
+      disposed = true
+      clearInterval(timer)
+    }
+  }, [activeTab, range, preset])
+
+  useEffect(() => {
+    if (activeTab !== 'logs') return
+
+    let disposed = false
+    const loadLogs = async () => {
+      const data = await fetchLogs(range, logLevel, loggerFilter)
+      if (!disposed) {
+        setLogs(data)
+      }
+    }
+    void loadLogs()
+    const timer = setInterval(loadLogs, 2000)
+    return () => {
+      disposed = true
+      clearInterval(timer)
+    }
+  }, [activeTab, range, logLevel, loggerFilter])
 
   const toolSeriesKeys = useMemo(
     () =>
@@ -185,22 +280,32 @@ const App = () => {
     [usage],
   )
 
-  const totalToolCallsInRange = useMemo(
-    () =>
-      usage.reduce((sum, row) => {
-        const rowTotal = Object.entries(row).reduce((acc, [key, value]) => {
-          if (key === 'ts' || typeof value !== 'number') return acc
-          return acc + value
-        }, 0)
-        return sum + rowTotal
-      }, 0),
-    [usage],
-  )
+  const desireChartData = useMemo(() => {
+    const byTs = new Map<string, Record<string, number | string>>()
+    for (const key of DESIRE_METRIC_KEYS) {
+      for (const point of desireMetrics[key]) {
+        const row = byTs.get(point.ts) ?? { ts: point.ts }
+        row[key] = point.value
+        byTs.set(point.ts, row)
+      }
+    }
+    return Array.from(byTs.values()).sort((a, b) =>
+      String(a.ts).localeCompare(String(b.ts)),
+    )
+  }, [desireMetrics])
 
-  const toolCallsTitle =
-    preset === 'custom'
-      ? 'tool calls (custom total)'
-      : `tool calls (${preset} total)`
+  const latestDesireValues = useMemo(() => {
+    const currentLatest = current?.latest_desires ?? {}
+    return DESIRE_METRIC_KEYS.map((key) => {
+      const currentValue = currentLatest[key]
+      if (typeof currentValue === 'number') {
+        return [key, currentValue] as const
+      }
+      const series = desireMetrics[key]
+      const lastPoint = series[series.length - 1]
+      return [key, lastPoint?.value] as const
+    })
+  }, [current, desireMetrics])
 
   useEffect(() => {
     if (autoScroll && logFeedPinned) {
@@ -214,92 +319,85 @@ const App = () => {
   return (
     <main className="container">
       <h1>ego-mcp Dashboard</h1>
-      <div className="range-controls">
-        {(['15m', '1h', '6h', '24h', '7d', 'custom'] as const).map((key) => (
-          <button
-            key={key}
-            className={`tab-trigger range-button ${preset === key ? 'is-active' : ''}`}
-            onClick={() => setPreset(key)}
-            aria-pressed={preset === key}
-          >
-            {key}
-          </button>
-        ))}
-        {preset === 'custom' && (
-          <>
-            <input
-              className="range-input"
-              type="datetime-local"
-              value={customFrom}
-              onChange={(e) => setCustomFrom(e.target.value)}
-            />
-            <input
-              className="range-input"
-              type="datetime-local"
-              value={customTo}
-              onChange={(e) => setCustomTo(e.target.value)}
-            />
-          </>
-        )}
-      </div>
-      <Tabs className="tabs" defaultValue="now">
+
+      <Tabs className="tabs" value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="now">Now</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
         </TabsList>
 
+        {activeTab !== 'now' && (
+          <div className="range-controls">
+            {(['15m', '1h', '6h', '24h', '7d', 'custom'] as const).map(
+              (key) => (
+                <button
+                  key={key}
+                  className={`tab-trigger range-button ${preset === key ? 'is-active' : ''}`}
+                  onClick={() => setPreset(key)}
+                  aria-pressed={preset === key}
+                >
+                  {key}
+                </button>
+              ),
+            )}
+            {preset === 'custom' && (
+              <>
+                <input
+                  className="range-input"
+                  type="datetime-local"
+                  value={customFrom}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                />
+                <input
+                  className="range-input"
+                  type="datetime-local"
+                  value={customTo}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                />
+              </>
+            )}
+          </div>
+        )}
+
         <TabsContent value="now">
           <div className="grid grid-3">
             <Card>
-              <p className="title">{toolCallsTitle}</p>
-              <p className="value">{totalToolCallsInRange}</p>
+              <p className="title">tool calls (24h total)</p>
+              <p className="value">{current?.window_24h?.tool_calls ?? 0}</p>
             </Card>
             <Card>
-              <p className="title">error rate</p>
+              <p className="title">error rate (24h)</p>
               <p className="value">
-                {((current?.error_rate ?? 0) * 100).toFixed(1)}%
+                {(((current?.window_24h?.error_rate ?? 0) as number) * 100).toFixed(
+                  1,
+                )}
+                %
               </p>
             </Card>
             <Card>
-              <p className="title">latest emotion / intensity</p>
-              <p className="value">
-                {current?.latest?.emotion_primary ?? 'n/a'}
-              </p>
-              <Badge>
-                {(current?.latest?.emotion_intensity ?? 0).toFixed(2)}
-              </Badge>
+              <p className="title">latest emotion</p>
+              <div className="emotion-row">
+                <p className="value">{current?.latest?.emotion_primary ?? 'n/a'}</p>
+                <div className="emotion-intensity">
+                  <p className="metric-mini-label">intensity</p>
+                  <Badge>
+                    {(current?.latest?.emotion_intensity ?? 0).toFixed(2)}
+                  </Badge>
+                </div>
+              </div>
             </Card>
           </div>
+
           <Card>
-            <h3>Realtime intensity trend</h3>
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={intensity}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="ts" hide />
-                <YAxis domain={[0, 1]} />
-                <Tooltip
-                  labelFormatter={(value) =>
-                    formatTimestamp(String(value), timestampFormatter)
-                  }
-                />
-                <Line
-                  type="monotone"
-                  dataKey="value"
-                  stroke="#0f172a"
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </Card>
-          <Card>
-            <h3>Event feed</h3>
-            <p className="helper-text">Timestamps: {clientTimeZone}</p>
-            <div className="feed">
-              {feed.map((item) => (
-                <div className="feed-item" key={item.ts}>
-                  {formatTimestamp(item.ts, timestampFormatter)} / time_phase=
-                  {item.value}
+            <h3>Latest desire parameters</h3>
+            <div className="latest-metrics-grid">
+              {latestDesireValues.map(([key, value]) => (
+                <div className="latest-metric-row" key={key}>
+                  <span className="latest-metric-name">
+                    {formatMetricLabel(key)}
+                  </span>
+                  <Badge>{typeof value === 'number' ? value.toFixed(3) : 'n/a'}</Badge>
                 </div>
               ))}
             </div>
@@ -359,6 +457,62 @@ const App = () => {
                   </div>
                 ))}
               </div>
+            </Card>
+          </div>
+
+          <div className="history-stack">
+            <Card>
+              <h3>Intensity history</h3>
+              <ResponsiveContainer width="100%" height={260}>
+                <LineChart data={intensity}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="ts" hide />
+                  <YAxis domain={[0, 1]} />
+                  <Tooltip
+                    labelFormatter={(value) =>
+                      formatTimestamp(String(value), timestampFormatter)
+                    }
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke="#0f172a"
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </Card>
+
+            <Card>
+              <h3>Desire parameter history</h3>
+              <ResponsiveContainer width="100%" height={340}>
+                <LineChart data={desireChartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="ts" hide />
+                  <YAxis domain={[0, 1]} />
+                  <Tooltip
+                    labelFormatter={(value) =>
+                      formatTimestamp(String(value), timestampFormatter)
+                    }
+                  />
+                  <Legend
+                    formatter={(value) => formatMetricLabel(String(value))}
+                  />
+                  {DESIRE_METRIC_KEYS.map((key, index) => (
+                    <Line
+                      key={key}
+                      type="monotone"
+                      dataKey={key}
+                      stroke={DESIRE_LINE_COLORS[index % DESIRE_LINE_COLORS.length]}
+                      dot={false}
+                      connectNulls
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+              {desireChartData.length === 0 && (
+                <p className="helper-text">No desire metric data in selected range.</p>
+              )}
             </Card>
           </div>
         </TabsContent>

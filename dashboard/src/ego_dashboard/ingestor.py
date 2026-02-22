@@ -4,17 +4,23 @@ import glob
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Protocol
 
+from ego_dashboard.constants import DESIRE_METRIC_KEYS
 from ego_dashboard.models import DashboardEvent, LogEvent
 from ego_dashboard.settings import load_settings
 from ego_dashboard.sql_store import SqlTelemetryStore
 from ego_dashboard.store import TelemetryStore
 
 ALLOWED_STRING_PARAMS = {"time_phase", "emotion_primary", "mode", "state"}
+_DESIRE_METRIC_KEY_SET = frozenset(DESIRE_METRIC_KEYS)
+_FEEL_DESIRES_LEVEL_RE = re.compile(
+    r"(?P<name>[a-z_]+)\[(?P<value>[0-9]+(?:\.[0-9]+)?)/(?:high|mid|low)\]"
+)
 LOGGER = logging.getLogger(__name__)
 
 
@@ -116,6 +122,10 @@ class EgoMcpLogProjector:
             return None
 
         if message == "Tool invocation":
+            if tool_name == "feel_desires":
+                # For feel_desires we project completion/failure instead so we can attach
+                # the computed desire levels without double-counting tool usage.
+                return None
             tool_args = raw.get("tool_args")
             safe_tool_args = tool_args if isinstance(tool_args, dict) else {}
             event_raw = self._build_event_raw(
@@ -127,9 +137,52 @@ class EgoMcpLogProjector:
             )
             return normalize_event(event_raw)
 
-        if message not in {"Tool execution completed", "Tool execution failed"}:
-            return None
+        if message == "Tool execution completed" and tool_name == "feel_desires":
+            event_raw = self._build_event_raw(
+                raw,
+                tool_name,
+                {},
+                True,
+                "tool_call_completed",
+            )
+            parsed_levels = self._parse_feel_desires_levels(raw)
+            if parsed_levels:
+                params = dict(event_raw.get("params", {}))
+                params.update(parsed_levels)
+                event_raw["params"] = params
+            return normalize_event(event_raw)
+
+        if message == "Tool execution failed" and tool_name == "feel_desires":
+            tool_args = raw.get("tool_args")
+            safe_tool_args = tool_args if isinstance(tool_args, dict) else {}
+            event_raw = self._build_event_raw(
+                raw,
+                tool_name,
+                safe_tool_args,
+                False,
+                "tool_call_failed",
+            )
+            return normalize_event(event_raw)
+
         return None
+
+    def _parse_feel_desires_levels(self, raw: Mapping[str, object]) -> dict[str, float]:
+        tool_output = raw.get("tool_output")
+        if not isinstance(tool_output, str) or not tool_output:
+            return {}
+
+        # ego-mcp renders `data + "\n\n---\n" + scaffold`; desire levels are on the first line.
+        first_section = tool_output.split("\n\n---\n", 1)[0]
+        levels: dict[str, float] = {}
+        for match in _FEEL_DESIRES_LEVEL_RE.finditer(first_section):
+            name = match.group("name")
+            if name not in _DESIRE_METRIC_KEY_SET:
+                continue
+            try:
+                levels[name] = float(match.group("value"))
+            except ValueError:
+                continue
+        return levels
 
     def _build_event_raw(
         self,
