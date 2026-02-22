@@ -5,6 +5,8 @@ import json
 import logging
 import os
 import time
+from collections import defaultdict
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -78,12 +80,15 @@ def normalize_log(raw: dict[str, object]) -> LogEvent:
     raw_ts = raw.get("ts")
     if not isinstance(raw_ts, str):
         raw_ts = raw.get("timestamp")
+    reserved = {"ts", "timestamp", "level", "logger", "message", "private"}
+    fields = {key: value for key, value in raw.items() if key not in reserved}
     return LogEvent(
         ts=_parse_ts(raw_ts if isinstance(raw_ts, str) else None),
         level=str(raw.get("level", "INFO")).upper(),
         logger=str(raw.get("logger", "ego_dashboard")),
         message=message,
         private=private,
+        fields=fields,
     )
 
 
@@ -102,6 +107,93 @@ class IngestStoreProtocol(Protocol):
     def ingest_log(self, event: LogEvent) -> None: ...
 
 
+class EgoMcpLogProjector:
+    """Project ego-mcp structured logs into dashboard telemetry events."""
+
+    def __init__(self) -> None:
+        self._pending: dict[str, list[dict[str, object]]] = defaultdict(list)
+
+    def project(self, raw: Mapping[str, object]) -> DashboardEvent | None:
+        message = raw.get("message")
+        tool_name = raw.get("tool_name")
+        if not isinstance(message, str) or not isinstance(tool_name, str):
+            return None
+
+        if message == "Tool invocation":
+            tool_args = raw.get("tool_args")
+            if isinstance(tool_args, dict):
+                self._pending[tool_name].append(tool_args)
+            else:
+                self._pending[tool_name].append({})
+            return None
+
+        if message not in {"Tool execution completed", "Tool execution failed"}:
+            return None
+
+        pending_args = self._pop_pending(tool_name)
+        ok = message == "Tool execution completed"
+        event_type = "tool_call_completed" if ok else "tool_call_failed"
+        event_raw = self._build_event_raw(raw, tool_name, pending_args, ok, event_type)
+        return normalize_event(event_raw)
+
+    def _pop_pending(self, tool_name: str) -> dict[str, object]:
+        queue = self._pending.get(tool_name)
+        if not queue:
+            return {}
+        item = queue.pop(0)
+        if not queue:
+            self._pending.pop(tool_name, None)
+        return item
+
+    def _build_event_raw(
+        self,
+        raw: Mapping[str, object],
+        tool_name: str,
+        tool_args: dict[str, object],
+        ok: bool,
+        event_type: str,
+    ) -> dict[str, object]:
+        params: dict[str, object] = {}
+
+        if isinstance(tool_args.get("emotion"), str):
+            params["emotion_primary"] = tool_args["emotion"]
+        for key in ("intensity", "valence", "arousal"):
+            value = tool_args.get(key)
+            if isinstance(value, (int, float)):
+                params[key] = value
+
+        body_state = tool_args.get("body_state")
+        if isinstance(body_state, dict):
+            time_phase = body_state.get("time_phase")
+            if isinstance(time_phase, str):
+                params["time_phase"] = time_phase
+            mode = body_state.get("mode")
+            if isinstance(mode, str):
+                params["mode"] = mode
+            state = body_state.get("state")
+            if isinstance(state, str):
+                params["state"] = state
+
+        raw_ts = raw.get("ts")
+        if not isinstance(raw_ts, str):
+            raw_ts = raw.get("timestamp")
+
+        event_raw: dict[str, object] = {
+            "ts": raw_ts,
+            "event_type": event_type,
+            "tool_name": tool_name,
+            "ok": ok,
+            "params": params,
+            "private": bool(tool_args.get("private", False)),
+            "message": str(raw.get("message", "")),
+        }
+        if isinstance(tool_args.get("emotion"), str):
+            event_raw["emotion_primary"] = tool_args["emotion"]
+        if isinstance(tool_args.get("intensity"), (int, float)):
+            event_raw["emotion_intensity"] = tool_args["intensity"]
+        return event_raw
+
+
 def _default_store() -> IngestStoreProtocol:
     settings = load_settings()
     if settings.use_external_store and settings.database_url and settings.redis_url:
@@ -111,15 +203,33 @@ def _default_store() -> IngestStoreProtocol:
     return TelemetryStore()
 
 
-def ingest_jsonl_line(line: str, store: IngestStoreProtocol) -> None:
+def ingest_jsonl_line(
+    line: str,
+    store: IngestStoreProtocol,
+    projector: EgoMcpLogProjector | None = None,
+) -> None:
     text = line.strip()
     if not text:
         return
     try:
-        event, log = parse_jsonl_line(text)
+        payload = json.loads(text)
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         LOGGER.warning("failed to parse jsonl line: %s", exc)
         return
+    if not isinstance(payload, dict):
+        return
+
+    try:
+        if payload.get("event_type"):
+            event: DashboardEvent | None = normalize_event(payload)
+            log = None
+        else:
+            log = normalize_log(payload)
+            event = projector.project(payload) if projector is not None else None
+    except (TypeError, ValueError) as exc:
+        LOGGER.warning("failed to normalize jsonl line: %s", exc)
+        return
+
     if event is not None:
         store.ingest(event)
     if log is not None:
@@ -140,6 +250,7 @@ def tail_jsonl_file(path: str, store: IngestStoreProtocol, poll_seconds: float =
     active_path: str | None = None
     current_inode: int | None = None
     position = 0
+    projector = EgoMcpLogProjector()
 
     while True:
         selected_path = _select_source_file(path)
@@ -157,6 +268,7 @@ def tail_jsonl_file(path: str, store: IngestStoreProtocol, poll_seconds: float =
             active_path = selected_path
             current_inode = stat.st_ino
             position = 0
+            projector = EgoMcpLogProjector()
             LOGGER.info("opened source file: %s", selected_path)
 
         with open(selected_path, encoding="utf-8") as handle:
@@ -165,7 +277,7 @@ def tail_jsonl_file(path: str, store: IngestStoreProtocol, poll_seconds: float =
                 line = handle.readline()
                 if line == "":
                     break
-                ingest_jsonl_line(line, store)
+                ingest_jsonl_line(line, store, projector=projector)
             position = handle.tell()
 
         time.sleep(poll_seconds)

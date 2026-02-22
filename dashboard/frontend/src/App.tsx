@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Area,
   AreaChart,
@@ -53,6 +53,9 @@ const makeRange = (preset: TimeRangePreset): DateRange => {
 const bucketFor = (preset: TimeRangePreset) =>
   preset === '15m' || preset === '1h' ? '1m' : '5m'
 
+const isNearBottom = (el: HTMLElement, threshold = 24) =>
+  el.scrollHeight - el.scrollTop - el.clientHeight <= threshold
+
 const App = () => {
   const [preset, setPreset] = useState<TimeRangePreset>('1h')
   const [customFrom, setCustomFrom] = useState('')
@@ -60,6 +63,7 @@ const App = () => {
   const [logLevel, setLogLevel] = useState('ALL')
   const [loggerFilter, setLoggerFilter] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
+  const [logFeedPinned, setLogFeedPinned] = useState(true)
 
   const [current, setCurrent] = useState<CurrentResponse | null>(null)
   const [intensity, setIntensity] = useState<SeriesPoint[]>([])
@@ -67,6 +71,7 @@ const App = () => {
   const [timeline, setTimeline] = useState<StringPoint[]>([])
   const [heatmap, setHeatmap] = useState<HeatmapPoint[]>([])
   const [logs, setLogs] = useState<LogPoint[]>([])
+  const logFeedRef = useRef<HTMLDivElement | null>(null)
 
   const range = useMemo<DateRange>(() => {
     if (preset !== 'custom') return makeRange(preset)
@@ -132,23 +137,24 @@ const App = () => {
   )
 
   useEffect(() => {
-    if (autoScroll) {
-      const el = document.getElementById('log-feed')
-      if (el) el.scrollTop = el.scrollHeight
+    if (autoScroll && logFeedPinned) {
+      const el = logFeedRef.current
+      if (el) {
+        el.scrollTop = el.scrollHeight
+      }
     }
-  }, [logs, autoScroll])
+  }, [logs, autoScroll, logFeedPinned])
 
   return (
     <main className="container">
       <h1>ego-mcp Dashboard</h1>
-      <div
-        style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}
-      >
+      <div className="range-controls">
         {(['15m', '1h', '6h', '24h', '7d', 'custom'] as const).map((key) => (
           <button
             key={key}
-            className="tab-trigger"
+            className={`tab-trigger range-button ${preset === key ? 'is-active' : ''}`}
             onClick={() => setPreset(key)}
+            aria-pressed={preset === key}
           >
             {key}
           </button>
@@ -156,11 +162,13 @@ const App = () => {
         {preset === 'custom' && (
           <>
             <input
+              className="range-input"
               type="datetime-local"
               value={customFrom}
               onChange={(e) => setCustomFrom(e.target.value)}
             />
             <input
+              className="range-input"
               type="datetime-local"
               value={customTo}
               onChange={(e) => setCustomTo(e.target.value)}
@@ -227,53 +235,55 @@ const App = () => {
         </TabsContent>
 
         <TabsContent value="history">
-          <Card>
-            <h3>Tool usage history</h3>
-            <ResponsiveContainer width="100%" height={240}>
-              <AreaChart data={usage}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="ts" hide />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Area
-                  type="monotone"
-                  dataKey="feel_desires"
-                  stackId="1"
-                  stroke="#334155"
-                  fill="#94a3b8"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="remember"
-                  stackId="1"
-                  stroke="#1e293b"
-                  fill="#475569"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </Card>
-          <Card>
-            <h3>time_phase timeline + heatmap</h3>
-            <div className="feed">
-              {timeline.map((item) => (
-                <div key={item.ts} className="feed-item">
-                  <strong>{item.ts}</strong> <Badge>{item.value}</Badge>
-                </div>
-              ))}
-              {heatmap.map((item) => (
-                <div key={`heat-${item.ts}`} className="feed-item">
-                  <strong>{item.ts}</strong> {JSON.stringify(item.counts)}
-                </div>
-              ))}
-            </div>
-          </Card>
+          <div className="history-layout">
+            <Card>
+              <h3>Tool usage history</h3>
+              <ResponsiveContainer width="100%" height={280}>
+                <AreaChart data={usage}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="ts" hide />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Area
+                    type="monotone"
+                    dataKey="feel_desires"
+                    stackId="1"
+                    stroke="#334155"
+                    fill="#94a3b8"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="remember"
+                    stackId="1"
+                    stroke="#1e293b"
+                    fill="#475569"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </Card>
+            <Card>
+              <h3>time_phase timeline + heatmap</h3>
+              <div className="feed feed-tall">
+                {timeline.map((item) => (
+                  <div key={item.ts} className="feed-item">
+                    <strong>{item.ts}</strong> <Badge>{item.value}</Badge>
+                  </div>
+                ))}
+                {heatmap.map((item) => (
+                  <div key={`heat-${item.ts}`} className="feed-item">
+                    <strong>{item.ts}</strong> {JSON.stringify(item.counts)}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="logs">
-          <Card>
+          <Card className="logs-card">
             <h3>Live tail</h3>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <div className="logs-controls">
               <select
                 value={logLevel}
                 onChange={(e) => setLogLevel(e.target.value)}
@@ -297,17 +307,38 @@ const App = () => {
                 auto scroll
               </label>
             </div>
-            <div className="feed" id="log-feed">
-              {logs.map((item) => (
-                <div
-                  key={`log-${item.ts}-${item.message}`}
-                  className="feed-item"
-                >
-                  [{item.level}] {item.logger}{' '}
-                  {item.private ? 'REDACTED' : item.message}
+            <div
+              className="feed log-feed"
+              id="log-feed"
+              ref={logFeedRef}
+              onScroll={(e) => setLogFeedPinned(isNearBottom(e.currentTarget))}
+            >
+              {logs.map((item, index) => {
+                const { ts, ...rest } = item
+                return (
+                  <div
+                    key={`log-${item.ts}-${String(item.logger)}-${index}`}
+                    className="feed-item log-row"
+                  >
+                    <div className="log-ts">{ts}</div>
+                    <pre className="log-json">
+                      {JSON.stringify(rest, null, 2)}
+                    </pre>
+                  </div>
+                )
+              })}
+              {logs.length === 0 && (
+                <div className="feed-item log-empty">
+                  No log lines in selected range.
                 </div>
-              ))}
+              )}
             </div>
+            {autoScroll && !logFeedPinned && (
+              <p className="helper-text">
+                Auto scroll is enabled, but paused because you scrolled away
+                from the bottom.
+              </p>
+            )}
           </Card>
         </TabsContent>
       </Tabs>

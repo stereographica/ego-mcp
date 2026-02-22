@@ -11,7 +11,7 @@ body {
   margin: 0;
 }
 .container {
-  max-width: 1100px;
+  width: min(1680px, calc(100vw - 24px));
   margin: 0 auto;
   padding: 24px;
 }
@@ -20,7 +20,7 @@ body {
   gap: 16px;
 }
 .grid-3 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 .card {
   background: white;
@@ -57,6 +57,24 @@ body {
   background: #0f172a;
   color: white;
 }
+.range-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.range-button.is-active {
+  background: #0f172a;
+  color: white;
+  border-color: #0f172a;
+}
+.range-input {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: white;
+}
 .badge {
   background: #e2e8f0;
   border-radius: 999px;
@@ -69,14 +87,82 @@ body {
   display: grid;
   gap: 8px;
 }
+.feed-tall {
+  max-height: clamp(280px, 45vh, 560px);
+}
 .feed-item {
   padding: 10px;
   border-radius: 8px;
   background: #f1f5f9;
   font-size: 14px;
 }
+.history-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 16px;
+}
+.logs-card {
+  min-height: clamp(380px, 62vh, 820px);
+}
+.logs-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.logs-controls select,
+.logs-controls input {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: white;
+}
+.log-feed {
+  max-height: clamp(360px, 62vh, 820px);
+  min-height: 320px;
+}
+.log-row {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.log-ts {
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.log-json {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.log-empty {
+  color: #64748b;
+}
+.helper-text {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
 @media (max-width: 900px) {
   .grid-3 {
     grid-template-columns: 1fr;
+  }
+  .history-layout {
+    grid-template-columns: 1fr;
+  }
+  .log-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .log-ts {
+    white-space: normal;
   }
 }
