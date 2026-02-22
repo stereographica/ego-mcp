@@ -16,6 +16,15 @@ vi.mock('./api', () => ({
   fetchHeatmap: async () => [
     { ts: '2026-01-01T12:00:00Z', counts: { night: 1 } },
   ],
+  fetchLogs: async () => [
+    {
+      ts: '2026-01-01T12:00:00Z',
+      level: 'INFO',
+      logger: 'test',
+      message: 'ok',
+      private: false,
+    },
+  ],
 }))
 
 describe('App', () => {

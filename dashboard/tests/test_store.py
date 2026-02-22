@@ -65,3 +65,15 @@ def test_string_visualization_and_anomaly_detection() -> None:
     assert first_counts["day"] == 5
     assert second_counts["night"] == 5
     assert any(alert["kind"] == "intensity_spike" for alert in alerts)
+
+
+def test_logs_filtering() -> None:
+    from ego_dashboard.models import LogEvent
+
+    store = TelemetryStore()
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store.ingest_log(LogEvent(ts=base, level="INFO", logger="a", message="ok", private=False))
+    store.ingest_log(LogEvent(ts=base, level="ERROR", logger="a", message="ng", private=False))
+    logs = store.logs(base, base + timedelta(minutes=1), "ERROR", "a")
+    assert len(logs) == 1
+    assert logs[0]["level"] == "ERROR"

@@ -35,4 +35,5 @@ def test_history_endpoints() -> None:
     assert client.get(f"/api/v1/metrics/intensity?{query}&bucket=1m").status_code == 200
     assert client.get(f"/api/v1/metrics/time_phase/string-timeline?{query}").status_code == 200
     assert client.get(f"/api/v1/metrics/time_phase/heatmap?{query}&bucket=1m").status_code == 200
+    assert client.get(f"/api/v1/logs?{query}&level=INFO&logger=app").status_code == 200
     assert client.get(f"/api/v1/alerts/anomalies?{query}&bucket=1m").status_code == 200
