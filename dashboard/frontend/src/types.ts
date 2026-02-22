@@ -1,10 +1,16 @@
 export type CurrentResponse = {
   tool_calls_per_min: number
   error_rate: number
+  window_24h?: {
+    tool_calls: number
+    error_rate: number
+  }
+  latest_desires?: Record<string, number>
   latest: {
     emotion_intensity?: number
     emotion_primary?: string
     message?: string
+    numeric_metrics?: Record<string, number>
   } | null
 }
 
