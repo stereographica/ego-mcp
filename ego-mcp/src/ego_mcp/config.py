@@ -6,7 +6,6 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-
 _DEFAULT_MODELS: dict[str, str] = {
     "gemini": "gemini-embedding-001",
     "openai": "text-embedding-3-small",

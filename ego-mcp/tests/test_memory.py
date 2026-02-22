@@ -16,8 +16,9 @@ from ego_mcp.memory import (
     calculate_final_score,
     calculate_importance_boost,
     calculate_time_decay,
+    count_emotions_weighted,
 )
-
+from ego_mcp.types import Emotion, EmotionalTrace, Memory
 
 # --- Fake embedding provider for tests ---
 
@@ -85,6 +86,10 @@ class TestScoringFunctions:
 
     def test_emotion_boost(self) -> None:
         assert calculate_emotion_boost("excited") == 0.4
+        assert calculate_emotion_boost("frustrated") == 0.28
+        assert calculate_emotion_boost("anxious") == 0.22
+        assert calculate_emotion_boost("melancholy") == 0.18
+        assert calculate_emotion_boost("contentment") == 0.08
         assert calculate_emotion_boost("neutral") == 0.0
         assert calculate_emotion_boost("unknown") == 0.0
 
@@ -100,6 +105,28 @@ class TestScoringFunctions:
             importance_boost=0.2,
         )
         assert score >= 0.0
+
+    def test_count_emotions_weighted_uses_primary_and_secondary_weights(self) -> None:
+        memories = [
+            Memory(
+                content="a",
+                emotional_trace=EmotionalTrace(
+                    primary=Emotion.CURIOUS,
+                    secondary=[Emotion.ANXIOUS, Emotion.HAPPY],
+                ),
+            ),
+            Memory(
+                content="b",
+                emotional_trace=EmotionalTrace(
+                    primary=Emotion.ANXIOUS,
+                    secondary=[Emotion.CURIOUS],
+                ),
+            ),
+        ]
+        counts = count_emotions_weighted(memories)
+        assert counts["curious"] == pytest.approx(1.4)
+        assert counts["anxious"] == pytest.approx(1.4)
+        assert counts["happy"] == pytest.approx(0.4)
 
 
 # --- MemoryStore tests ---
@@ -160,17 +187,18 @@ class TestMemoryAutoLink:
     @pytest.mark.asyncio
     async def test_auto_link_similar(self, store: MemoryStore) -> None:
         await store.save(content="I love programming in Python")
-        mem, num_links = await store.save_with_auto_link(
+        mem, num_links, linked_results = await store.save_with_auto_link(
             content="I love programming in Python too",
         )
         # May or may not link depending on embedding similarity
+        assert isinstance(linked_results, list)
         assert isinstance(num_links, int)
         assert num_links >= 0
 
     @pytest.mark.asyncio
     async def test_auto_link_preserves_private_flag(self, store: MemoryStore) -> None:
         await store.save(content="anchor context for links")
-        mem, _num_links = await store.save_with_auto_link(
+        mem, _num_links, _linked_results = await store.save_with_auto_link(
             content="anchor context for links with private notes",
             private=True,
         )

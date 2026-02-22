@@ -23,7 +23,7 @@
 
 ## フェーズ 3b: 記憶・感情・忘却拡張
 
-> 設計書: [design/phase3-enhancements.md](./phase3-enhancements.md)
+> 設計書: [idea.md](./idea.md) / [tool-design.md](./tool-design.md)
 
 `tasks` ディレクトリにタスク化済み（600〜605）
 

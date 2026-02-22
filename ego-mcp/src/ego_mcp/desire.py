@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 # Desire definitions: name → {satisfaction_hours, level (Maslow tier)}
 DESIRES: dict[str, dict[str, Any]] = {
     "information_hunger": {"satisfaction_hours": 4, "level": 1},

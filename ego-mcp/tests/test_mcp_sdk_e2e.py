@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 import os
-from pathlib import Path
 import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
-
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import InitializeResult, TextContent
-
 
 EXPECTED_TOOL_NAMES = {
     "wake_up",
@@ -28,7 +26,7 @@ EXPECTED_TOOL_NAMES = {
     "link_memories",
     "update_relationship",
     "update_self",
-    "search_memories",
+    "emotion_trend",
     "get_episode",
     "create_episode",
 }
