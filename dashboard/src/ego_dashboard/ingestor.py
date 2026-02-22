@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import time
-from collections import defaultdict
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Protocol
@@ -110,9 +109,6 @@ class IngestStoreProtocol(Protocol):
 class EgoMcpLogProjector:
     """Project ego-mcp structured logs into dashboard telemetry events."""
 
-    def __init__(self) -> None:
-        self._pending: dict[str, list[dict[str, object]]] = defaultdict(list)
-
     def project(self, raw: Mapping[str, object]) -> DashboardEvent | None:
         message = raw.get("message")
         tool_name = raw.get("tool_name")
@@ -121,29 +117,19 @@ class EgoMcpLogProjector:
 
         if message == "Tool invocation":
             tool_args = raw.get("tool_args")
-            if isinstance(tool_args, dict):
-                self._pending[tool_name].append(tool_args)
-            else:
-                self._pending[tool_name].append({})
-            return None
+            safe_tool_args = tool_args if isinstance(tool_args, dict) else {}
+            event_raw = self._build_event_raw(
+                raw,
+                tool_name,
+                safe_tool_args,
+                True,
+                "tool_call_invoked",
+            )
+            return normalize_event(event_raw)
 
         if message not in {"Tool execution completed", "Tool execution failed"}:
             return None
-
-        pending_args = self._pop_pending(tool_name)
-        ok = message == "Tool execution completed"
-        event_type = "tool_call_completed" if ok else "tool_call_failed"
-        event_raw = self._build_event_raw(raw, tool_name, pending_args, ok, event_type)
-        return normalize_event(event_raw)
-
-    def _pop_pending(self, tool_name: str) -> dict[str, object]:
-        queue = self._pending.get(tool_name)
-        if not queue:
-            return {}
-        item = queue.pop(0)
-        if not queue:
-            self._pending.pop(tool_name, None)
-        return item
+        return None
 
     def _build_event_raw(
         self,
@@ -237,48 +223,65 @@ def ingest_jsonl_line(
 
 
 def _select_source_file(path_or_glob: str) -> str | None:
+    resolved = _resolve_source_files(path_or_glob)
+    if not resolved:
+        return None
+    return max(resolved, key=lambda path: (os.path.getmtime(path), path))
+
+
+def _resolve_source_files(path_or_glob: str) -> list[str]:
     if glob.has_magic(path_or_glob):
-        matches = [path for path in glob.glob(path_or_glob) if os.path.isfile(path)]
-        if not matches:
-            return None
-        return max(matches, key=lambda path: (os.path.getmtime(path), path))
-    return path_or_glob if os.path.isfile(path_or_glob) else None
+        return sorted(path for path in glob.glob(path_or_glob) if os.path.isfile(path))
+    return [path_or_glob] if os.path.isfile(path_or_glob) else []
 
 
 def tail_jsonl_file(path: str, store: IngestStoreProtocol, poll_seconds: float = 1.0) -> None:
-    """Tail a single file path or glob pattern (latest matching file)."""
-    active_path: str | None = None
-    current_inode: int | None = None
-    position = 0
-    projector = EgoMcpLogProjector()
+    """Tail a file path or all files matching a glob pattern."""
+    inodes: dict[str, int] = {}
+    positions: dict[str, int] = {}
+    projectors: dict[str, EgoMcpLogProjector] = {}
 
     while True:
-        selected_path = _select_source_file(path)
-        if selected_path is None:
-            if current_inode is not None:
-                LOGGER.info("source file disappeared, waiting for recreation: %s", path)
-            active_path = None
-            current_inode = None
-            position = 0
+        selected_paths = _resolve_source_files(path)
+        if not selected_paths:
+            if inodes:
+                LOGGER.info("source file(s) disappeared, waiting for recreation: %s", path)
+            inodes.clear()
+            positions.clear()
+            projectors.clear()
             time.sleep(poll_seconds)
             continue
 
-        stat = os.stat(selected_path)
-        if active_path != selected_path or current_inode != stat.st_ino or stat.st_size < position:
-            active_path = selected_path
-            current_inode = stat.st_ino
-            position = 0
-            projector = EgoMcpLogProjector()
-            LOGGER.info("opened source file: %s", selected_path)
+        active_set = set(selected_paths)
+        for stale_path in list(positions):
+            if stale_path not in active_set:
+                positions.pop(stale_path, None)
+                inodes.pop(stale_path, None)
+                projectors.pop(stale_path, None)
 
-        with open(selected_path, encoding="utf-8") as handle:
-            handle.seek(position)
-            while True:
-                line = handle.readline()
-                if line == "":
-                    break
-                ingest_jsonl_line(line, store, projector=projector)
-            position = handle.tell()
+        for selected_path in selected_paths:
+            stat = os.stat(selected_path)
+            current_inode = inodes.get(selected_path)
+            position = positions.get(selected_path, 0)
+            projector = projectors.setdefault(selected_path, EgoMcpLogProjector())
+
+            if current_inode != stat.st_ino or stat.st_size < position:
+                inodes[selected_path] = stat.st_ino
+                position = 0
+                positions[selected_path] = 0
+                projectors[selected_path] = EgoMcpLogProjector()
+                projector = projectors[selected_path]
+                LOGGER.info("opened source file: %s", selected_path)
+
+            with open(selected_path, encoding="utf-8") as handle:
+                handle.seek(position)
+                while True:
+                    line = handle.readline()
+                    if line == "":
+                        break
+                    ingest_jsonl_line(line, store, projector=projector)
+                positions[selected_path] = handle.tell()
+                inodes[selected_path] = stat.st_ino
 
         time.sleep(poll_seconds)
 

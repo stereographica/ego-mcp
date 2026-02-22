@@ -159,8 +159,21 @@ class TelemetryStore:
                 and emotion_source.emotion_intensity is not None
             ):
                 latest_payload["emotion_intensity"] = emotion_source.emotion_intensity
+        log_window = [log for log in self._logs if log.ts >= window_start]
+        invocation_count = sum(
+            1
+            for log in log_window
+            if log.message == "Tool invocation" and "tool_name" in log.fields
+        )
+        failure_count = sum(1 for log in log_window if log.message == "Tool execution failed")
+        tool_calls_per_min = invocation_count if invocation_count > 0 else len(recent)
+        error_rate = (
+            (failure_count / invocation_count)
+            if invocation_count > 0
+            else (len(errors) / len(recent) if recent else 0.0)
+        )
         return {
             "latest": latest_payload,
-            "tool_calls_per_min": len(recent),
-            "error_rate": len(errors) / len(recent) if recent else 0.0,
+            "tool_calls_per_min": tool_calls_per_min,
+            "error_rate": error_rate,
         }

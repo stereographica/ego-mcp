@@ -306,6 +306,22 @@ class SqlTelemetryStore:
                     (latest_ts, latest_ts),
                 )
                 row = cur.fetchone()
+                cur.execute(
+                    """
+                    SELECT
+                      sum(
+                        CASE
+                          WHEN message = 'Tool invocation' AND fields ? 'tool_name' THEN 1
+                          ELSE 0
+                        END
+                      ),
+                      sum(CASE WHEN message = 'Tool execution failed' THEN 1 ELSE 0 END)
+                    FROM log_events
+                    WHERE ts >= %s - interval '1 minute' AND ts <= %s
+                    """,
+                    (latest_ts, latest_ts),
+                )
+                log_row = cur.fetchone()
                 if latest.get("emotion_primary") is None or latest.get("emotion_intensity") is None:
                     cur.execute(
                         """
@@ -324,6 +340,9 @@ class SqlTelemetryStore:
         calls, errors = row if row is not None else (0, 0)
         total_calls = int(calls or 0)
         total_errors = int(errors or 0)
+        log_calls_raw, log_failures_raw = log_row if log_row is not None else (0, 0)
+        log_calls = int(log_calls_raw or 0)
+        log_failures = int(log_failures_raw or 0)
         if emotion_row is not None:
             emotion_primary, emotion_intensity = emotion_row
             if latest.get("emotion_primary") is None and emotion_primary is not None:
@@ -332,8 +351,12 @@ class SqlTelemetryStore:
                 latest["emotion_intensity"] = float(emotion_intensity)
         return {
             "latest": latest,
-            "tool_calls_per_min": total_calls,
-            "error_rate": (total_errors / total_calls) if total_calls else 0.0,
+            "tool_calls_per_min": log_calls if log_calls > 0 else total_calls,
+            "error_rate": (
+                (log_failures / log_calls)
+                if log_calls > 0
+                else ((total_errors / total_calls) if total_calls else 0.0)
+            ),
         }
 
 

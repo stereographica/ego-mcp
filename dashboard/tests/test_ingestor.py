@@ -100,7 +100,20 @@ def test_select_source_file_uses_latest_match(tmp_path: Path) -> None:
     assert selected == str(newer)
 
 
-def test_projector_creates_event_from_invocation_and_completion() -> None:
+def test_resolve_source_files_returns_all_matches(tmp_path: Path) -> None:
+    from ego_dashboard.ingestor import _resolve_source_files
+
+    first = tmp_path / "ego-mcp-2026-01-01.log"
+    second = tmp_path / "ego-mcp-2026-01-02.log"
+    first.write_text("{}\n", encoding="utf-8")
+    second.write_text("{}\n", encoding="utf-8")
+
+    resolved = _resolve_source_files(str(tmp_path / "ego-mcp-*.log"))
+
+    assert resolved == [str(first), str(second)]
+
+
+def test_projector_creates_event_from_invocation_and_ignores_completion() -> None:
     projector = EgoMcpLogProjector()
 
     invocation = {
@@ -124,8 +137,7 @@ def test_projector_creates_event_from_invocation_and_completion() -> None:
         "tool_name": "remember",
     }
 
-    assert projector.project(invocation) is None
-    event = projector.project(completion)
+    event = projector.project(invocation)
 
     assert event is not None
     assert event.tool_name == "remember"
@@ -133,3 +145,4 @@ def test_projector_creates_event_from_invocation_and_completion() -> None:
     assert event.emotion_primary == "curious"
     assert event.emotion_intensity == 0.7
     assert event.string_metrics["time_phase"] == "night"
+    assert projector.project(completion) is None

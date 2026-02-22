@@ -28,10 +28,10 @@ vi.mock('./api', () => ({
 }))
 
 describe('App', () => {
-  it('shows now tab summary cards', async () => {
+  it('shows now tab summary cards with range total tool calls', async () => {
     render(<App />)
-    expect(await screen.findByText('tool calls / min')).toBeInTheDocument()
-    expect(await screen.findByText('4')).toBeInTheDocument()
+    expect(await screen.findByText('tool calls (1h total)')).toBeInTheDocument()
+    expect(await screen.findByText('3')).toBeInTheDocument()
     expect(await screen.findByText('curious')).toBeInTheDocument()
   })
 })
