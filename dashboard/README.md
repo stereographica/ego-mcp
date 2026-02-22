@@ -12,6 +12,9 @@
 `SqlTelemetryStore` が有効化され、TimescaleDB/Redis を利用します。
 未設定時は `TelemetryStore`（in-memory）へフォールバックします。
 
+backend の CORS は `DASHBOARD_CORS_ALLOWED_ORIGINS`（カンマ区切り）で設定します。
+例: `http://localhost:4173,http://127.0.0.1:4173`
+
 ## 起動（docker-compose）
 
 ```bash

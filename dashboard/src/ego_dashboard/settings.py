@@ -8,6 +8,12 @@ from dataclasses import dataclass
 class DashboardSettings:
     database_url: str | None = None
     redis_url: str | None = None
+    cors_allowed_origins: tuple[str, ...] = (
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    )
     # File path or glob pattern. Default matches ego-mcp's dated JSONL logs.
     log_path: str = "/tmp/ego-mcp-*.log"
     ingest_poll_seconds: float = 1.0
@@ -37,10 +43,22 @@ def _default_log_path() -> str:
     return "/tmp/ego-mcp-*.log"
 
 
+def _env_origins(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    origins = tuple(item.strip() for item in raw.split(",") if item.strip())
+    return origins
+
+
 def load_settings() -> DashboardSettings:
     return DashboardSettings(
         database_url=os.getenv("DASHBOARD_DATABASE_URL"),
         redis_url=os.getenv("DASHBOARD_REDIS_URL"),
+        cors_allowed_origins=_env_origins(
+            "DASHBOARD_CORS_ALLOWED_ORIGINS",
+            DashboardSettings().cors_allowed_origins,
+        ),
         log_path=os.getenv("DASHBOARD_LOG_PATH", _default_log_path()),
         ingest_poll_seconds=_env_float("DASHBOARD_INGEST_POLL_SECONDS", 1.0),
     )

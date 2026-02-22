@@ -5,8 +5,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from fastapi import FastAPI, Query, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 
-from ego_dashboard.settings import load_settings
+from ego_dashboard.settings import DashboardSettings, load_settings
 from ego_dashboard.sql_store import SqlTelemetryStore
 from ego_dashboard.store import TelemetryStore
 
@@ -46,9 +47,21 @@ def _default_store() -> StoreProtocol:
     return TelemetryStore()
 
 
-def create_app(store: StoreProtocol | None = None) -> FastAPI:
+def create_app(
+    store: StoreProtocol | None = None,
+    settings: DashboardSettings | None = None,
+) -> FastAPI:
+    app_settings = settings or load_settings()
     telemetry = store or _default_store()
     app = FastAPI(title="ego-mcp dashboard api")
+    if app_settings.cors_allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(app_settings.cors_allowed_origins),
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     @app.get("/api/v1/current")
     def get_current() -> dict[str, object]:

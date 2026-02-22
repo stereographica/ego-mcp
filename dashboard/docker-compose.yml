@@ -30,6 +30,7 @@ services:
     environment:
       DASHBOARD_DATABASE_URL: ${DASHBOARD_DATABASE_URL:-postgresql://ego:ego@db:5432/ego_dashboard}
       DASHBOARD_REDIS_URL: ${DASHBOARD_REDIS_URL:-redis://redis:6379/0}
+      DASHBOARD_CORS_ALLOWED_ORIGINS: ${DASHBOARD_CORS_ALLOWED_ORIGINS:-http://localhost:4173,http://127.0.0.1:4173}
     ports:
       - "8000:8000"
     depends_on:

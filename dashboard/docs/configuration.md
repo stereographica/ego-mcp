@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | `DASHBOARD_DATABASE_URL` | なし | TimescaleDB 接続先。backend/ingestor 共通 |
 | `DASHBOARD_REDIS_URL` | なし | Redis 接続先。backend/ingestor 共通 |
+| `DASHBOARD_CORS_ALLOWED_ORIGINS` | `http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173` | backend API の CORS allow origins（カンマ区切り） |
 | `DASHBOARD_LOG_MOUNT_SOURCE` | `/tmp` | (compose) ホスト側ログディレクトリ |
 | `DASHBOARD_LOG_MOUNT_TARGET` | `/host-tmp` | (compose) ingestor コンテナ側 mount 先 |
 | `DASHBOARD_LOG_PATH` | `/tmp/ego-mcp-*.log` (ローカル) / `/host-tmp/ego-mcp-*.log` (compose) | ingestor が tail する JSONL ログファイル / glob |
@@ -21,6 +22,15 @@
 
 - `DASHBOARD_DATABASE_URL` と `DASHBOARD_REDIS_URL` の両方が設定されると `SqlTelemetryStore` を使用
 - どちらか欠ける場合は `TelemetryStore`（in-memory）へフォールバック
+
+### CORS 設定（AllowedOrigin）
+
+- backend API は `DASHBOARD_CORS_ALLOWED_ORIGINS` をカンマ区切りで解釈する
+- docker-compose の既定値は `http://localhost:4173,http://127.0.0.1:4173`
+- Vite をローカル単体起動する場合（既定 `5173`）は、必要に応じて `5173` を追加する
+- 例:
+  - `DASHBOARD_CORS_ALLOWED_ORIGINS=http://localhost:4173,http://127.0.0.1:4173`
+  - `DASHBOARD_CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`
 
 ### ログパス設定（ego-mcp 仕様との整合）
 
