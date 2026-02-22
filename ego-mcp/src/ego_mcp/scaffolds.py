@@ -20,6 +20,7 @@ SCAFFOLD_INTROSPECT = (
     "Reflect on these in your own words. How do you feel right now?\n"
     "Save with remember (category: introspection).\n"
     "If your self-understanding changed, use update_self.\n"
+    "Use emotion_trend for a deeper look at your emotional patterns.\n"
     "If memory feels fragmented, run consolidate."
 )
 
@@ -37,13 +38,11 @@ SCAFFOLD_AM_I_GENUINE = (
     "Is there something more honest you could say?"
 )
 
-SCAFFOLD_RECALL = (
-    "How do these memories connect to the current moment?\n"
-    "Need narrower results? use search_memories.\n"
-    "Need narrative detail? use get_episode.\n"
-    "If you found a new relation, use link_memories."
+SCAFFOLD_EMOTION_TREND = (
+    "What patterns do you notice? Any surprises?\n"
+    "Are the undercurrents telling you something the surface emotions aren't?\n"
+    "If something feels unresolved, consider running introspect."
 )
-
 
 def render(template: str, companion_name: str) -> str:
     """Replace {companion_name} placeholder in a scaffold template."""

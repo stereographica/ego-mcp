@@ -19,6 +19,10 @@ class Emotion(str, Enum):
     NOSTALGIC = "nostalgic"
     CURIOUS = "curious"
     NEUTRAL = "neutral"
+    MELANCHOLY = "melancholy"
+    ANXIOUS = "anxious"
+    CONTENTMENT = "contentment"
+    FRUSTRATED = "frustrated"
 
 
 class Category(str, Enum):

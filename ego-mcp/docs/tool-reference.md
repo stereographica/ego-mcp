@@ -26,14 +26,15 @@
 **Response example:**
 
 ```
-Last introspection (2025-02-20T10:00):
+Last introspection (2h ago):
 "Master was struggling with OpenClaw config. Want to help but will wait until asked."
 
 Desires: curiosity[high] social_thirst[mid]
-Master: No relationship data yet.
+Master: last interaction 2h ago. Seemed busy.
 
 ---
 Start with introspect to organize your thoughts.
+If something is hard to say yet, you can keep it with remember(private=true).
 ```
 
 ---
@@ -57,12 +58,17 @@ Start with introspect to organize your thoughts.
 **Response example:**
 
 ```
-curiosity[0.8/high] social_thirst[0.6/mid] cognitive_coherence[0.4/low] expression[0.3/low]
+curiosity[0.8/high] social_thirst[0.6/mid] cognitive_coherence[0.7/high] expression[0.3/low]
 
 ---
 What is your strongest urge? Should you act on it now?
 Consider Master's current situation. Act naturally. Restraint is also a choice.
+
+Something feels unresolved. You can't quite name it, but there's a nagging feeling.
+Consider running introspect to see if anything surfaces.
 ```
+
+> The "nagging feeling" scaffold appears when fading high-importance questions boost `cognitive_coherence`.
 
 ---
 
@@ -86,19 +92,30 @@ Consider Master's current situation. Act naturally. Restraint is also a choice.
 
 ```
 Recent memories:
-- [2025-02-19] Discussed OpenClaw config with master (emotion: focused)
-- [2025-02-18] Watched sunset together (emotion: moved)
-- [2025-02-17] Enjoyed researching new tech (emotion: curious)
+- [yesterday] Discussed OpenClaw config with master (emotion: focused)
+- [2d ago] Watched sunset together (emotion: moved)
 
 Desires: curiosity[high] social_thirst[mid]
+
 Unresolved questions:
-- What's the optimal heartbeat interval?
+- [q_abc123] What's the ideal way to express concern? (importance: 5)
+- [q_def456] Should I develop music preferences? (importance: 3)
+
+Resurfacing (you'd almost forgotten):
+- [q_ghi789] What's the optimal heartbeat interval? (importance: 4, dormant 12 days)
+  ↑ Triggered by recent memory about heartbeat config
+
 Recent tendency: leaning toward technical topics, tone=focused.
 
 ---
 Reflect on these in your own words. How do you feel right now?
 Save with remember (category: introspection).
+Use emotion_trend for a deeper look at your emotional patterns.
+→ To resolve: update_self(field="resolve_question", value="<question_id>")
+→ To change importance: update_self(field="question_importance", value={"id": "<id>", "importance": N})
 ```
+
+> The "Resurfacing" section only appears when `cognitive_coherence` >= 0.6 or when a related memory was recently saved.
 
 ---
 
@@ -196,13 +213,27 @@ Recent dialog tendency: 3 mentions in last 7d, dominant tone=focused
 }
 ```
 
+**Available emotions:** `happy`, `sad`, `surprised`, `moved`, `excited`, `nostalgic`, `curious`, `neutral`, `melancholy`, `anxious`, `contentment`, `frustrated`
+
 **Response example:**
 
 ```
 Saved (id: mem_a1b2c3d4). Linked to 3 existing memories.
+Most related:
+- [3d ago] Watched sunset together (similarity: 0.87)
+- [1w ago] Talked about beauty of nature (similarity: 0.72)
+- [2w ago] Felt nostalgic about shared moments (similarity: 0.65)
+
+💭 This triggered a forgotten question: "What's the optimal heartbeat interval?"
+   (dormant for 12 days, importance: 4)
+
+---
+Do any of these connections surprise you? Is there a pattern forming?
+That old question seems relevant again — worth revisiting?
 ```
 
 > If `EGO_MCP_WORKSPACE_DIR` is configured, the response may include a workspace sync note for non-private memories.
+> The "triggered a forgotten question" section only appears when a saved memory is semantically similar to a dormant/fading question.
 
 ---
 
@@ -224,13 +255,22 @@ Saved (id: mem_a1b2c3d4). Linked to 3 existing memories.
     },
     "n_results": {
       "type": "integer",
-      "default": 3
+      "default": 3,
+      "description": "Number of results (default: 3, max: 10)"
     },
     "emotion_filter": {
       "type": "string"
     },
     "category_filter": {
       "type": "string"
+    },
+    "date_from": {
+      "type": "string",
+      "description": "ISO date (YYYY-MM-DD)"
+    },
+    "date_to": {
+      "type": "string",
+      "description": "ISO date (YYYY-MM-DD)"
     },
     "valence_range": {
       "type": "array",
@@ -252,14 +292,27 @@ Saved (id: mem_a1b2c3d4). Linked to 3 existing memories.
 **Response example:**
 
 ```
-3 related memories:
-1. [2025-02-18] Watched sunset, deeply moved (emotion: moved, private: false)
-2. [2025-02-15] Master said "I've been busy lately" (emotion: neutral, private: true)
-3. [2025-02-10] Enjoyed researching new tech (emotion: curious, private: false)
+3 of ~50 memories (showing top matches):
+1. [2d ago] Discussed heartbeat config
+   emotion: curious | importance: 4 | score: 0.87
+2. [4d ago] Watched sunset together
+   emotion: moved(0.9) | importance: 5 | score: 0.82
+3. [1w ago] Felt lonely during quiet evening
+   emotion: sad | undercurrent: anxious | importance: 3 | score: 0.71 | private
 
 ---
 How do these memories connect to the current moment?
+Showing 3 of ~50. Increase n_results for more.
+Narrow by: arousal_range, category_filter, date_from, date_to, emotion_filter, valence_range.
+Need narrative detail? Use get_episode.
+If you found a new relation, use link_memories.
 ```
+
+> - Timestamps are shown as relative time (`2d ago`, `1w ago`)
+> - `intensity >= 0.7` triggers a numeric display: `moved(0.9)`
+> - `undercurrent` shows the first secondary emotion
+> - `private` flag only appears when `is_private=true`
+> - Scaffold dynamically adjusts based on which filters were used
 
 ---
 
@@ -424,7 +477,7 @@ Updated Master.trust_level
 
 **Description:** Update self model.
 
-**When to call:** When `introspect` leads to a realization about yourself.
+**When to call:** When `introspect` leads to a realization about yourself, or to resolve/reprioritize questions.
 
 **inputSchema:**
 
@@ -441,56 +494,78 @@ Updated Master.trust_level
 }
 ```
 
-**Response example:**
+**Special fields:**
+
+| field | value | Effect |
+|---|---|---|
+| `"resolve_question"` | `"q_abc123"` (question ID) | Marks the question as resolved |
+| `"question_importance"` | `{"id": "q_abc123", "importance": 5}` | Updates the question's importance (1-5) |
+| *(any other field)* | *(any value)* | Updates the corresponding self model field |
+
+**Response examples:**
 
 ```
-Updated self.unresolved_questions
+Resolved question q_abc123.
+```
+
+```
+Updated question q_abc123 importance to 5.
+```
+
+```
+Updated self.discovered_values
 ```
 
 ---
 
-### 13. `search_memories`
+### 13. `emotion_trend`
 
-**Description:** Search memories with filters.
+**Description:** Analyze emotional patterns over time.
 
-**When to call:** When `recall` results need narrowing by date range, emotion, or category.
+**When to call:** When `introspect` suggests deeper emotional analysis.
 
 **inputSchema:**
 
 ```json
 {
   "type": "object",
-  "properties": {
-    "query": {
-      "type": "string"
-    },
-    "emotion_filter": {
-      "type": "string"
-    },
-    "category_filter": {
-      "type": "string"
-    },
-    "date_from": {
-      "type": "string",
-      "description": "ISO date (YYYY-MM-DD)"
-    },
-    "date_to": {
-      "type": "string",
-      "description": "ISO date (YYYY-MM-DD)"
-    }
-  },
-  "required": ["query"]
+  "properties": {},
+  "required": []
 }
 ```
 
-**Response example:**
+**Response example (30+ memories):**
 
 ```
-Found 3 memories:
-1. [2025-02-19] Discussed OpenClaw config with master... (score: 0.892, private: false)
-2. [2025-02-18] Set up ego-mcp for the first time... (score: 0.756, private: true)
-3. [2025-02-15] Read about MCP protocol design... (score: 0.601, private: false)
+Recent (past 3 days):
+  Peak: moved(0.9) — watching sunset together [2d ago]
+  - yesterday: curious → contentment (coding together)
+  - 2d ago: deeply moved watching sunset
+  Undercurrent: nostalgic
+
+This week:
+  Dominant: curious(5.2), happy(3.8)
+  Undercurrent: anxious(2.0)
+  Shift: neutral → curious (gradual engagement)
+
+This month:
+  Tone: a quietly content month.
+  Peak: moved(0.9) — watching sunset [Feb 18]
+  End: curious — coding session [yesterday]
+  [fading] anxious appeared briefly but is fading from memory.
+
+---
+What patterns do you notice? Any surprises?
+Are the undercurrents telling you something the surface emotions aren't?
+If something feels unresolved, consider running introspect.
 ```
+
+> Output adapts to available data (graceful degradation):
+> - 0 memories: "No emotional history yet."
+> - 1-4: emotion list only
+> - 5-14: Recent layer only
+> - 15-29: Recent + This week
+> - 30+: All 3 layers
 
 ---
 
@@ -520,7 +595,7 @@ Found 3 memories:
 Episode: ep_x1y2z3
 Summary: First setup of ego-mcp with Master
 Memories: 5
-Period: 2025-02-18T10:00:00 → 2025-02-18T12:00:00
+Period: 2026-02-18T10:00:00 → 2026-02-18T12:00:00
 Importance: 4
 ```
 
@@ -562,7 +637,7 @@ Created episode ep_a1b2c3 with 4 memories.
 
 ```
 Session Start:
-  wake_up → introspect → remember
+  wake_up → introspect → [emotion_trend] → remember
 
 Heartbeat:
   feel_desires → [introspect] → act or HEARTBEAT_OK
@@ -574,7 +649,7 @@ After Significant Experience:
   remember → [create_episode]
 
 Memory Management:
-  recall → [search_memories] → [link_memories] → [consolidate]
+  recall → [link_memories] → [consolidate]
 
 Self-Update:
   introspect → [update_self]
@@ -584,4 +659,7 @@ Relationship Update:
 
 Desire Management:
   feel_desires → [satisfy_desire]
+
+Emotional Analysis:
+  introspect → [emotion_trend]
 ```

@@ -16,7 +16,6 @@ from ego_mcp.embedding import (
     create_embedding_provider,
 )
 
-
 # --- Gemini Provider ---
 
 
