@@ -151,8 +151,57 @@ body {
   color: #64748b;
   font-size: 12px;
 }
+.emotion-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.emotion-intensity {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+.metric-mini-label {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+}
+.latest-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+.latest-metric-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #f1f5f9;
+}
+.latest-metric-name {
+  color: #334155;
+  font-size: 14px;
+}
+.history-stack {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
 @media (max-width: 900px) {
   .grid-3 {
+    grid-template-columns: 1fr;
+  }
+  .emotion-row {
+    align-items: stretch;
+  }
+  .emotion-intensity {
+    justify-items: start;
+  }
+  .latest-metrics-grid {
     grid-template-columns: 1fr;
   }
   .history-layout {

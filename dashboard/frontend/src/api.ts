@@ -27,19 +27,27 @@ export const fetchCurrent = async (): Promise<CurrentResponse> =>
   get('/api/v1/current', {
     tool_calls_per_min: 0,
     error_rate: 0,
+    window_24h: { tool_calls: 0, error_rate: 0 },
+    latest_desires: {},
     latest: { emotion_primary: 'n/a', emotion_intensity: 0 },
   })
 
-export const fetchIntensity = async (
+export const fetchMetric = async (
+  key: string,
   range: DateRange,
   bucket: string,
 ): Promise<SeriesPoint[]> => {
   const data = await get<{ items: SeriesPoint[] }>(
-    `/api/v1/metrics/intensity?${encodeRange(range)}&bucket=${bucket}`,
+    `/api/v1/metrics/${encodeURIComponent(key)}?${encodeRange(range)}&bucket=${bucket}`,
     { items: [] },
   )
   return data.items
 }
+
+export const fetchIntensity = async (
+  range: DateRange,
+  bucket: string,
+): Promise<SeriesPoint[]> => fetchMetric('intensity', range, bucket)
 
 export const fetchUsage = async (
   range: DateRange,
