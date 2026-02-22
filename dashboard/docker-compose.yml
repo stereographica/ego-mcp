@@ -46,10 +46,10 @@ services:
     environment:
       DASHBOARD_DATABASE_URL: ${DASHBOARD_DATABASE_URL:-postgresql://ego:ego@db:5432/ego_dashboard}
       DASHBOARD_REDIS_URL: ${DASHBOARD_REDIS_URL:-redis://redis:6379/0}
-      DASHBOARD_LOG_PATH: ${DASHBOARD_LOG_PATH:-/var/log/ego-mcp/telemetry.jsonl}
+      DASHBOARD_LOG_PATH: ${DASHBOARD_LOG_PATH:-/host-tmp/ego-mcp-*.log}
       DASHBOARD_INGEST_POLL_SECONDS: ${DASHBOARD_INGEST_POLL_SECONDS:-1.0}
     volumes:
-      - ./var/log/ego-mcp:/var/log/ego-mcp:ro
+      - ${DASHBOARD_LOG_MOUNT_SOURCE:-/tmp}:${DASHBOARD_LOG_MOUNT_TARGET:-/host-tmp}:ro
     depends_on:
       db:
         condition: service_healthy

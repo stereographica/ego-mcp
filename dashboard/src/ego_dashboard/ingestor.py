@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import os
@@ -45,6 +46,8 @@ def normalize_event(raw: dict[str, object]) -> DashboardEvent:
     private = bool(raw.get("private", False))
     message = raw.get("message")
     raw_ts = raw.get("ts")
+    if not isinstance(raw_ts, str):
+        raw_ts = raw.get("timestamp")
     duration = raw.get("duration_ms")
     event = DashboardEvent(
         ts=_parse_ts(raw_ts if isinstance(raw_ts, str) else None),
@@ -72,8 +75,11 @@ def normalize_log(raw: dict[str, object]) -> LogEvent:
     message = str(raw.get("message", ""))
     if private:
         message = "REDACTED"
+    raw_ts = raw.get("ts")
+    if not isinstance(raw_ts, str):
+        raw_ts = raw.get("timestamp")
     return LogEvent(
-        ts=_parse_ts(str(raw["ts"]) if isinstance(raw.get("ts"), str) else None),
+        ts=_parse_ts(raw_ts if isinstance(raw_ts, str) else None),
         level=str(raw.get("level", "INFO")).upper(),
         logger=str(raw.get("logger", "ego_dashboard")),
         message=message,
@@ -120,27 +126,40 @@ def ingest_jsonl_line(line: str, store: IngestStoreProtocol) -> None:
         store.ingest_log(log)
 
 
+def _select_source_file(path_or_glob: str) -> str | None:
+    if glob.has_magic(path_or_glob):
+        matches = [path for path in glob.glob(path_or_glob) if os.path.isfile(path)]
+        if not matches:
+            return None
+        return max(matches, key=lambda path: (os.path.getmtime(path), path))
+    return path_or_glob if os.path.isfile(path_or_glob) else None
+
+
 def tail_jsonl_file(path: str, store: IngestStoreProtocol, poll_seconds: float = 1.0) -> None:
+    """Tail a single file path or glob pattern (latest matching file)."""
+    active_path: str | None = None
     current_inode: int | None = None
     position = 0
 
     while True:
-        try:
-            stat = os.stat(path)
-        except FileNotFoundError:
+        selected_path = _select_source_file(path)
+        if selected_path is None:
             if current_inode is not None:
                 LOGGER.info("source file disappeared, waiting for recreation: %s", path)
+            active_path = None
             current_inode = None
             position = 0
             time.sleep(poll_seconds)
             continue
 
-        if current_inode != stat.st_ino or stat.st_size < position:
+        stat = os.stat(selected_path)
+        if active_path != selected_path or current_inode != stat.st_ino or stat.st_size < position:
+            active_path = selected_path
             current_inode = stat.st_ino
             position = 0
-            LOGGER.info("opened source file: %s", path)
+            LOGGER.info("opened source file: %s", selected_path)
 
-        with open(path, encoding="utf-8") as handle:
+        with open(selected_path, encoding="utf-8") as handle:
             handle.seek(position)
             while True:
                 line = handle.readline()
@@ -156,7 +175,7 @@ def run_ingestor() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = load_settings()
     LOGGER.info(
-        "starting ingestor path=%s poll=%.2fs",
+        "starting ingestor source=%s poll=%.2fs",
         settings.log_path,
         settings.ingest_poll_seconds,
     )

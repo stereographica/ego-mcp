@@ -8,7 +8,8 @@ from dataclasses import dataclass
 class DashboardSettings:
     database_url: str | None = None
     redis_url: str | None = None
-    log_path: str = "/tmp/ego-mcp/telemetry.jsonl"
+    # File path or glob pattern. Default matches ego-mcp's dated JSONL logs.
+    log_path: str = "/tmp/ego-mcp-*.log"
     ingest_poll_seconds: float = 1.0
 
     @property
@@ -29,10 +30,17 @@ def _env_float(name: str, default: float) -> float:
     return value
 
 
+def _default_log_path() -> str:
+    explicit_dir = os.getenv("EGO_MCP_LOG_DIR")
+    if explicit_dir:
+        return os.path.join(explicit_dir, "ego-mcp-*.log")
+    return "/tmp/ego-mcp-*.log"
+
+
 def load_settings() -> DashboardSettings:
     return DashboardSettings(
         database_url=os.getenv("DASHBOARD_DATABASE_URL"),
         redis_url=os.getenv("DASHBOARD_REDIS_URL"),
-        log_path=os.getenv("DASHBOARD_LOG_PATH", "/tmp/ego-mcp/telemetry.jsonl"),
+        log_path=os.getenv("DASHBOARD_LOG_PATH", _default_log_path()),
         ingest_poll_seconds=_env_float("DASHBOARD_INGEST_POLL_SECONDS", 1.0),
     )
