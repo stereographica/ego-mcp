@@ -1,5 +1,11 @@
 import type { PropsWithChildren } from 'react'
 
-export const Card = ({ children }: PropsWithChildren) => (
-  <section className="card">{children}</section>
+type CardProps = PropsWithChildren<{
+  className?: string
+}>
+
+export const Card = ({ children, className }: CardProps) => (
+  <section className={className ? `card ${className}` : 'card'}>
+    {children}
+  </section>
 )

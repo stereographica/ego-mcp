@@ -72,8 +72,36 @@ def test_logs_filtering() -> None:
 
     store = TelemetryStore()
     base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-    store.ingest_log(LogEvent(ts=base, level="INFO", logger="a", message="ok", private=False))
+    store.ingest_log(
+        LogEvent(
+            ts=base,
+            level="INFO",
+            logger="a",
+            message="ok",
+            private=False,
+            fields={"tool_name": "remember"},
+        )
+    )
     store.ingest_log(LogEvent(ts=base, level="ERROR", logger="a", message="ng", private=False))
     logs = store.logs(base, base + timedelta(minutes=1), "ERROR", "a")
     assert len(logs) == 1
     assert logs[0]["level"] == "ERROR"
+
+    info_logs = store.logs(base, base + timedelta(minutes=1), "INFO", "a")
+    assert info_logs[0]["fields"] == {"tool_name": "remember"}
+
+
+def test_current_backfills_latest_emotion_from_recent_telemetry() -> None:
+    store = TelemetryStore()
+    store.ingest(_event(0, "remember", 0.8, "night"))
+    store.ingest(
+        _event(1, "wake_up", 0.0, "morning").model_copy(
+            update={"emotion_primary": None, "emotion_intensity": None}
+        )
+    )
+
+    current = store.current()
+    latest = cast(dict[str, Any], current["latest"])
+
+    assert latest["emotion_primary"] == "curious"
+    assert latest["emotion_intensity"] == 0.8

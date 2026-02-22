@@ -140,6 +140,25 @@ class TelemetryStore:
         latest_payload = latest.model_dump(mode="json")
         if latest.private:
             latest_payload["message"] = "REDACTED"
+        emotion_source = next(
+            (
+                ev
+                for ev in reversed(self._events)
+                if ev.emotion_primary is not None or ev.emotion_intensity is not None
+            ),
+            None,
+        )
+        if emotion_source is not None:
+            if (
+                latest_payload.get("emotion_primary") is None
+                and emotion_source.emotion_primary is not None
+            ):
+                latest_payload["emotion_primary"] = emotion_source.emotion_primary
+            if (
+                latest_payload.get("emotion_intensity") is None
+                and emotion_source.emotion_intensity is not None
+            ):
+                latest_payload["emotion_intensity"] = emotion_source.emotion_intensity
         return {
             "latest": latest_payload,
             "tool_calls_per_min": len(recent),

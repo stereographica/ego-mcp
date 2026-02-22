@@ -49,8 +49,15 @@ class SqlTelemetryStore:
                       level TEXT NOT NULL,
                       logger TEXT NOT NULL,
                       message TEXT NOT NULL,
-                      private BOOLEAN NOT NULL
+                      private BOOLEAN NOT NULL,
+                      fields JSONB NOT NULL DEFAULT '{}'::jsonb
                     )
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE log_events
+                    ADD COLUMN IF NOT EXISTS fields JSONB NOT NULL DEFAULT '{}'::jsonb
                     """
                 )
                 cur.execute("SELECT create_hypertable('log_events', 'ts', if_not_exists => TRUE)")
@@ -90,10 +97,17 @@ class SqlTelemetryStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO log_events (ts, level, logger, message, private)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO log_events (ts, level, logger, message, private, fields)
+                    VALUES (%s, %s, %s, %s, %s, %s::jsonb)
                     """,
-                    (event.ts, event.level.upper(), event.logger, masked, event.private),
+                    (
+                        event.ts,
+                        event.level.upper(),
+                        event.logger,
+                        masked,
+                        event.private,
+                        json.dumps(event.fields),
+                    ),
                 )
             conn.commit()
 
@@ -192,7 +206,7 @@ class SqlTelemetryStore:
                 if level and logger:
                     cur.execute(
                         """
-                        SELECT ts, level, logger, message, private
+                        SELECT ts, level, logger, message, private, fields
                         FROM log_events
                         WHERE ts >= %s AND ts <= %s AND level = %s AND logger = %s
                         ORDER BY ts ASC
@@ -203,7 +217,7 @@ class SqlTelemetryStore:
                 elif level:
                     cur.execute(
                         """
-                        SELECT ts, level, logger, message, private
+                        SELECT ts, level, logger, message, private, fields
                         FROM log_events
                         WHERE ts >= %s AND ts <= %s AND level = %s
                         ORDER BY ts ASC
@@ -214,7 +228,7 @@ class SqlTelemetryStore:
                 elif logger:
                     cur.execute(
                         """
-                        SELECT ts, level, logger, message, private
+                        SELECT ts, level, logger, message, private, fields
                         FROM log_events
                         WHERE ts >= %s AND ts <= %s AND logger = %s
                         ORDER BY ts ASC
@@ -225,7 +239,7 @@ class SqlTelemetryStore:
                 else:
                     cur.execute(
                         """
-                        SELECT ts, level, logger, message, private
+                        SELECT ts, level, logger, message, private, fields
                         FROM log_events
                         WHERE ts >= %s AND ts <= %s
                         ORDER BY ts ASC
@@ -241,8 +255,9 @@ class SqlTelemetryStore:
                 "logger": str(logger),
                 "message": "REDACTED" if bool(private) else str(msg),
                 "private": bool(private),
+                "fields": fields if isinstance(fields, dict) else {},
             }
-            for ts, lvl, logger, msg, private in rows
+            for ts, lvl, logger, msg, private, fields in rows
         ]
 
     def anomaly_alerts(
@@ -291,9 +306,30 @@ class SqlTelemetryStore:
                     (latest_ts, latest_ts),
                 )
                 row = cur.fetchone()
+                if latest.get("emotion_primary") is None or latest.get("emotion_intensity") is None:
+                    cur.execute(
+                        """
+                        SELECT emotion_primary, emotion_intensity
+                        FROM tool_events
+                        WHERE ts <= %s
+                          AND (emotion_primary IS NOT NULL OR emotion_intensity IS NOT NULL)
+                        ORDER BY ts DESC
+                        LIMIT 1
+                        """,
+                        (latest_ts,),
+                    )
+                    emotion_row = cur.fetchone()
+                else:
+                    emotion_row = None
         calls, errors = row if row is not None else (0, 0)
         total_calls = int(calls or 0)
         total_errors = int(errors or 0)
+        if emotion_row is not None:
+            emotion_primary, emotion_intensity = emotion_row
+            if latest.get("emotion_primary") is None and emotion_primary is not None:
+                latest["emotion_primary"] = str(emotion_primary)
+            if latest.get("emotion_intensity") is None and emotion_intensity is not None:
+                latest["emotion_intensity"] = float(emotion_intensity)
         return {
             "latest": latest,
             "tool_calls_per_min": total_calls,

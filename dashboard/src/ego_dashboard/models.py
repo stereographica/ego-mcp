@@ -26,3 +26,4 @@ class LogEvent(BaseModel):
     logger: str = "ego_dashboard"
     message: str
     private: bool = False
+    fields: dict[str, object] = Field(default_factory=dict)

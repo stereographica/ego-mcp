@@ -25,4 +25,6 @@ export type LogPoint = {
   logger: string
   message: string
   private: boolean
+  fields?: Record<string, unknown>
+  [key: string]: unknown
 }

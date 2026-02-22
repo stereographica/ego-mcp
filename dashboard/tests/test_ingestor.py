@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ego_dashboard.ingestor import normalize_event
+from ego_dashboard.ingestor import EgoMcpLogProjector, normalize_event
 
 
 def test_normalize_private_event_is_redacted() -> None:
@@ -48,6 +48,7 @@ def test_parse_jsonl_for_log_event() -> None:
     assert event is None
     assert log is not None
     assert log.message == "REDACTED"
+    assert log.fields == {}
 
 
 def test_parse_jsonl_for_ego_mcp_log_timestamp_field() -> None:
@@ -64,6 +65,24 @@ def test_parse_jsonl_for_ego_mcp_log_timestamp_field() -> None:
     assert log is not None
     assert log.ts.isoformat() == "2026-01-01T12:34:56+00:00"
     assert log.logger == "ego_mcp.server"
+    assert log.fields == {}
+
+
+def test_parse_jsonl_preserves_extra_log_fields() -> None:
+    from ego_dashboard.ingestor import parse_jsonl_line
+
+    line = (
+        '{"timestamp":"2026-01-01T12:34:56Z",'
+        '"level":"INFO",'
+        '"logger":"ego_mcp.server",'
+        '"message":"Tool invocation",'
+        '"tool_name":"remember",'
+        '"tool_args":{"emotion":"curious"}}'
+    )
+    event, log = parse_jsonl_line(line)
+    assert event is None
+    assert log is not None
+    assert log.fields["tool_name"] == "remember"
 
 
 def test_select_source_file_uses_latest_match(tmp_path: Path) -> None:
@@ -79,3 +98,38 @@ def test_select_source_file_uses_latest_match(tmp_path: Path) -> None:
     selected = _select_source_file(str(tmp_path / "ego-mcp-*.log"))
 
     assert selected == str(newer)
+
+
+def test_projector_creates_event_from_invocation_and_completion() -> None:
+    projector = EgoMcpLogProjector()
+
+    invocation = {
+        "timestamp": "2026-01-01T12:00:00Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool invocation",
+        "tool_name": "remember",
+        "tool_args": {
+            "emotion": "curious",
+            "intensity": 0.7,
+            "private": False,
+            "body_state": {"time_phase": "night"},
+        },
+    }
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "remember",
+    }
+
+    assert projector.project(invocation) is None
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.tool_name == "remember"
+    assert event.ok is True
+    assert event.emotion_primary == "curious"
+    assert event.emotion_intensity == 0.7
+    assert event.string_metrics["time_phase"] == "night"
