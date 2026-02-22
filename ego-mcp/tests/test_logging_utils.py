@@ -30,6 +30,25 @@ def test_json_line_formatter_includes_extra_fields() -> None:
     assert payload["tool_args"] == {"example": "value"}
 
 
+def test_json_line_formatter_uses_utc_timestamp_with_timezone() -> None:
+    formatter = logging_utils.JsonLineFormatter()
+    record = logging.LogRecord(
+        name="ego_mcp.server",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=10,
+        msg="Tool invocation",
+        args=(),
+        exc_info=None,
+    )
+    record.created = 1_700_000_000.0
+
+    payload = json.loads(formatter.format(record))
+
+    assert payload["timestamp"].endswith("Z")
+    assert payload["timestamp"] == "2023-11-14T22:13:20Z"
+
+
 def test_configure_logging_uses_log_level_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
 
@@ -44,3 +63,13 @@ def test_configure_logging_uses_log_level_env(monkeypatch: pytest.MonkeyPatch) -
     assert path == tmp_log
     assert logging.getLogger().level == logging.DEBUG
     assert tmp_log.exists()
+
+
+def test_get_log_path_uses_configurable_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EGO_MCP_LOG_DIR", "/var/tmp/ego-custom")
+
+    path = logging_utils.get_log_path()
+
+    assert path.parent == Path("/var/tmp/ego-custom")
+    assert path.name.startswith("ego-mcp-")
+    assert path.suffix == ".log"

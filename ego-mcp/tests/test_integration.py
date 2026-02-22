@@ -190,6 +190,8 @@ class TestMcpBoundary:
         assert "Self-check triggered." in tool_output
         assert tool_output_chars == len(result)
         assert tool_output_truncated is False
+        assert isinstance(getattr(completion, "time_phase", None), str)
+        assert getattr(completion, "time_phase")
 
 
 # === Surface Tools ===
