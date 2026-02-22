@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 import json
 import logging
 import os
@@ -45,7 +45,11 @@ class JsonLineFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": datetime.fromtimestamp(record.created).isoformat(),
+            "timestamp": (
+                datetime.fromtimestamp(record.created, tz=UTC)
+                .isoformat()
+                .replace("+00:00", "Z")
+            ),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

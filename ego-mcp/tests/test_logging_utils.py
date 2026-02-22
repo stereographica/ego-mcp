@@ -30,6 +30,25 @@ def test_json_line_formatter_includes_extra_fields() -> None:
     assert payload["tool_args"] == {"example": "value"}
 
 
+def test_json_line_formatter_uses_utc_timestamp_with_timezone() -> None:
+    formatter = logging_utils.JsonLineFormatter()
+    record = logging.LogRecord(
+        name="ego_mcp.server",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=10,
+        msg="Tool invocation",
+        args=(),
+        exc_info=None,
+    )
+    record.created = 1_700_000_000.0
+
+    payload = json.loads(formatter.format(record))
+
+    assert payload["timestamp"].endswith("Z")
+    assert payload["timestamp"] == "2023-11-14T22:13:20Z"
+
+
 def test_configure_logging_uses_log_level_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
 
