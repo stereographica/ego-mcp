@@ -1,9 +1,10 @@
-name: ego-mcp CI
+name: workspace CI
 
 on:
   pull_request:
     paths:
       - "ego-mcp/**"
+      - "dashboard/**"
       - ".github/workflows/ego-mcp-ci.yml"
   push:
     branches:
@@ -11,10 +12,11 @@ on:
       - master
     paths:
       - "ego-mcp/**"
+      - "dashboard/**"
       - ".github/workflows/ego-mcp-ci.yml"
 
 jobs:
-  test-and-typecheck:
+  ego-mcp-test-lint-typecheck:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -40,8 +42,41 @@ jobs:
           GEMINI_API_KEY: test-key
         run: uv run pytest tests -v
 
-      - name: Run ruff
+      - name: Run ruff lint
         run: uv run ruff check src tests
+
+      - name: Run mypy
+        run: uv run mypy src tests
+
+  dashboard-test-lint-format-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run tests
+        run: uv run pytest -v
+
+      - name: Run ruff lint
+        run: uv run ruff check src tests
+
+      - name: Run ruff format check
+        run: uv run ruff format --check src tests
 
       - name: Run mypy
         run: uv run mypy src tests
