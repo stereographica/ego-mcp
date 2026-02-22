@@ -309,11 +309,24 @@ def _sanitize_tool_output_for_logging(
     )
 
 
+def _tool_log_context() -> dict[str, str]:
+    """Attach lightweight contextual fields used by dashboard log projection."""
+    body_state = get_body_state()
+    time_phase = body_state.get("time_phase")
+    if isinstance(time_phase, str) and time_phase:
+        return {"time_phase": time_phase}
+    return {}
+
+
 @server.call_tool()  # type: ignore[untyped-decorator]
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Dispatch tool calls."""
     safe_args = _sanitize_tool_args_for_logging(name, arguments)
-    logger.info("Tool invocation", extra={"tool_name": name, "tool_args": safe_args})
+    log_context = _tool_log_context()
+    logger.info(
+        "Tool invocation",
+        extra={"tool_name": name, "tool_args": safe_args, **log_context},
+    )
 
     config = _get_config()
     memory = _get_memory()
@@ -328,7 +341,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     except Exception:
         logger.exception(
             "Tool execution failed",
-            extra={"tool_name": name, "tool_args": safe_args},
+            extra={"tool_name": name, "tool_args": safe_args, **log_context},
         )
         raise
 
@@ -341,6 +354,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             "tool_output": output_excerpt,
             "tool_output_chars": len(text),
             "tool_output_truncated": output_truncated,
+            **log_context,
         },
     )
     return [TextContent(type="text", text=text)]
