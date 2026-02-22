@@ -1,0 +1,28 @@
+import { render, screen } from '@testing-library/react'
+
+import App from './App'
+
+vi.mock('./api', () => ({
+  fetchCurrent: async () => ({
+    tool_calls_per_min: 4,
+    error_rate: 0.25,
+    latest: { emotion_primary: 'curious', emotion_intensity: 0.7 },
+  }),
+  fetchIntensity: async () => [{ ts: '2026-01-01T12:00:00Z', value: 0.7 }],
+  fetchUsage: async () => [
+    { ts: '2026-01-01T12:00:00Z', feel_desires: 2, remember: 1 },
+  ],
+  fetchTimeline: async () => [{ ts: '2026-01-01T12:00:00Z', value: 'night' }],
+  fetchHeatmap: async () => [
+    { ts: '2026-01-01T12:00:00Z', counts: { night: 1 } },
+  ],
+}))
+
+describe('App', () => {
+  it('shows now tab summary cards', async () => {
+    render(<App />)
+    expect(await screen.findByText('tool calls / min')).toBeInTheDocument()
+    expect(await screen.findByText('4')).toBeInTheDocument()
+    expect(await screen.findByText('curious')).toBeInTheDocument()
+  })
+})
