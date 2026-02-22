@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import json
 import logging
 import os
-from pathlib import Path
 import sys
 import threading
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 TRACE_LEVEL_NUM = 5
