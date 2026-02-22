@@ -5,6 +5,8 @@ services:
       POSTGRES_DB: ego_dashboard
       POSTGRES_USER: ego
       POSTGRES_PASSWORD: ego
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
@@ -68,3 +70,6 @@ services:
       - "4173:4173"
     depends_on:
       - backend
+
+volumes:
+  timescaledb-data:
