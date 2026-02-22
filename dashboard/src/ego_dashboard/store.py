@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timedelta
 
+from ego_dashboard.constants import DESIRE_METRIC_KEYS
 from ego_dashboard.models import DashboardEvent, LogEvent
 
 _BUCKETS = {"1m": timedelta(minutes=1), "5m": timedelta(minutes=5), "15m": timedelta(minutes=15)}
@@ -26,6 +27,20 @@ class TelemetryStore:
 
     def _filtered(self, start: datetime, end: datetime) -> list[DashboardEvent]:
         return [item for item in self._events if start <= item.ts <= end]
+
+    def _latest_numeric_metrics(self, keys: tuple[str, ...]) -> dict[str, float]:
+        if not self._events:
+            return {}
+        wanted = set(keys)
+        latest: dict[str, float] = {}
+        for event in reversed(self._events):
+            for key, value in event.numeric_metrics.items():
+                if key not in wanted or key in latest:
+                    continue
+                latest[key] = float(value)
+            if len(latest) == len(wanted):
+                break
+        return latest
 
     def _bucket_events(
         self, events: list[DashboardEvent], start: datetime, end: datetime, bucket: str
@@ -131,12 +146,21 @@ class TelemetryStore:
 
     def current(self) -> dict[str, object]:
         if not self._events:
-            return {"latest": None, "tool_calls_per_min": 0, "error_rate": 0.0}
+            return {
+                "latest": None,
+                "tool_calls_per_min": 0,
+                "error_rate": 0.0,
+                "window_24h": {"tool_calls": 0, "error_rate": 0.0},
+                "latest_desires": {},
+            }
 
         latest = self._events[-1]
         window_start = latest.ts - timedelta(minutes=1)
+        window_24h_start = latest.ts - timedelta(hours=24)
         recent = [ev for ev in self._events if ev.ts >= window_start]
+        recent_24h = [ev for ev in self._events if ev.ts >= window_24h_start]
         errors = [ev for ev in recent if not ev.ok]
+        errors_24h = [ev for ev in recent_24h if not ev.ok]
         latest_payload = latest.model_dump(mode="json")
         if latest.private:
             latest_payload["message"] = "REDACTED"
@@ -160,20 +184,37 @@ class TelemetryStore:
             ):
                 latest_payload["emotion_intensity"] = emotion_source.emotion_intensity
         log_window = [log for log in self._logs if log.ts >= window_start]
+        log_window_24h = [log for log in self._logs if log.ts >= window_24h_start]
         invocation_count = sum(
             1
             for log in log_window
             if log.message == "Tool invocation" and "tool_name" in log.fields
         )
         failure_count = sum(1 for log in log_window if log.message == "Tool execution failed")
+        invocation_count_24h = sum(
+            1
+            for log in log_window_24h
+            if log.message == "Tool invocation" and "tool_name" in log.fields
+        )
+        failure_count_24h = sum(
+            1 for log in log_window_24h if log.message == "Tool execution failed"
+        )
         tool_calls_per_min = invocation_count if invocation_count > 0 else len(recent)
         error_rate = (
             (failure_count / invocation_count)
             if invocation_count > 0
             else (len(errors) / len(recent) if recent else 0.0)
         )
+        tool_calls_24h = invocation_count_24h if invocation_count_24h > 0 else len(recent_24h)
+        error_rate_24h = (
+            (failure_count_24h / invocation_count_24h)
+            if invocation_count_24h > 0
+            else (len(errors_24h) / len(recent_24h) if recent_24h else 0.0)
+        )
         return {
             "latest": latest_payload,
             "tool_calls_per_min": tool_calls_per_min,
             "error_rate": error_rate,
+            "window_24h": {"tool_calls": tool_calls_24h, "error_rate": error_rate_24h},
+            "latest_desires": self._latest_numeric_metrics(DESIRE_METRIC_KEYS),
         }

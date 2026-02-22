@@ -7,6 +7,7 @@ from datetime import datetime
 import psycopg
 from redis import Redis
 
+from ego_dashboard.constants import DESIRE_METRIC_KEYS
 from ego_dashboard.models import DashboardEvent, LogEvent
 
 
@@ -289,7 +290,13 @@ class SqlTelemetryStore:
         latest_text = latest_raw if isinstance(latest_raw, str) else None
         latest = json.loads(latest_text) if latest_text else None
         if latest is None:
-            return {"latest": None, "tool_calls_per_min": 0, "error_rate": 0.0}
+            return {
+                "latest": None,
+                "tool_calls_per_min": 0,
+                "error_rate": 0.0,
+                "window_24h": {"tool_calls": 0, "error_rate": 0.0},
+                "latest_desires": {},
+            }
         if isinstance(latest, dict) and latest.get("private") is True:
             latest["message"] = "REDACTED"
 
@@ -308,6 +315,16 @@ class SqlTelemetryStore:
                 row = cur.fetchone()
                 cur.execute(
                     """
+                    SELECT count(*),
+                           sum(CASE WHEN ok = false THEN 1 ELSE 0 END)
+                    FROM tool_events
+                    WHERE ts >= %s - interval '24 hours' AND ts <= %s
+                    """,
+                    (latest_ts, latest_ts),
+                )
+                row_24h = cur.fetchone()
+                cur.execute(
+                    """
                     SELECT
                       sum(
                         CASE
@@ -322,6 +339,22 @@ class SqlTelemetryStore:
                     (latest_ts, latest_ts),
                 )
                 log_row = cur.fetchone()
+                cur.execute(
+                    """
+                    SELECT
+                      sum(
+                        CASE
+                          WHEN message = 'Tool invocation' AND fields ? 'tool_name' THEN 1
+                          ELSE 0
+                        END
+                      ),
+                      sum(CASE WHEN message = 'Tool execution failed' THEN 1 ELSE 0 END)
+                    FROM log_events
+                    WHERE ts >= %s - interval '24 hours' AND ts <= %s
+                    """,
+                    (latest_ts, latest_ts),
+                )
+                log_row_24h = cur.fetchone()
                 if latest.get("emotion_primary") is None or latest.get("emotion_intensity") is None:
                     cur.execute(
                         """
@@ -337,12 +370,38 @@ class SqlTelemetryStore:
                     emotion_row = cur.fetchone()
                 else:
                     emotion_row = None
+                latest_desires: dict[str, float] = {}
+                for key in DESIRE_METRIC_KEYS:
+                    cur.execute(
+                        """
+                        SELECT (numeric_metrics ->> %s)::double precision
+                        FROM tool_events
+                        WHERE ts <= %s AND numeric_metrics ? %s
+                        ORDER BY ts DESC
+                        LIMIT 1
+                        """,
+                        (key, latest_ts, key),
+                    )
+                    desire_row = cur.fetchone()
+                    if desire_row is None:
+                        continue
+                    desire_value = desire_row[0]
+                    if desire_value is not None:
+                        latest_desires[key] = float(desire_value)
         calls, errors = row if row is not None else (0, 0)
         total_calls = int(calls or 0)
         total_errors = int(errors or 0)
+        calls_24h, errors_24h = row_24h if row_24h is not None else (0, 0)
+        total_calls_24h = int(calls_24h or 0)
+        total_errors_24h = int(errors_24h or 0)
         log_calls_raw, log_failures_raw = log_row if log_row is not None else (0, 0)
         log_calls = int(log_calls_raw or 0)
         log_failures = int(log_failures_raw or 0)
+        log_calls_24h_raw, log_failures_24h_raw = (
+            log_row_24h if log_row_24h is not None else (0, 0)
+        )
+        log_calls_24h = int(log_calls_24h_raw or 0)
+        log_failures_24h = int(log_failures_24h_raw or 0)
         if emotion_row is not None:
             emotion_primary, emotion_intensity = emotion_row
             if latest.get("emotion_primary") is None and emotion_primary is not None:
@@ -357,6 +416,19 @@ class SqlTelemetryStore:
                 if log_calls > 0
                 else ((total_errors / total_calls) if total_calls else 0.0)
             ),
+            "window_24h": {
+                "tool_calls": (log_calls_24h if log_calls_24h > 0 else total_calls_24h),
+                "error_rate": (
+                    (log_failures_24h / log_calls_24h)
+                    if log_calls_24h > 0
+                    else (
+                        (total_errors_24h / total_calls_24h)
+                        if total_calls_24h
+                        else 0.0
+                    )
+                ),
+            },
+            "latest_desires": latest_desires,
         }
 
 

@@ -113,7 +113,7 @@ def test_resolve_source_files_returns_all_matches(tmp_path: Path) -> None:
     assert resolved == [str(first), str(second)]
 
 
-def test_projector_creates_event_from_invocation_and_ignores_completion() -> None:
+def test_projector_creates_event_from_invocation_and_ignores_non_feel_desires_completion() -> None:
     projector = EgoMcpLogProjector()
 
     invocation = {
@@ -146,6 +146,45 @@ def test_projector_creates_event_from_invocation_and_ignores_completion() -> Non
     assert event.emotion_intensity == 0.7
     assert event.string_metrics["time_phase"] == "night"
     assert projector.project(completion) is None
+
+
+def test_projector_parses_feel_desires_completion_metrics() -> None:
+    projector = EgoMcpLogProjector()
+    invocation = {
+        "timestamp": "2026-01-01T12:00:00Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool invocation",
+        "tool_name": "feel_desires",
+        "tool_args": {},
+        "time_phase": "night",
+    }
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "feel_desires",
+        "time_phase": "night",
+        "tool_output": (
+            "information_hunger[0.8/high] social_thirst[0.4/mid] "
+            "cognitive_coherence[0.2/low] curiosity[0.7/high]\n\n"
+            "---\nAfter acting on a desire, use satisfy_desire."
+        ),
+    }
+
+    assert projector.project(invocation) is None
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.tool_name == "feel_desires"
+    assert event.ok is True
+    assert event.string_metrics["time_phase"] == "night"
+    assert event.numeric_metrics["information_hunger"] == 0.8
+    assert event.numeric_metrics["social_thirst"] == 0.4
+    assert event.numeric_metrics["cognitive_coherence"] == 0.2
+    assert event.numeric_metrics["curiosity"] == 0.7
 
 
 def test_projector_reads_top_level_time_phase_from_ego_mcp_logs() -> None:

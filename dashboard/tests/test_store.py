@@ -137,3 +137,66 @@ def test_current_prefers_log_derived_counts_and_error_rate() -> None:
 
     assert current["tool_calls_per_min"] == 1
     assert current["error_rate"] == 1.0
+
+
+def test_current_exposes_24h_window_and_latest_desires() -> None:
+    from ego_dashboard.models import LogEvent
+
+    store = TelemetryStore()
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store.ingest(
+        DashboardEvent(
+            ts=base - timedelta(hours=2),
+            event_type="tool_call_completed",
+            tool_name="feel_desires",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={
+                "information_hunger": 0.8,
+                "social_thirst": 0.3,
+                "cognitive_coherence": 0.6,
+            },
+            private=False,
+        )
+    )
+    store.ingest(_event(0, "remember", 0.4, "day"))
+    store.ingest_log(
+        LogEvent(
+            ts=base - timedelta(hours=1),
+            level="INFO",
+            logger="ego_mcp.server",
+            message="Tool invocation",
+            private=False,
+            fields={"tool_name": "feel_desires"},
+        )
+    )
+    store.ingest_log(
+        LogEvent(
+            ts=base - timedelta(minutes=30),
+            level="INFO",
+            logger="ego_mcp.server",
+            message="Tool invocation",
+            private=False,
+            fields={"tool_name": "remember"},
+        )
+    )
+    store.ingest_log(
+        LogEvent(
+            ts=base - timedelta(minutes=29),
+            level="ERROR",
+            logger="ego_mcp.server",
+            message="Tool execution failed",
+            private=False,
+        )
+    )
+
+    current = store.current()
+
+    window_24h = cast(dict[str, Any], current["window_24h"])
+    latest_desires = cast(dict[str, Any], current["latest_desires"])
+
+    assert window_24h["tool_calls"] == 2
+    assert window_24h["error_rate"] == 0.5
+    assert latest_desires["information_hunger"] == 0.8
+    assert latest_desires["social_thirst"] == 0.3
+    assert latest_desires["cognitive_coherence"] == 0.6
