@@ -369,16 +369,18 @@ const App = () => {
             <Card>
               <p className="title">error rate (24h)</p>
               <p className="value">
-                {(((current?.window_24h?.error_rate ?? 0) as number) * 100).toFixed(
-                  1,
-                )}
+                {(
+                  ((current?.window_24h?.error_rate ?? 0) as number) * 100
+                ).toFixed(1)}
                 %
               </p>
             </Card>
             <Card>
               <p className="title">latest emotion</p>
               <div className="emotion-row">
-                <p className="value">{current?.latest?.emotion_primary ?? 'n/a'}</p>
+                <p className="value">
+                  {current?.latest?.emotion_primary ?? 'n/a'}
+                </p>
                 <div className="emotion-intensity">
                   <p className="metric-mini-label">intensity</p>
                   <Badge>
@@ -397,7 +399,9 @@ const App = () => {
                   <span className="latest-metric-name">
                     {formatMetricLabel(key)}
                   </span>
-                  <Badge>{typeof value === 'number' ? value.toFixed(3) : 'n/a'}</Badge>
+                  <Badge>
+                    {typeof value === 'number' ? value.toFixed(3) : 'n/a'}
+                  </Badge>
                 </div>
               ))}
             </div>
@@ -503,7 +507,9 @@ const App = () => {
                       key={key}
                       type="monotone"
                       dataKey={key}
-                      stroke={DESIRE_LINE_COLORS[index % DESIRE_LINE_COLORS.length]}
+                      stroke={
+                        DESIRE_LINE_COLORS[index % DESIRE_LINE_COLORS.length]
+                      }
                       dot={false}
                       connectNulls
                     />
@@ -511,7 +517,9 @@ const App = () => {
                 </LineChart>
               </ResponsiveContainer>
               {desireChartData.length === 0 && (
-                <p className="helper-text">No desire metric data in selected range.</p>
+                <p className="helper-text">
+                  No desire metric data in selected range.
+                </p>
               )}
             </Card>
           </div>

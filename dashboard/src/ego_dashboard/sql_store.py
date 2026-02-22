@@ -397,9 +397,7 @@ class SqlTelemetryStore:
         log_calls_raw, log_failures_raw = log_row if log_row is not None else (0, 0)
         log_calls = int(log_calls_raw or 0)
         log_failures = int(log_failures_raw or 0)
-        log_calls_24h_raw, log_failures_24h_raw = (
-            log_row_24h if log_row_24h is not None else (0, 0)
-        )
+        log_calls_24h_raw, log_failures_24h_raw = log_row_24h if log_row_24h is not None else (0, 0)
         log_calls_24h = int(log_calls_24h_raw or 0)
         log_failures_24h = int(log_failures_24h_raw or 0)
         if emotion_row is not None:
@@ -421,11 +419,7 @@ class SqlTelemetryStore:
                 "error_rate": (
                     (log_failures_24h / log_calls_24h)
                     if log_calls_24h > 0
-                    else (
-                        (total_errors_24h / total_calls_24h)
-                        if total_calls_24h
-                        else 0.0
-                    )
+                    else ((total_errors_24h / total_calls_24h) if total_calls_24h else 0.0)
                 ),
             },
             "latest_desires": latest_desires,
