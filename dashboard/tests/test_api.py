@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from ego_dashboard.api import create_app
 from ego_dashboard.models import DashboardEvent
+from ego_dashboard.settings import DashboardSettings
 from ego_dashboard.store import TelemetryStore
 
 
@@ -37,3 +38,22 @@ def test_history_endpoints() -> None:
     assert client.get(f"/api/v1/metrics/time_phase/heatmap?{query}&bucket=1m").status_code == 200
     assert client.get(f"/api/v1/logs?{query}&level=INFO&logger=app").status_code == 200
     assert client.get(f"/api/v1/alerts/anomalies?{query}&bucket=1m").status_code == 200
+
+
+def test_cors_preflight_allows_configured_origin() -> None:
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(cors_allowed_origins=("http://localhost:4173",)),
+    )
+    client = TestClient(app)
+
+    response = client.options(
+        "/api/v1/current",
+        headers={
+            "Origin": "http://localhost:4173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:4173"
