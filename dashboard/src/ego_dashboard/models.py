@@ -18,3 +18,11 @@ class DashboardEvent(BaseModel):
     params: dict[str, str | int | float | bool] = Field(default_factory=dict)
     private: bool = False
     message: str | None = None
+
+
+class LogEvent(BaseModel):
+    ts: datetime
+    level: str = "INFO"
+    logger: str = "ego_dashboard"
+    message: str
+    private: bool = False

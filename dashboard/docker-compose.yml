@@ -1,0 +1,69 @@
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_DB: ego_dashboard
+      POSTGRES_USER: ego
+      POSTGRES_PASSWORD: ego
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ego -d ego_dashboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      DASHBOARD_DATABASE_URL: ${DASHBOARD_DATABASE_URL:-postgresql://ego:ego@db:5432/ego_dashboard}
+      DASHBOARD_REDIS_URL: ${DASHBOARD_REDIS_URL:-redis://redis:6379/0}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["uv", "run", "python", "-m", "ego_dashboard.ingestor"]
+    environment:
+      DASHBOARD_DATABASE_URL: ${DASHBOARD_DATABASE_URL:-postgresql://ego:ego@db:5432/ego_dashboard}
+      DASHBOARD_REDIS_URL: ${DASHBOARD_REDIS_URL:-redis://redis:6379/0}
+      DASHBOARD_LOG_PATH: ${DASHBOARD_LOG_PATH:-/var/log/ego-mcp/telemetry.jsonl}
+      DASHBOARD_INGEST_POLL_SECONDS: ${DASHBOARD_INGEST_POLL_SECONDS:-1.0}
+    volumes:
+      - ./var/log/ego-mcp:/var/log/ego-mcp:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    environment:
+      VITE_DASHBOARD_API_BASE: ${VITE_DASHBOARD_API_BASE:-http://localhost:8000}
+      VITE_DASHBOARD_WS_BASE: ${VITE_DASHBOARD_WS_BASE:-ws://localhost:8000}
+    ports:
+      - "4173:4173"
+    depends_on:
+      - backend

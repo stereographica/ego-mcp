@@ -8,7 +8,21 @@ export type CurrentResponse = {
   } | null
 }
 
+export type TimeRangePreset = '15m' | '1h' | '6h' | '24h' | '7d' | 'custom'
+
+export type DateRange = {
+  from: string
+  to: string
+}
+
 export type SeriesPoint = { ts: string; value: number }
 export type UsagePoint = { ts: string; [key: string]: number | string }
 export type StringPoint = { ts: string; value: string }
 export type HeatmapPoint = { ts: string; counts: Record<string, number> }
+export type LogPoint = {
+  ts: string
+  level: string
+  logger: string
+  message: string
+  private: boolean
+}

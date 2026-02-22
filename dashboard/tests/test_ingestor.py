@@ -33,3 +33,15 @@ def test_normalize_numeric_and_string_metrics() -> None:
     assert event.numeric_metrics["intensity"] == 0.72
     assert event.numeric_metrics["valence"] == 0.2
     assert event.string_metrics["time_phase"] == "night"
+
+
+def test_parse_jsonl_for_log_event() -> None:
+    from ego_dashboard.ingestor import parse_jsonl_line
+
+    line = (
+        '{"ts":"2026-01-01T12:00:00Z","level":"INFO","logger":"app","message":"x","private":true}'
+    )
+    event, log = parse_jsonl_line(line)
+    assert event is None
+    assert log is not None
+    assert log.message == "REDACTED"

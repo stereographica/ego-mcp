@@ -1,0 +1,306 @@
+from __future__ import annotations
+
+import json
+from collections import defaultdict
+from datetime import datetime
+
+import psycopg
+from redis import Redis
+
+from ego_dashboard.models import DashboardEvent, LogEvent
+
+
+class SqlTelemetryStore:
+    def __init__(self, database_url: str, redis_url: str) -> None:
+        self._db_url = database_url
+        self._redis = Redis.from_url(redis_url, decode_responses=True)
+
+    def initialize(self) -> None:
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb")
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tool_events (
+                      ts TIMESTAMPTZ NOT NULL,
+                      event_type TEXT NOT NULL,
+                      tool_name TEXT NOT NULL,
+                      ok BOOLEAN NOT NULL,
+                      duration_ms INTEGER,
+                      emotion_primary TEXT,
+                      emotion_intensity DOUBLE PRECISION,
+                      numeric_metrics JSONB NOT NULL,
+                      string_metrics JSONB NOT NULL,
+                      params JSONB NOT NULL,
+                      private BOOLEAN NOT NULL,
+                      message TEXT
+                    )
+                    """
+                )
+                cur.execute("SELECT create_hypertable('tool_events', 'ts', if_not_exists => TRUE)")
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tool_events_tool_name_ts "
+                    "ON tool_events (tool_name, ts DESC)"
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS log_events (
+                      ts TIMESTAMPTZ NOT NULL,
+                      level TEXT NOT NULL,
+                      logger TEXT NOT NULL,
+                      message TEXT NOT NULL,
+                      private BOOLEAN NOT NULL
+                    )
+                    """
+                )
+                cur.execute("SELECT create_hypertable('log_events', 'ts', if_not_exists => TRUE)")
+            conn.commit()
+
+    def ingest(self, event: DashboardEvent) -> None:
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO tool_events (
+                      ts, event_type, tool_name, ok, duration_ms, emotion_primary,
+                      emotion_intensity, numeric_metrics, string_metrics, params, private, message
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s)
+                    """,
+                    (
+                        event.ts,
+                        event.event_type,
+                        event.tool_name,
+                        event.ok,
+                        event.duration_ms,
+                        event.emotion_primary,
+                        event.emotion_intensity,
+                        json.dumps(event.numeric_metrics),
+                        json.dumps(event.string_metrics),
+                        json.dumps(event.params),
+                        event.private,
+                        event.message,
+                    ),
+                )
+            conn.commit()
+        self._redis.set("dashboard:current", json.dumps(event.model_dump(mode="json")))
+
+    def ingest_log(self, event: LogEvent) -> None:
+        masked = "REDACTED" if event.private else event.message
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO log_events (ts, level, logger, message, private)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (event.ts, event.level.upper(), event.logger, masked, event.private),
+                )
+            conn.commit()
+
+    def tool_usage(self, start: datetime, end: datetime, bucket: str) -> list[dict[str, object]]:
+        bucket_size = _bucket_to_sql(bucket)
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT time_bucket(%s::interval, ts) AS b, tool_name, count(*)
+                    FROM tool_events
+                    WHERE ts >= %s AND ts <= %s
+                    GROUP BY b, tool_name
+                    ORDER BY b ASC
+                    """,
+                    (bucket_size, start, end),
+                )
+                rows = cur.fetchall()
+        by_ts: dict[str, dict[str, object]] = {}
+        for b, tool_name, count in rows:
+            key = b.isoformat()
+            if key not in by_ts:
+                by_ts[key] = {"ts": key}
+            by_ts[key][tool_name] = count
+        return list(by_ts.values())
+
+    def metric_history(
+        self, key: str, start: datetime, end: datetime, bucket: str
+    ) -> list[dict[str, object]]:
+        bucket_size = _bucket_to_sql(bucket)
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT time_bucket(%s::interval, ts) AS b,
+                           avg((numeric_metrics ->> %s)::double precision)
+                    FROM tool_events
+                    WHERE ts >= %s AND ts <= %s AND numeric_metrics ? %s
+                    GROUP BY b
+                    ORDER BY b ASC
+                    """,
+                    (bucket_size, key, start, end, key),
+                )
+                rows = cur.fetchall()
+        return [
+            {"ts": ts.isoformat(), "value": float(value)} for ts, value in rows if value is not None
+        ]
+
+    def string_timeline(self, key: str, start: datetime, end: datetime) -> list[dict[str, str]]:
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT ts, string_metrics ->> %s
+                    FROM tool_events
+                    WHERE ts >= %s AND ts <= %s AND string_metrics ? %s
+                    ORDER BY ts ASC
+                    """,
+                    (key, start, end, key),
+                )
+                rows = cur.fetchall()
+        return [
+            {"ts": ts.isoformat(), "value": value} for ts, value in rows if isinstance(value, str)
+        ]
+
+    def string_heatmap(
+        self, key: str, start: datetime, end: datetime, bucket: str
+    ) -> list[dict[str, object]]:
+        bucket_size = _bucket_to_sql(bucket)
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT time_bucket(%s::interval, ts) AS b,
+                           string_metrics ->> %s AS value,
+                           count(*)
+                    FROM tool_events
+                    WHERE ts >= %s AND ts <= %s AND string_metrics ? %s
+                    GROUP BY b, value
+                    ORDER BY b ASC
+                    """,
+                    (bucket_size, key, start, end, key),
+                )
+                rows = cur.fetchall()
+        grouped: dict[str, dict[str, int]] = defaultdict(dict)
+        for ts, value, count in rows:
+            if isinstance(value, str):
+                grouped[ts.isoformat()][value] = int(count)
+        return [{"ts": ts, "counts": counts} for ts, counts in grouped.items()]
+
+    def logs(
+        self, start: datetime, end: datetime, level: str | None = None, logger: str | None = None
+    ) -> list[dict[str, object]]:
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                if level and logger:
+                    cur.execute(
+                        """
+                        SELECT ts, level, logger, message, private
+                        FROM log_events
+                        WHERE ts >= %s AND ts <= %s AND level = %s AND logger = %s
+                        ORDER BY ts ASC
+                        LIMIT 300
+                        """,
+                        (start, end, level.upper(), logger),
+                    )
+                elif level:
+                    cur.execute(
+                        """
+                        SELECT ts, level, logger, message, private
+                        FROM log_events
+                        WHERE ts >= %s AND ts <= %s AND level = %s
+                        ORDER BY ts ASC
+                        LIMIT 300
+                        """,
+                        (start, end, level.upper()),
+                    )
+                elif logger:
+                    cur.execute(
+                        """
+                        SELECT ts, level, logger, message, private
+                        FROM log_events
+                        WHERE ts >= %s AND ts <= %s AND logger = %s
+                        ORDER BY ts ASC
+                        LIMIT 300
+                        """,
+                        (start, end, logger),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT ts, level, logger, message, private
+                        FROM log_events
+                        WHERE ts >= %s AND ts <= %s
+                        ORDER BY ts ASC
+                        LIMIT 300
+                        """,
+                        (start, end),
+                    )
+                rows = cur.fetchall()
+        return [
+            {
+                "ts": ts.isoformat(),
+                "level": str(lvl),
+                "logger": str(logger),
+                "message": "REDACTED" if bool(private) else str(msg),
+                "private": bool(private),
+            }
+            for ts, lvl, logger, msg, private in rows
+        ]
+
+    def anomaly_alerts(
+        self, start: datetime, end: datetime, bucket: str
+    ) -> list[dict[str, object]]:
+        usage = self.tool_usage(start, end, bucket)
+        intensity = self.metric_history("intensity", start, end, bucket)
+        alerts: list[dict[str, object]] = []
+
+        prev_total: int | None = None
+        for row in usage:
+            total = sum(v for k, v in row.items() if k != "ts" and isinstance(v, int))
+            if prev_total is not None and prev_total > 0 and total >= prev_total * 2:
+                alerts.append({"kind": "usage_spike", "ts": row["ts"], "value": total})
+            prev_total = total
+
+        prev_intensity: float | None = None
+        for row in intensity:
+            raw = row.get("value")
+            if isinstance(raw, (int, float)):
+                if prev_intensity is not None and raw - prev_intensity >= 0.4:
+                    alerts.append({"kind": "intensity_spike", "ts": row["ts"], "value": raw})
+                prev_intensity = float(raw)
+
+        return alerts
+
+    def current(self) -> dict[str, object]:
+        latest_raw = self._redis.get("dashboard:current")
+        latest_text = latest_raw if isinstance(latest_raw, str) else None
+        latest = json.loads(latest_text) if latest_text else None
+        if latest is None:
+            return {"latest": None, "tool_calls_per_min": 0, "error_rate": 0.0}
+        if isinstance(latest, dict) and latest.get("private") is True:
+            latest["message"] = "REDACTED"
+
+        latest_ts = datetime.fromisoformat(str(latest["ts"]).replace("Z", "+00:00"))
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT count(*),
+                           sum(CASE WHEN ok = false THEN 1 ELSE 0 END)
+                    FROM tool_events
+                    WHERE ts >= %s - interval '1 minute' AND ts <= %s
+                    """,
+                    (latest_ts, latest_ts),
+                )
+                row = cur.fetchone()
+        calls, errors = row if row is not None else (0, 0)
+        total_calls = int(calls or 0)
+        total_errors = int(errors or 0)
+        return {
+            "latest": latest,
+            "tool_calls_per_min": total_calls,
+            "error_rate": (total_errors / total_calls) if total_calls else 0.0,
+        }
+
+
+def _bucket_to_sql(bucket: str) -> str:
+    mapping = {"1m": "1 minute", "5m": "5 minute", "15m": "15 minute"}
+    return mapping.get(bucket, "1 minute")

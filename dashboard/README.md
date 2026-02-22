@@ -1,24 +1,42 @@
 # ego-mcp dashboard (Phase 1-2)
 
-`design/ego-mcp-dashboard-design.md` に基づく Phase 1-2 の実装です。
+`design/ego-mcp-dashboard-design.md` に基づく Phase 1-2 実装です。
 
-## backend 実装済み
+## 実装方針（重要）
 
-- `/api/v1/current`（Now タブ初期表示向け）
-- `/api/v1/usage/tools`（ツール使用回数）
-- `/api/v1/metrics/{key}`（数値メトリクス履歴）
-- `/api/v1/metrics/{key}/string-timeline`（string 推移タイムライン）
-- `/api/v1/metrics/{key}/heatmap`（string 出現頻度ヒートマップ）
-- `/api/v1/alerts/anomalies`（急増/急落アラート）
-- private フィールドのマスキング・allow-list フィルタ
+- 永続化: **TimescaleDB**
+- リアルタイム最新値キャッシュ: **Redis**
+- 起動: **docker-compose**
 
-## frontend 実装済み
+`DASHBOARD_DATABASE_URL` と `DASHBOARD_REDIS_URL` が設定されると、
+`SqlTelemetryStore` が有効化され、TimescaleDB/Redis を利用します。
+未設定時は `TelemetryStore`（in-memory）へフォールバックします。
 
-- `frontend/` に Now / History / Logs タブを実装
-- Now: cards + intensity 折れ線 + event feed
-- History: tool usage stacked area + string heatmap 表示
-- Logs: live-tail 風表示（private 想定文字列の REDACTED 表示）
-- 2秒ポーリング更新
+## 起動（docker-compose）
+
+```bash
+cd dashboard
+cp .env.example .env
+docker compose up --build
+```
+
+- backend: `http://localhost:8000`
+- frontend: `http://localhost:4173`
+- db (TimescaleDB): `localhost:5432`
+- redis: `localhost:6379`
+- ingestor: `DASHBOARD_LOG_PATH` を tail して DB/Redis に反映
+
+## backend API
+
+- `/api/v1/current`
+- `/api/v1/usage/tools`
+- `/api/v1/metrics/{key}`
+- `/api/v1/metrics/{key}/string-timeline`
+- `/api/v1/metrics/{key}/heatmap`
+- `/api/v1/logs`
+- `/api/v1/alerts/anomalies`
+
+詳細は `dashboard/docs/` 配下（`getting-started.md`, `configuration.md`, `operations.md`, `api.md`）を参照してください。
 
 ## 開発
 

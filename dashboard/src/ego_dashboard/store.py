@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timedelta
 
-from ego_dashboard.models import DashboardEvent
+from ego_dashboard.models import DashboardEvent, LogEvent
 
 _BUCKETS = {"1m": timedelta(minutes=1), "5m": timedelta(minutes=5), "15m": timedelta(minutes=15)}
 
@@ -11,10 +11,15 @@ _BUCKETS = {"1m": timedelta(minutes=1), "5m": timedelta(minutes=5), "15m": timed
 class TelemetryStore:
     def __init__(self) -> None:
         self._events: list[DashboardEvent] = []
+        self._logs: list[LogEvent] = []
 
     def ingest(self, event: DashboardEvent) -> None:
         self._events.append(event)
         self._events.sort(key=lambda item: item.ts)
+
+    def ingest_log(self, event: LogEvent) -> None:
+        self._logs.append(event)
+        self._logs.sort(key=lambda item: item.ts)
 
     def _bucket_delta(self, bucket: str) -> timedelta:
         return _BUCKETS.get(bucket, timedelta(minutes=1))
@@ -76,6 +81,26 @@ class TelemetryStore:
             rows.append({"ts": at.isoformat(), "counts": dict(counter)})
         return rows
 
+    def logs(
+        self,
+        start: datetime,
+        end: datetime,
+        level: str | None = None,
+        logger: str | None = None,
+    ) -> list[dict[str, object]]:
+        values = [log for log in self._logs if start <= log.ts <= end]
+        if level:
+            values = [log for log in values if log.level == level.upper()]
+        if logger:
+            values = [log for log in values if log.logger == logger]
+        rows: list[dict[str, object]] = []
+        for item in values[-300:]:
+            row = item.model_dump(mode="json")
+            if item.private:
+                row["message"] = "REDACTED"
+            rows.append(row)
+        return rows
+
     def anomaly_alerts(
         self, start: datetime, end: datetime, bucket: str
     ) -> list[dict[str, object]]:
@@ -112,8 +137,11 @@ class TelemetryStore:
         window_start = latest.ts - timedelta(minutes=1)
         recent = [ev for ev in self._events if ev.ts >= window_start]
         errors = [ev for ev in recent if not ev.ok]
+        latest_payload = latest.model_dump(mode="json")
+        if latest.private:
+            latest_payload["message"] = "REDACTED"
         return {
-            "latest": latest.model_dump(mode="json"),
+            "latest": latest_payload,
             "tool_calls_per_min": len(recent),
             "error_rate": len(errors) / len(recent) if recent else 0.0,
         }
