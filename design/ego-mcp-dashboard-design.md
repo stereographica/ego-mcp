@@ -26,6 +26,11 @@
 7. UI は shadcn でシンプルかつ見やすく。
 8. private データを表示しない。
 9. ego-mcp からのデータ取得方式（telemetry 含む）を設計する。
+<<<<<<< ours
+=======
+10. `docker-compose` で開発環境/検証環境を起動できること。
+11. 実装だけでなく運用者向けドキュメント（起動、設定、トラブルシュート）を整備すること。
+>>>>>>> theirs
 
 ### 2.2 あいまい要件と提案
 - 「ライブリロード頻度」: 1秒以下は不要。**1–2秒バッチ更新**（サーバ側集約）を推奨。
@@ -239,6 +244,28 @@
 - Ingest: Python asyncio tailer（watchfiles / watchdog）
 - Observability: Prometheus exporter（ダッシュボード自身の健全性監視）
 
+<<<<<<< ours
+=======
+### 11.1 コンテナ実行要件（追加）
+- `dashboard/` 直下に `docker-compose.yml` を配置し、少なくとも以下サービスを定義する。
+  - `frontend`
+  - `backend`
+  - `ingestor`
+  - `db`（PostgreSQL/TimescaleDB）
+  - `redis`（採用する場合）
+- `docker compose up -d` で起動し、初期画面表示まで確認できることを MVP の受け入れ条件に含める。
+- 環境変数は `.env.example` を提供し、必須値を明示する。
+
+### 11.2 ドキュメント整備要件（追加）
+- 最低限、以下ドキュメントを `dashboard/docs/` に用意する。
+  1. `getting-started.md`（ローカル起動手順、docker-compose 手順）
+  2. `configuration.md`（環境変数、ログパス、private マスキング設定）
+  3. `operations.md`（監視、バックアップ、ログローテーション、障害対応）
+  4. `api.md`（REST/WS 契約、認可、レート制限）
+- ドキュメントは「開発者向け」と「運用者向け」で章を分け、更新責任者を明記する。
+- 主要機能（Now/History/Logs）は画面キャプチャまたは簡易図を添付する。
+
+>>>>>>> theirs
 ---
 
 ## 12. リスクと対策
@@ -262,6 +289,11 @@
 4. string パラメータを少なくとも1種類の非グラフ表現で確認できる。
 5. Logs タブで live tail 可能、private 行は必ずマスクされる。
 6. 初期表示は Now タブで、最新状態を主役にしたレイアウトである。
+<<<<<<< ours
+=======
+7. `docker compose up -d` で依存サービスを含めて起動し、疎通確認が完了している。
+8. 起動・設定・運用・API のドキュメントが整備され、第三者が再現可能である。
+>>>>>>> theirs
 
 ---
 
