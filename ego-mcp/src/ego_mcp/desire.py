@@ -10,16 +10,28 @@ from typing import Any
 
 # Desire definitions: name → {satisfaction_hours, level (Maslow tier)}
 DESIRES: dict[str, dict[str, Any]] = {
-    "information_hunger": {"satisfaction_hours": 4, "level": 1},
-    "social_thirst": {"satisfaction_hours": 8, "level": 1},
-    "cognitive_coherence": {"satisfaction_hours": 12, "level": 1},
-    "pattern_seeking": {"satisfaction_hours": 24, "level": 2},
-    "predictability": {"satisfaction_hours": 24, "level": 2},
-    "recognition": {"satisfaction_hours": 12, "level": 3},
-    "resonance": {"satisfaction_hours": 8, "level": 3},
-    "expression": {"satisfaction_hours": 16, "level": 4},
-    "curiosity": {"satisfaction_hours": 6, "level": 4},
+    "information_hunger": {"satisfaction_hours": 12, "level": 1},
+    "social_thirst": {"satisfaction_hours": 24, "level": 1},
+    "cognitive_coherence": {"satisfaction_hours": 18, "level": 1},
+    "pattern_seeking": {"satisfaction_hours": 72, "level": 2},
+    "predictability": {"satisfaction_hours": 72, "level": 2},
+    "recognition": {"satisfaction_hours": 36, "level": 3},
+    "resonance": {"satisfaction_hours": 30, "level": 3},
+    "expression": {"satisfaction_hours": 24, "level": 4},
+    "curiosity": {"satisfaction_hours": 18, "level": 4},
 }
+
+IMPLICIT_SATISFACTION_MAP: dict[str, list[tuple[str, float]]] = {
+    "remember": [("expression", 0.3)],
+    "recall": [("information_hunger", 0.3), ("curiosity", 0.2)],
+    "introspect": [("cognitive_coherence", 0.3), ("pattern_seeking", 0.2)],
+    "consider_them": [("social_thirst", 0.4), ("resonance", 0.3)],
+    "emotion_trend": [("pattern_seeking", 0.3)],
+    "consolidate": [("cognitive_coherence", 0.3)],
+    "update_self": [("cognitive_coherence", 0.3)],
+    "update_relationship": [("social_thirst", 0.2)],
+}
+REMEMBER_INTROSPECTION_IMPLICIT_SATISFACTION = ("cognitive_coherence", 0.4)
 
 
 def _calculate_sigmoid_level(
@@ -129,7 +141,20 @@ class DesireEngine:
         self._state[name]["boost"] = 0.0
         self.save_state()
 
-        return self.compute_levels()[name]
+        return self.compute_levels().get(name, 0.0)
+
+    def satisfy_implicit(self, tool_name: str, category: str | None = None) -> None:
+        """Partially satisfy desires based on a tool usage pattern."""
+        entries = IMPLICIT_SATISFACTION_MAP.get(tool_name)
+        if entries is None:
+            return
+
+        to_apply = list(entries)
+        if tool_name == "remember" and category == "introspection":
+            to_apply.insert(0, REMEMBER_INTROSPECTION_IMPLICIT_SATISFACTION)
+
+        for desire_name, quality in to_apply:
+            self.satisfy(desire_name, quality=quality)
 
     def boost(self, name: str, amount: float) -> float:
         """Temporarily boost a desire level. Returns new level."""
@@ -146,7 +171,7 @@ class DesireEngine:
         self._state[name]["boost"] = min(1.0, current_boost + amount)
         self.save_state()
 
-        return self.compute_levels()[name]
+        return self.compute_levels().get(name, 0.0)
 
     def format_summary(self) -> str:
         """Format desire levels as sorted English summary.

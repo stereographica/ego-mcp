@@ -13,7 +13,8 @@ SCAFFOLD_FEEL_DESIRES = (
     "What is your strongest urge? Should you act on it now?\n"
     "Consider {companion_name}'s current situation. "
     "Act naturally. Restraint is also a choice.\n"
-    "After acting on a desire, use satisfy_desire."
+    "Does any urge feel quieter than before? If something feels settled, "
+    "acknowledge it with satisfy_desire."
 )
 
 SCAFFOLD_INTROSPECT = (

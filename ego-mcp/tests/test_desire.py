@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
+import json
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -43,11 +46,11 @@ class TestSigmoidCalculation:
         level_high_q = _calculate_sigmoid_level(4.0, 8.0, 0.8)
         assert level_low_q > level_high_q
 
-    def test_social_thirst_8h(self) -> None:
-        """social_thirst after 8h with default quality should be ~0.5."""
-        level = _calculate_sigmoid_level(8.0, 8.0, 0.5)
-        # With quality=0.5, adjusted_hours = 8 * 0.75 = 6
-        # elapsed/adjusted = 8/6 ≈ 1.33, x ≈ 5.0, sigmoid ≈ 0.99
+    def test_social_thirst_24h(self) -> None:
+        """social_thirst after 24h with default quality stays within 0-1."""
+        level = _calculate_sigmoid_level(24.0, 24.0, 0.5)
+        # With quality=0.5, adjusted_hours = 24 * 0.75 = 18
+        # elapsed/adjusted = 24/18 ≈ 1.33, x ≈ 5.0, sigmoid ≈ 0.99
         # Actually different than naive expectation due to quality adjustment
         assert 0.0 < level < 1.0
 
@@ -126,6 +129,73 @@ class TestDesireEngine:
             prev_order = order
 
 
+class TestDesireRebalance:
+    """Tests for rebalance values and migration."""
+
+    @pytest.mark.parametrize(
+        ("name", "hours"),
+        [
+            ("information_hunger", 12),
+            ("social_thirst", 24),
+            ("cognitive_coherence", 18),
+            ("pattern_seeking", 72),
+            ("predictability", 72),
+            ("recognition", 36),
+            ("resonance", 30),
+            ("expression", 24),
+            ("curiosity", 18),
+        ],
+    )
+    def test_satisfaction_hours_rebalanced(self, name: str, hours: int) -> None:
+        assert DESIRES[name]["satisfaction_hours"] == hours
+
+    def test_0002_desire_rebalance_resets_last_satisfied_near_now(
+        self, tmp_path: Path
+    ) -> None:
+        migration_mod = importlib.import_module("ego_mcp.migrations.0002_desire_rebalance")
+        data_dir = tmp_path
+        desires_path = data_dir / "desires.json"
+        old_time = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        original = {
+            "curiosity": {
+                "last_satisfied": old_time,
+                "satisfaction_quality": 0.9,
+                "boost": 0.25,
+            },
+            "expression": {
+                "last_satisfied": old_time,
+                "satisfaction_quality": 0.4,
+                "boost": 0.0,
+            },
+        }
+        desires_path.write_text(
+            json.dumps(original, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        before = datetime.now(timezone.utc)
+        migration_mod.up(data_dir)
+        after = datetime.now(timezone.utc)
+
+        migrated = json.loads(desires_path.read_text(encoding="utf-8"))
+        for name in ("curiosity", "expression"):
+            updated_at = datetime.fromisoformat(migrated[name]["last_satisfied"])
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            assert before <= updated_at <= after
+        assert migrated["curiosity"]["satisfaction_quality"] == 0.9
+        assert migrated["curiosity"]["boost"] == 0.25
+        assert migrated["expression"]["satisfaction_quality"] == 0.4
+        assert migrated["expression"]["boost"] == 0.0
+
+    def test_0002_desire_rebalance_noop_when_file_missing(self, tmp_path: Path) -> None:
+        migration_mod = importlib.import_module("ego_mcp.migrations.0002_desire_rebalance")
+
+        migration_mod.up(tmp_path)
+
+        assert not (tmp_path / "desires.json").exists()
+
+
 class TestDesirePersistence:
     """Test save/load state."""
 
@@ -151,3 +221,69 @@ class TestDesirePersistence:
         engine = DesireEngine(state_path)
         # Should have reinitialized
         assert set(engine._state.keys()) == set(DESIRES.keys())
+
+
+class TestImplicitSatisfaction:
+    """Tests for tool-driven implicit desire satisfaction."""
+
+    @pytest.fixture
+    def engine(self, tmp_path: Path) -> DesireEngine:
+        return DesireEngine(tmp_path / "desires.json")
+
+    def test_recall_updates_information_hunger_and_curiosity(
+        self, engine: DesireEngine
+    ) -> None:
+        old_time = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        engine._state["information_hunger"]["last_satisfied"] = old_time
+        engine._state["curiosity"]["last_satisfied"] = old_time
+
+        engine.satisfy_implicit("recall")
+
+        info_last = datetime.fromisoformat(engine._state["information_hunger"]["last_satisfied"])
+        cur_last = datetime.fromisoformat(engine._state["curiosity"]["last_satisfied"])
+        if info_last.tzinfo is None:
+            info_last = info_last.replace(tzinfo=timezone.utc)
+        if cur_last.tzinfo is None:
+            cur_last = cur_last.replace(tzinfo=timezone.utc)
+        assert info_last > datetime.fromisoformat(old_time)
+        assert cur_last > datetime.fromisoformat(old_time)
+        assert engine._state["information_hunger"]["satisfaction_quality"] == 0.3
+        assert engine._state["curiosity"]["satisfaction_quality"] == 0.2
+
+    def test_remember_introspection_adds_coherence_and_expression(
+        self, engine: DesireEngine
+    ) -> None:
+        old_time = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        engine._state["cognitive_coherence"]["last_satisfied"] = old_time
+        engine._state["expression"]["last_satisfied"] = old_time
+
+        engine.satisfy_implicit("remember", category="introspection")
+
+        assert engine._state["cognitive_coherence"]["satisfaction_quality"] == 0.4
+        assert engine._state["expression"]["satisfaction_quality"] == 0.3
+        assert engine._state["cognitive_coherence"]["last_satisfied"] != old_time
+        assert engine._state["expression"]["last_satisfied"] != old_time
+
+    def test_unmapped_tool_makes_no_changes(self, engine: DesireEngine) -> None:
+        before = deepcopy(engine._state)
+
+        engine.satisfy_implicit("wake_up")
+
+        assert engine._state == before
+
+    def test_implicit_quality_is_lower_than_explicit_default(self) -> None:
+        from ego_mcp.desire import (
+            IMPLICIT_SATISFACTION_MAP,
+            REMEMBER_INTROSPECTION_IMPLICIT_SATISFACTION,
+        )
+
+        explicit_default_quality = 0.7
+        mapped_qualities = [
+            quality
+            for entries in IMPLICIT_SATISFACTION_MAP.values()
+            for _desire, quality in entries
+        ]
+        mapped_qualities.append(REMEMBER_INTROSPECTION_IMPLICIT_SATISFACTION[1])
+
+        assert mapped_qualities
+        assert all(0.0 < quality < explicit_default_quality for quality in mapped_qualities)
