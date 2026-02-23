@@ -1,217 +1,87 @@
-:root {
-  font-family: Inter, system-ui, sans-serif;
-  color: #0f172a;
-  background: #f8fafc;
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: oklch(var(--background));
+  --color-foreground: oklch(var(--foreground));
+  --color-card: oklch(var(--card));
+  --color-card-foreground: oklch(var(--card-foreground));
+  --color-popover: oklch(var(--popover));
+  --color-popover-foreground: oklch(var(--popover-foreground));
+  --color-primary: oklch(var(--primary));
+  --color-primary-foreground: oklch(var(--primary-foreground));
+  --color-secondary: oklch(var(--secondary));
+  --color-secondary-foreground: oklch(var(--secondary-foreground));
+  --color-muted: oklch(var(--muted));
+  --color-muted-foreground: oklch(var(--muted-foreground));
+  --color-accent: oklch(var(--accent));
+  --color-accent-foreground: oklch(var(--accent-foreground));
+  --color-destructive: oklch(var(--destructive));
+  --color-border: oklch(var(--border));
+  --color-input: oklch(var(--input));
+  --color-ring: oklch(var(--ring));
+  --color-chart-1: oklch(var(--chart-1));
+  --color-chart-2: oklch(var(--chart-2));
+  --color-chart-3: oklch(var(--chart-3));
+  --color-chart-4: oklch(var(--chart-4));
+  --color-chart-5: oklch(var(--chart-5));
+  --color-chart-6: oklch(var(--chart-6));
+  --color-chart-7: oklch(var(--chart-7));
+  --color-chart-8: oklch(var(--chart-8));
+  --color-chart-9: oklch(var(--chart-9));
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
 }
 
-* {
-  box-sizing: border-box;
+:root {
+  --radius: 0.625rem;
+
+  /* dark theme as default */
+  --background: 0.145 0 0;
+  --foreground: 0.985 0 0;
+  --card: 0.205 0 0;
+  --card-foreground: 0.985 0 0;
+  --popover: 0.205 0 0;
+  --popover-foreground: 0.985 0 0;
+  --primary: 0.922 0 0;
+  --primary-foreground: 0.205 0 0;
+  --secondary: 0.269 0 0;
+  --secondary-foreground: 0.985 0 0;
+  --muted: 0.269 0 0;
+  --muted-foreground: 0.708 0 0;
+  --accent: 0.269 0 0;
+  --accent-foreground: 0.985 0 0;
+  --destructive: 0.704 0.191 22.216;
+  --border: 0.3 0 0;
+  --input: 0.3 0 0;
+  --ring: 0.556 0 0;
+
+  /* chart palette — 9 colours for desire metrics */
+  --chart-1: 0.65 0.18 165;
+  --chart-2: 0.55 0.2 250;
+  --chart-3: 0.58 0.22 295;
+  --chart-4: 0.65 0.18 60;
+  --chart-5: 0.55 0.22 15;
+  --chart-6: 0.6 0.19 155;
+  --chart-7: 0.5 0.22 275;
+  --chart-8: 0.6 0.18 80;
+  --chart-9: 0.58 0.22 350;
 }
-body {
-  margin: 0;
-}
-.container {
-  width: min(1680px, calc(100vw - 24px));
-  margin: 0 auto;
-  padding: 24px;
-}
-.grid {
-  display: grid;
-  gap: 16px;
-}
-.grid-3 {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-.card {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 16px;
-}
-.title {
-  font-size: 12px;
-  color: #64748b;
-  margin: 0 0 8px;
-}
-.value {
-  font-size: 28px;
-  font-weight: 700;
-  margin: 0;
-}
-.tabs {
-  margin-top: 16px;
-}
-.tab-list {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-.tab-trigger {
-  border: 1px solid #cbd5e1;
-  background: white;
-  border-radius: 8px;
-  padding: 8px 12px;
-  cursor: pointer;
-}
-.tab-trigger[data-state='active'] {
-  background: #0f172a;
-  color: white;
-}
-.range-controls {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.range-button.is-active {
-  background: #0f172a;
-  color: white;
-  border-color: #0f172a;
-}
-.range-input {
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  padding: 7px 10px;
-  background: white;
-}
-.badge {
-  background: #e2e8f0;
-  border-radius: 999px;
-  font-size: 12px;
-  padding: 4px 8px;
-}
-.feed {
-  max-height: 220px;
-  overflow: auto;
-  display: grid;
-  gap: 8px;
-}
-.feed-tall {
-  max-height: clamp(280px, 45vh, 560px);
-}
-.feed-item {
-  padding: 10px;
-  border-radius: 8px;
-  background: #f1f5f9;
-  font-size: 14px;
-}
-.history-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
-  gap: 16px;
-}
-.logs-card {
-  min-height: clamp(380px, 62vh, 820px);
-}
-.logs-controls {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.logs-controls select,
-.logs-controls input {
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  padding: 7px 10px;
-  background: white;
-}
-.log-feed {
-  max-height: clamp(360px, 62vh, 820px);
-  min-height: 320px;
-}
-.log-row {
-  display: grid;
-  grid-template-columns: 196px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-}
-.log-ts {
-  color: #334155;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: nowrap;
-}
-.log-json {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.4;
-}
-.log-empty {
-  color: #64748b;
-}
-.helper-text {
-  margin: 8px 0 0;
-  color: #64748b;
-  font-size: 12px;
-}
-.emotion-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-.emotion-intensity {
-  display: grid;
-  justify-items: end;
-  gap: 4px;
-}
-.metric-mini-label {
-  margin: 0;
-  color: #64748b;
-  font-size: 12px;
-}
-.latest-metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 10px;
-  margin-top: 8px;
-}
-.latest-metric-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 8px;
-  background: #f1f5f9;
-}
-.latest-metric-name {
-  color: #334155;
-  font-size: 14px;
-}
-.history-stack {
-  display: grid;
-  gap: 16px;
-  margin-top: 16px;
-}
-@media (max-width: 900px) {
-  .grid-3 {
-    grid-template-columns: 1fr;
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
-  .emotion-row {
-    align-items: stretch;
-  }
-  .emotion-intensity {
-    justify-items: start;
-  }
-  .latest-metrics-grid {
-    grid-template-columns: 1fr;
-  }
-  .history-layout {
-    grid-template-columns: 1fr;
-  }
-  .log-row {
-    grid-template-columns: 1fr;
-    gap: 6px;
-  }
-  .log-ts {
-    white-space: normal;
+  body {
+    @apply bg-background text-foreground;
+    font-family: Inter, system-ui, sans-serif;
   }
 }
