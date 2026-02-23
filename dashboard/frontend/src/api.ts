@@ -1,4 +1,5 @@
 import type {
+  AnomalyAlert,
   CurrentResponse,
   DateRange,
   HeatmapPoint,
@@ -96,3 +97,24 @@ export const fetchLogs = async (
   )
   return data.items
 }
+
+export const fetchAnomalies = async (
+  range: DateRange,
+  bucket: string,
+): Promise<AnomalyAlert[]> => {
+  const data = await get<{ items: AnomalyAlert[] }>(
+    `/api/v1/alerts/anomalies?${encodeRange(range)}&bucket=${bucket}`,
+    { items: [] },
+  )
+  return data.items
+}
+
+export const fetchValence = async (
+  range: DateRange,
+  bucket: string,
+): Promise<SeriesPoint[]> => fetchMetric('valence', range, bucket)
+
+export const fetchArousal = async (
+  range: DateRange,
+  bucket: string,
+): Promise<SeriesPoint[]> => fetchMetric('arousal', range, bucket)
