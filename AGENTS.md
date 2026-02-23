@@ -100,6 +100,16 @@ npm run test
 npm run build
 ```
 
+## ego-mcp リリースワークフロー
+
+ego-mcp のコード変更をリリースする際は以下に従う:
+
+1. `ego-mcp/pyproject.toml` の `version` を更新
+2. `ego-mcp/src/ego_mcp/__init__.py` の `__version__` を同じ値に更新
+3. マイグレーションファイルがある場合: `TARGET_VERSION` が新バージョンと一致することを確認
+4. CI チェックを全て通す
+5. マージ後に `git tag v{version}` を付与
+
 ## Mandatory CI Gate After Code Changes
 
 If any code under `ego-mcp/` or `dashboard/` is changed, run the
