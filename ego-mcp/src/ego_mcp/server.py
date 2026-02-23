@@ -20,6 +20,7 @@ from ego_mcp.embedding import EgoEmbeddingFunction, create_embedding_provider
 from ego_mcp.episode import EpisodeStore
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore, calculate_time_decay, count_emotions_weighted
+from ego_mcp.migrations import run_migrations
 from ego_mcp.relationship import RelationshipStore
 from ego_mcp.scaffolds import (
     SCAFFOLD_AM_I_GENUINE,
@@ -382,13 +383,21 @@ async def _dispatch(
     elif name == "feel_desires":
         return await _handle_feel_desires(config, memory, desire)
     elif name == "introspect":
-        return await _handle_introspect(config, memory, desire)
+        result = await _handle_introspect(config, memory, desire)
+        desire.satisfy_implicit("introspect")
+        return result
     elif name == "consider_them":
-        return await _handle_consider_them(config, memory, args)
+        result = await _handle_consider_them(config, memory, args)
+        desire.satisfy_implicit("consider_them")
+        return result
     elif name == "remember":
-        return await _handle_remember(memory, args)
+        result = await _handle_remember(memory, args)
+        desire.satisfy_implicit("remember", category=args.get("category"))
+        return result
     elif name == "recall":
-        return await _handle_recall(config, memory, args)
+        result = await _handle_recall(config, memory, args)
+        desire.satisfy_implicit("recall")
+        return result
     elif name == "am_i_being_genuine":
         return _handle_am_i_genuine()
 
@@ -396,15 +405,23 @@ async def _dispatch(
     elif name == "satisfy_desire":
         return _handle_satisfy_desire(desire, args)
     elif name == "consolidate":
-        return await _handle_consolidate(memory, consolidation)
+        result = await _handle_consolidate(memory, consolidation)
+        desire.satisfy_implicit("consolidate")
+        return result
     elif name == "link_memories":
         return await _handle_link_memories(memory, args)
     elif name == "update_relationship":
-        return _handle_update_relationship(config, args)
+        result = _handle_update_relationship(config, args)
+        desire.satisfy_implicit("update_relationship")
+        return result
     elif name == "update_self":
-        return _handle_update_self(config, args)
+        result = _handle_update_self(config, args)
+        desire.satisfy_implicit("update_self")
+        return result
     elif name == "emotion_trend":
-        return await _handle_emotion_trend(memory)
+        result = await _handle_emotion_trend(memory)
+        desire.satisfy_implicit("emotion_trend")
+        return result
     elif name == "get_episode":
         return await _handle_get_episode(episodes, args)
     elif name == "create_episode":
@@ -1512,6 +1529,7 @@ def init_server(config: EgoConfig | None = None) -> None:
     _config = config
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
+    run_migrations(config.data_dir)
 
     provider = create_embedding_provider(config)
     embedding_fn = EgoEmbeddingFunction(provider)

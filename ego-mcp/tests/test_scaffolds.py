@@ -49,6 +49,13 @@ class TestScaffoldConstants:
     def test_introspect_mentions_emotion_trend(self) -> None:
         assert "Use emotion_trend" in SCAFFOLD_INTROSPECT
 
+    def test_feel_desires_uses_awareness_prompt_for_satisfy_desire(self) -> None:
+        assert (
+            "Does any urge feel quieter than before? If something feels settled, "
+            "acknowledge it with satisfy_desire."
+        ) in SCAFFOLD_FEEL_DESIRES
+        assert "After acting on a desire, use satisfy_desire." not in SCAFFOLD_FEEL_DESIRES
+
 
 class TestRender:
     """render() replaces {companion_name}."""
