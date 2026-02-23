@@ -7,11 +7,21 @@ export type CurrentResponse = {
   }
   latest_desires?: Record<string, number>
   latest: {
+    ts?: string
     emotion_intensity?: number
     emotion_primary?: string
     message?: string
+    duration_ms?: number
+    tool_name?: string
+    string_metrics?: Record<string, string>
     numeric_metrics?: Record<string, number>
   } | null
+}
+
+export type AnomalyAlert = {
+  kind: 'usage_spike' | 'intensity_spike'
+  ts: string
+  value: number
 }
 
 export type TimeRangePreset = '15m' | '1h' | '6h' | '24h' | '7d' | 'custom'
