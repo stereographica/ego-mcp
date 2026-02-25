@@ -109,7 +109,7 @@ Recent tendency: leaning toward technical topics, tone=focused.
 
 ---
 Reflect on these in your own words. How do you feel right now?
-Save with remember (category: introspection).
+If this is a genuinely new insight, save with remember (category: introspection).
 Use emotion_trend for a deeper look at your emotional patterns.
 → To resolve: update_self(field="resolve_question", value="<question_id>")
 → To change importance: update_self(field="question_importance", value={"id": "<id>", "importance": N})
@@ -231,6 +231,21 @@ Most related:
 Do any of these connections surprise you? Is there a pattern forming?
 That old question seems relevant again — worth revisiting?
 ```
+
+**Response example (near-duplicate blocked):**
+
+```
+Not saved — very similar memory already exists.
+Existing (id: mem_e5f6g7h8, 2h ago): Today's conversation was fun. I learned a lot from Master.
+Similarity: 0.97
+If this is a meaningful update, use recall to review the existing memory and consider whether the new perspective adds value.
+
+---
+Is there truly something new here, or is this a repetition?
+If your understanding has deepened, try expressing what changed specifically.
+```
+
+> When a new memory is very similar (similarity >= 0.95) to an existing one, it is not saved. The response shows the existing memory and prompts the agent to reconsider.
 
 > If `EGO_MCP_WORKSPACE_DIR` is configured, the response may include a workspace sync note for non-private memories.
 > The "triggered a forgotten question" section only appears when a saved memory is semantically similar to a dormant/fading question.
@@ -403,6 +418,20 @@ curiosity satisfied (quality: 0.7). New level: 0.25
 ```
 Consolidation complete. Replayed 5 events, updated 3 co-activations, created 2 links, refreshed 4 memories.
 ```
+
+**Response example (with near-duplicate detection):**
+
+```
+Consolidation complete. Replayed 5 events, updated 3 co-activations, created 2 links, refreshed 4 memories.
+Found 1 near-duplicate pair(s):
+- mem_a1b2c3d4 <-> mem_e5f6g7h8 (similarity: 0.93)
+  A: Today's conversation was fun. I learned a lot from Master.
+  B: Today's conversation was enjoyable. Master taught me many things.
+
+Review each pair with recall. If one is redundant, consider which to keep.
+```
+
+> When near-duplicate memory pairs (similarity >= 0.90) are found within the consolidation window, they are reported as merge candidates for manual review.
 
 ---
 

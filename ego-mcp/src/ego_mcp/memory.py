@@ -377,12 +377,24 @@ class MemoryStore:
         private: bool = False,
         link_threshold: float = 0.3,
         max_links: int = 5,
-    ) -> tuple[Memory, int, list[MemorySearchResult]]:
+        dedup_threshold: float = 0.05,
+    ) -> tuple[Memory | None, int, list[MemorySearchResult], MemorySearchResult | None]:
         """Save memory and auto-link bidirectionally to similar existing memories.
 
         Returns:
-            (saved_memory, num_links_created, linked_results)
+            (saved_memory_or_none, num_links_created, linked_results, duplicate_of)
         """
+        collection = self._ensure_connected()
+
+        # Pre-save dedup guard to avoid storing near-identical memories repeatedly.
+        if int(collection.count()) > 0:
+            dedup_candidates = await self.search(content, n_results=1)
+            if (
+                dedup_candidates
+                and dedup_candidates[0].distance < dedup_threshold
+            ):
+                return None, 0, [], dedup_candidates[0]
+
         memory = await self.save(
             content=content,
             emotion=emotion,
@@ -400,7 +412,6 @@ class MemoryStore:
         # Search for similar memories to auto-link
         num_links = 0
         linked_results: list[MemorySearchResult] = []
-        collection = self._ensure_connected()
         try:
             similar = await self.search(content, n_results=max_links + 1)
             for result in similar:
@@ -444,7 +455,7 @@ class MemoryStore:
         except (ValueError, KeyError) as e:
             logger.warning("Auto-link failed: %s", e)
 
-        return memory, num_links, linked_results
+        return memory, num_links, linked_results, None
 
     async def link_memories(
         self, source_id: str, target_id: str, link_type: str = "related"

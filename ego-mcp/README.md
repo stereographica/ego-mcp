@@ -44,7 +44,7 @@ export EGO_MCP_WORKSPACE_DIR="/path/to/openclaw-workspace"
 ### 3. Verify
 
 ```bash
-uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 0.1.0
+uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 0.2.2
 uv run python -m ego_mcp  # Starts the server
 ```
 
