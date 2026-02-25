@@ -23,6 +23,7 @@ EXPECTED_TOOL_NAMES = {
     "am_i_being_genuine",
     "satisfy_desire",
     "consolidate",
+    "forget",
     "link_memories",
     "update_relationship",
     "update_self",

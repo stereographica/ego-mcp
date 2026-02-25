@@ -1,7 +1,7 @@
 # ego-mcp Tool Reference
 
-> Complete reference for all 15 ego-mcp tools.
-> Surface tools (7) are always visible. Backend tools (8) are guided by surface tool responses.
+> Complete reference for all 16 ego-mcp tools.
+> Surface tools (7) are always visible. Backend tools (9) are guided by surface tool responses.
 
 ---
 
@@ -428,14 +428,59 @@ Found 1 near-duplicate pair(s):
   A: Today's conversation was fun. I learned a lot from Master.
   B: Today's conversation was enjoyable. Master taught me many things.
 
-Review each pair with recall. If one is redundant, consider which to keep.
+Review each pair with recall. If one is redundant, use forget to remove it.
+If both have value, consider which perspective to keep.
 ```
 
 > When near-duplicate memory pairs (similarity >= 0.90) are found within the consolidation window, they are reported as merge candidates for manual review.
 
 ---
 
-### 10. `link_memories`
+### 10. `forget`
+
+**Description:** Delete a memory by ID. Returns the deleted memory's summary for confirmation.
+
+**When to call:** After `consolidate` reports near-duplicate candidates and you choose one to remove, or when a memory was saved by mistake and should be deleted.
+
+**inputSchema:**
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "memory_id": {
+      "type": "string",
+      "description": "ID of the memory to delete"
+    }
+  },
+  "required": ["memory_id"]
+}
+```
+
+**Response example (deleted):**
+
+```
+Forgot mem_a1b2c3d4 [2d ago]
+Today's conversation was duplicated after a retry, so this copy was removed.
+emotion: curious | importance: 3
+
+---
+This memory is gone. Was there anything worth preserving in a new form?
+If this was part of a merge, save the consolidated version with remember.
+```
+
+**Response example (ID not found):**
+
+```
+Memory not found: mem_missing123
+
+---
+Double-check the ID. Use recall to search for the memory you're looking for.
+```
+
+---
+
+### 11. `link_memories`
 
 **Description:** Link two memories.
 
@@ -470,7 +515,7 @@ Linked mem_a1b2c3d4 ↔ mem_e5f6g7h8 (type: related)
 
 ---
 
-### 11. `update_relationship`
+### 12. `update_relationship`
 
 **Description:** Update relationship model.
 
@@ -502,7 +547,7 @@ Updated Master.trust_level
 
 ---
 
-### 12. `update_self`
+### 13. `update_self`
 
 **Description:** Update self model.
 
@@ -547,7 +592,7 @@ Updated self.discovered_values
 
 ---
 
-### 13. `emotion_trend`
+### 14. `emotion_trend`
 
 **Description:** Analyze emotional patterns over time.
 
@@ -598,7 +643,7 @@ If something feels unresolved, consider running introspect.
 
 ---
 
-### 14. `get_episode`
+### 15. `get_episode`
 
 **Description:** Get episode details.
 
@@ -630,7 +675,7 @@ Importance: 4
 
 ---
 
-### 15. `create_episode`
+### 16. `create_episode`
 
 **Description:** Create episode from memories.
 
@@ -678,7 +723,7 @@ After Significant Experience:
   remember → [create_episode]
 
 Memory Management:
-  recall → [link_memories] → [consolidate]
+  recall → [link_memories] → [consolidate] → [forget] → [remember merged version]
 
 Self-Update:
   introspect → [update_self]

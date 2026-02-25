@@ -2,6 +2,22 @@
 
 ego-mcp のリリース履歴。
 
+## [0.2.3] - 2026-02-25
+
+### Added
+- `forget` ツール（記憶 ID 指定削除）
+- `MemoryStore.delete` メソッド（双方向リンクの逆リンククリーンアップ付き）
+- `WorkspaceMemorySync.remove_memory` メソッド（同期済み Markdown エントリ除去）
+
+### Changed
+- `consolidate` のマージ候補スキャフォールドに `forget` への導線を追加
+- `get_episode` で削除済み `memory_ids` をフィルタし、欠損数を注記
+- `docs/tool-reference.md` / `README.md` のツール一覧・フローを更新
+
+### Design
+- `design/forget-tool-design.md` — forget ツール設計書
+
+
 ## [0.2.2] - 2026-02-25
 
 ### Added
