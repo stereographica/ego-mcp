@@ -38,6 +38,7 @@ from ego_mcp.types import Memory, MemorySearchResult
 from ego_mcp.workspace_sync import WorkspaceMemorySync
 
 logger = logging.getLogger(__name__)
+_REMEMBER_DUPLICATE_PREFIX = "Not saved — very similar memory already exists."
 
 server = Server("ego-mcp")
 
@@ -392,7 +393,8 @@ async def _dispatch(
         return result
     elif name == "remember":
         result = await _handle_remember(memory, args)
-        desire.satisfy_implicit("remember", category=args.get("category"))
+        if not result.startswith(_REMEMBER_DUPLICATE_PREFIX):
+            desire.satisfy_implicit("remember", category=args.get("category"))
         return result
     elif name == "recall":
         result = await _handle_recall(config, memory, args)
@@ -1257,7 +1259,7 @@ async def _handle_remember(memory: MemoryStore, args: dict[str, Any]) -> str:
     private = bool(args.get("private", False))
     body_state = args.get("body_state") or get_body_state()
 
-    mem, num_links, linked_results = await memory.save_with_auto_link(
+    mem, num_links, linked_results, duplicate_of = await memory.save_with_auto_link(
         content=content,
         emotion=emotion,
         secondary=secondary,
@@ -1269,6 +1271,27 @@ async def _handle_remember(memory: MemoryStore, args: dict[str, Any]) -> str:
         body_state=body_state,
         private=private,
     )
+    if mem is None and duplicate_of is not None:
+        similarity = max(0.0, min(1.0, 1.0 - duplicate_of.distance))
+        age = _relative_time(duplicate_of.memory.timestamp)
+        snippet = _truncate_for_quote(duplicate_of.memory.content, limit=120)
+        data = (
+            f"{_REMEMBER_DUPLICATE_PREFIX}\n"
+            f"Existing (id: {duplicate_of.memory.id}, {age}): {snippet}\n"
+            f"Similarity: {similarity:.2f}\n"
+            "If this is a meaningful update, use recall to review the existing "
+            "memory and consider whether the new perspective adds value."
+        )
+        scaffold = (
+            "Is there truly something new here, or is this a repetition?\n"
+            "If your understanding has deepened, try expressing what changed specifically."
+        )
+        return compose_response(data, scaffold)
+
+    if mem is None:
+        raise RuntimeError(
+            "save_with_auto_link returned no memory without duplicate metadata"
+        )
     sync = _get_workspace_sync()
     sync_note = ""
     if sync is not None and not mem.is_private:
@@ -1403,14 +1426,28 @@ async def _handle_consolidate(
 ) -> str:
     """Run memory consolidation."""
     stats = await consolidation.run(memory)
-    d = stats.to_dict()
-    return (
+    base = (
         f"Consolidation complete. "
-        f"Replayed {d['replay_events']} events, "
-        f"updated {d['coactivation_updates']} co-activations, "
-        f"created {d['link_updates']} links, "
-        f"refreshed {d['refreshed_memories']} memories."
+        f"Replayed {stats.replay_events} events, "
+        f"updated {stats.coactivation_updates} co-activations, "
+        f"created {stats.link_updates} links, "
+        f"refreshed {stats.refreshed_memories} memories."
     )
+    if not stats.merge_candidates:
+        return base
+
+    lines = [base, f"Found {len(stats.merge_candidates)} near-duplicate pair(s):"]
+    for candidate in stats.merge_candidates:
+        similarity = max(0.0, min(1.0, 1.0 - candidate.distance))
+        lines.append(
+            f"- {candidate.memory_a_id} <-> {candidate.memory_b_id} "
+            f"(similarity: {similarity:.2f})"
+        )
+        lines.append(f"  A: {candidate.snippet_a}")
+        lines.append(f"  B: {candidate.snippet_b}")
+    lines.append("")
+    lines.append("Review each pair with recall. If one is redundant, consider which to keep.")
+    return "\n".join(lines)
 
 
 async def _handle_link_memories(memory: MemoryStore, args: dict[str, Any]) -> str:

@@ -19,7 +19,7 @@ SCAFFOLD_FEEL_DESIRES = (
 
 SCAFFOLD_INTROSPECT = (
     "Reflect on these in your own words. How do you feel right now?\n"
-    "Save with remember (category: introspection).\n"
+    "If this is a genuinely new insight, save with remember (category: introspection).\n"
     "If your self-understanding changed, use update_self.\n"
     "Use emotion_trend for a deeper look at your emotional patterns.\n"
     "If memory feels fragmented, run consolidate."
