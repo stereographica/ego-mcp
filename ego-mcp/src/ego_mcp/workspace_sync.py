@@ -82,6 +82,20 @@ class WorkspaceMemorySync:
             curated_updated=curated_updated,
         )
 
+    def remove_memory(self, memory_id: str) -> bool:
+        """Remove synced entries for a memory from daily/curated Markdown files."""
+        marker = f"[id:{memory_id}]"
+        modified = False
+
+        for daily_file in self._memory_dir.glob("????-??-??.md"):
+            if self._remove_lines_with_marker(daily_file, marker):
+                modified = True
+
+        if self._remove_lines_with_marker(self._curated_memory, marker):
+            modified = True
+
+        return modified
+
     def write_latest_monologue(self, content: str, timestamp: str) -> None:
         """Write the latest introspection text for session resume."""
         self._memory_dir.mkdir(parents=True, exist_ok=True)
@@ -137,6 +151,20 @@ class WorkspaceMemorySync:
             f"(emotion: {memory.emotional_trace.primary.value}) {marker}\n"
         )
         self._curated_memory.write_text(current + entry, encoding="utf-8")
+        return True
+
+    def _remove_lines_with_marker(self, path: Path, marker: str) -> bool:
+        """Remove lines containing a marker from a file."""
+        if not path.exists():
+            return False
+
+        content = path.read_text(encoding="utf-8")
+        if marker not in content:
+            return False
+
+        lines = content.splitlines(keepends=True)
+        cleaned_lines = [line for line in lines if marker not in line]
+        path.write_text("".join(cleaned_lines), encoding="utf-8")
         return True
 
 
