@@ -22,10 +22,11 @@ DESIRES: dict[str, dict[str, Any]] = {
 }
 
 IMPLICIT_SATISFACTION_MAP: dict[str, list[tuple[str, float]]] = {
+    "wake_up": [("predictability", 0.05)],
     "remember": [("expression", 0.3)],
     "recall": [("information_hunger", 0.3), ("curiosity", 0.2)],
-    "introspect": [("cognitive_coherence", 0.3), ("pattern_seeking", 0.2)],
-    "consider_them": [("social_thirst", 0.4), ("resonance", 0.3)],
+    "introspect": [("cognitive_coherence", 0.3), ("pattern_seeking", 0.2), ("predictability", 0.1)],
+    "consider_them": [("social_thirst", 0.4), ("resonance", 0.3), ("predictability", 0.1)],
     "emotion_trend": [("pattern_seeking", 0.3)],
     "consolidate": [("cognitive_coherence", 0.3)],
     "update_self": [("cognitive_coherence", 0.3)],

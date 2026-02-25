@@ -2,6 +2,17 @@
 
 ego-mcp のリリース履歴。
 
+## [0.2.4] - 2026-02-25
+
+### Changed
+- `IMPLICIT_SATISFACTION_MAP` に `wake_up` エントリ追加（`predictability` 0.05）
+- `introspect` / `consider_them` の暗黙充足に `predictability` 0.1 を追加
+- `wake_up` ルーティングで `satisfy_implicit("wake_up")` を呼び出すように変更
+- `SCAFFOLD_FEEL_DESIRES` に予測検証の促し文言を追加
+- `SCAFFOLD_INTROSPECT` に予測の振り返り文言を追加
+- `SCAFFOLD_CONSIDER_THEM` に予測確認の文言を追加
+
+
 ## [0.2.3] - 2026-02-25
 
 ### Added

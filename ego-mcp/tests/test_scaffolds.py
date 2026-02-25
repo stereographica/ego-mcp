@@ -59,6 +59,15 @@ class TestScaffoldConstants:
         ) in SCAFFOLD_FEEL_DESIRES
         assert "After acting on a desire, use satisfy_desire." not in SCAFFOLD_FEEL_DESIRES
 
+    def test_feel_desires_mentions_predictions(self) -> None:
+        assert "predictions" in SCAFFOLD_FEEL_DESIRES
+
+    def test_introspect_mentions_predictability(self) -> None:
+        assert "predictability" in SCAFFOLD_INTROSPECT
+
+    def test_consider_them_mentions_predictability(self) -> None:
+        assert "predictability" in SCAFFOLD_CONSIDER_THEM
+
 
 class TestRender:
     """render() replaces {companion_name}."""
