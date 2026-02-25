@@ -154,6 +154,10 @@ npm run test
 npm run build
 ```
 
+## Acknowledgments
+
+- [embodied-claude](https://github.com/kmizu/embodied-claude) by [@kmizu](https://github.com/kmizu)
+
 ## License
 
 MIT
