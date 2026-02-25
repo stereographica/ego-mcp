@@ -18,7 +18,7 @@ from ego_mcp.memory import (
     calculate_time_decay,
     count_emotions_weighted,
 )
-from ego_mcp.types import Emotion, EmotionalTrace, Memory
+from ego_mcp.types import Emotion, EmotionalTrace, Memory, MemorySearchResult
 
 # --- Fake embedding provider for tests ---
 
@@ -187,24 +187,108 @@ class TestMemoryAutoLink:
     @pytest.mark.asyncio
     async def test_auto_link_similar(self, store: MemoryStore) -> None:
         await store.save(content="I love programming in Python")
-        mem, num_links, linked_results = await store.save_with_auto_link(
+        mem, num_links, linked_results, duplicate_of = await store.save_with_auto_link(
             content="I love programming in Python too",
+            dedup_threshold=0.0,
         )
         # May or may not link depending on embedding similarity
+        assert mem is not None
         assert isinstance(linked_results, list)
         assert isinstance(num_links, int)
         assert num_links >= 0
+        assert duplicate_of is None
 
     @pytest.mark.asyncio
     async def test_auto_link_preserves_private_flag(self, store: MemoryStore) -> None:
         await store.save(content="anchor context for links")
-        mem, _num_links, _linked_results = await store.save_with_auto_link(
+        mem, _num_links, _linked_results, duplicate_of = await store.save_with_auto_link(
             content="anchor context for links with private notes",
             private=True,
+            dedup_threshold=0.0,
         )
+        assert mem is not None
+        assert duplicate_of is None
         loaded = await store.get_by_id(mem.id)
         assert loaded is not None
         assert loaded.is_private is True
+
+    @pytest.mark.asyncio
+    async def test_save_with_auto_link_returns_four_tuple_items(
+        self, store: MemoryStore
+    ) -> None:
+        result = await store.save_with_auto_link(content="tuple shape check")
+        assert len(result) == 4
+
+    @pytest.mark.asyncio
+    async def test_save_with_auto_link_blocks_near_duplicate_before_saving(
+        self, store: MemoryStore
+    ) -> None:
+        first, _num_links, _linked_results, first_duplicate = await store.save_with_auto_link(
+            content="duplicate guard exact content",
+        )
+        assert first is not None
+        assert first_duplicate is None
+        assert store.collection_count() == 1
+
+        second, num_links, linked_results, duplicate_of = await store.save_with_auto_link(
+            content="duplicate guard exact content",
+        )
+        assert second is None
+        assert num_links == 0
+        assert linked_results == []
+        assert duplicate_of is not None
+        assert duplicate_of.memory.id == first.id
+        assert duplicate_of.distance < 0.05
+        assert store.collection_count() == 1
+
+    @pytest.mark.asyncio
+    async def test_save_with_auto_link_allows_save_when_distance_above_dedup_threshold(
+        self,
+        store: MemoryStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        anchor = await store.save(content="anchor memory for dedup threshold")
+        search_calls: list[int] = []
+
+        async def fake_search(query: str, **kwargs: Any) -> list[MemorySearchResult]:
+            del query
+            search_calls.append(int(kwargs.get("n_results", 0)))
+            return [MemorySearchResult(memory=anchor, distance=0.20, score=0.20)]
+
+        monkeypatch.setattr(store, "search", fake_search)
+
+        mem, _num_links, _linked_results, duplicate_of = await store.save_with_auto_link(
+            content="new memory should still save",
+            dedup_threshold=0.05,
+        )
+        assert mem is not None
+        assert duplicate_of is None
+        assert mem.id != anchor.id
+        assert search_calls
+        assert search_calls[0] == 1
+
+    @pytest.mark.asyncio
+    async def test_save_with_auto_link_skips_dedup_search_when_collection_empty(
+        self,
+        store: MemoryStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        search_calls: list[int] = []
+
+        async def fake_search(query: str, **kwargs: Any) -> list[MemorySearchResult]:
+            del query
+            search_calls.append(int(kwargs.get("n_results", 0)))
+            return []
+
+        monkeypatch.setattr(store, "search", fake_search)
+
+        mem, _num_links, _linked_results, duplicate_of = await store.save_with_auto_link(
+            content="first memory should bypass dedup check",
+        )
+        assert mem is not None
+        assert duplicate_of is None
+        # Auto-link search still runs after save (default max_links=5 => n_results=6).
+        assert search_calls == [6]
 
 
 class TestMemoryRecall:

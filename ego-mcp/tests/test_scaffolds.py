@@ -49,6 +49,9 @@ class TestScaffoldConstants:
     def test_introspect_mentions_emotion_trend(self) -> None:
         assert "Use emotion_trend" in SCAFFOLD_INTROSPECT
 
+    def test_introspect_mentions_genuinely_new_insight_before_remember(self) -> None:
+        assert "genuinely new insight" in SCAFFOLD_INTROSPECT
+
     def test_feel_desires_uses_awareness_prompt_for_satisfy_desire(self) -> None:
         assert (
             "Does any urge feel quieter than before? If something feels settled, "

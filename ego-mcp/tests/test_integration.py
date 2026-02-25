@@ -15,13 +15,17 @@ from mcp.types import TextContent
 import ego_mcp.server as server_mod
 from ego_mcp.chromadb_compat import load_chromadb
 from ego_mcp.config import EgoConfig
-from ego_mcp.consolidation import ConsolidationEngine
+from ego_mcp.consolidation import (
+    ConsolidationEngine,
+    ConsolidationStats,
+    MergeCandidate,
+)
 from ego_mcp.desire import DesireEngine
 from ego_mcp.embedding import EgoEmbeddingFunction, EmbeddingProvider
 from ego_mcp.episode import EpisodeStore
 from ego_mcp.memory import MemoryStore
 from ego_mcp.self_model import SelfModelStore
-from ego_mcp.types import Emotion, EmotionalTrace, Memory
+from ego_mcp.types import Emotion, EmotionalTrace, Memory, MemorySearchResult
 from ego_mcp.workspace_sync import WorkspaceMemorySync
 
 chromadb = load_chromadb()
@@ -791,20 +795,30 @@ class TestRemember:
         sync = WorkspaceMemorySync(tmp_path / "workspace")
         monkeypatch.setattr(server_mod, "_workspace_sync", sync)
 
-        content = "I solved a compiler warning by narrowing the generic type."
+        anchor_content = "I solved a compiler warning by narrowing the generic type."
+        anchor = await memory.save(content=anchor_content, category="technical")
 
-        await _call(
-            "remember",
-            {"content": content, "category": "technical"},
-            config,
-            memory,
-            desire,
-            episodes,
-            consolidation,
-        )
+        async def fake_save_with_auto_link(**kwargs: Any) -> tuple[
+            Memory | None,
+            int,
+            list[MemorySearchResult],
+            MemorySearchResult | None,
+        ]:
+            mem = await memory.save(
+                content=str(kwargs["content"]),
+                category=str(kwargs.get("category", "daily")),
+                private=bool(kwargs.get("private", False)),
+            )
+            linked = MemorySearchResult(memory=anchor, distance=0.08, score=0.08)
+            return mem, 1, [linked], None
+
+        monkeypatch.setattr(memory, "save_with_auto_link", fake_save_with_auto_link)
         result = await _call(
             "remember",
-            {"content": content, "category": "technical"},
+            {
+                "content": "I resolved another compiler warning by tightening a generic bound.",
+                "category": "technical",
+            },
             config,
             memory,
             desire,
@@ -817,6 +831,43 @@ class TestRemember:
         match = re.search(r"Linked to (\d+) existing memories\.", result)
         assert match is not None, result
         assert int(match.group(1)) >= 1
+
+    @pytest.mark.asyncio
+    async def test_remember_blocks_near_duplicate_and_reports_existing_memory(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        first = await _call(
+            "remember",
+            {"content": "duplicate-response-token exact same memory"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        first_id = first.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        assert memory.collection_count() == 1
+
+        second = await _call(
+            "remember",
+            {"content": "duplicate-response-token exact same memory"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert "Not saved" in second
+        assert "very similar memory already exists" in second
+        assert f"Existing (id: {first_id}," in second
+        assert "Similarity:" in second
+        assert "Is there truly something new here" in second
+        assert memory.collection_count() == 1
 
     @pytest.mark.asyncio
     async def test_remember_surfaces_related_forgotten_question(
@@ -1597,6 +1648,50 @@ class TestConsolidate:
             consolidation,
         )
         assert "Consolidation complete" in result
+
+    @pytest.mark.asyncio
+    async def test_consolidate_surfaces_merge_candidates(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def fake_run(*_args: Any, **_kwargs: Any) -> ConsolidationStats:
+            return ConsolidationStats(
+                replay_events=2,
+                coactivation_updates=1,
+                link_updates=1,
+                refreshed_memories=3,
+                merge_candidates=(
+                    MergeCandidate(
+                        memory_a_id="mem_a",
+                        memory_b_id="mem_b",
+                        distance=0.07,
+                        snippet_a="alpha snippet",
+                        snippet_b="beta snippet",
+                    ),
+                ),
+            )
+
+        monkeypatch.setattr(consolidation, "run", fake_run)
+
+        result = await _call(
+            "consolidate",
+            {},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert "Found 1 near-duplicate pair(s):" in result
+        assert "mem_a <-> mem_b (similarity: 0.93)" in result
+        assert "A: alpha snippet" in result
+        assert "B: beta snippet" in result
+        assert "Review each pair with recall" in result
 
 
 class TestLinkMemories:
