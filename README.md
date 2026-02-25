@@ -156,4 +156,4 @@ npm run build
 
 ## License
 
-Private repository.
+MIT
