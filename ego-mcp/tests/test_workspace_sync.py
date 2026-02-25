@@ -82,3 +82,84 @@ class TestWorkspaceMemorySync:
 
         daily = (tmp_path / "memory" / "2026-02-20.md").read_text(encoding="utf-8")
         assert daily.count("[id:mem_dup]") == 1
+
+    def test_remove_memory_removes_marker_line_from_daily_log(self, tmp_path: Path) -> None:
+        sync = WorkspaceMemorySync(tmp_path)
+        daily = tmp_path / "memory" / "2026-02-20.md"
+        daily.parent.mkdir(parents=True, exist_ok=True)
+        daily.write_text(
+            "# Memory Log 2026-02-20\n\n"
+            "- keep this line [id:mem_keep]\n"
+            "- remove this line [id:mem_drop]\n",
+            encoding="utf-8",
+        )
+
+        changed = sync.remove_memory("mem_drop")
+
+        assert changed is True
+        content = daily.read_text(encoding="utf-8")
+        assert "[id:mem_drop]" not in content
+        assert "[id:mem_keep]" in content
+
+    def test_remove_memory_removes_marker_line_from_curated_memory(
+        self, tmp_path: Path
+    ) -> None:
+        sync = WorkspaceMemorySync(tmp_path)
+        curated = tmp_path / "MEMORY.md"
+        curated.write_text(
+            "# Curated Memory\n\n"
+            "- keep [id:mem_keep]\n"
+            "- drop [id:mem_drop]\n",
+            encoding="utf-8",
+        )
+
+        changed = sync.remove_memory("mem_drop")
+
+        assert changed is True
+        content = curated.read_text(encoding="utf-8")
+        assert "[id:mem_drop]" not in content
+        assert "[id:mem_keep]" in content
+
+    def test_remove_memory_returns_false_when_marker_missing(self, tmp_path: Path) -> None:
+        sync = WorkspaceMemorySync(tmp_path)
+        daily = tmp_path / "memory" / "2026-02-20.md"
+        daily.parent.mkdir(parents=True, exist_ok=True)
+        original = "# Memory Log 2026-02-20\n\n- keep [id:mem_keep]\n"
+        daily.write_text(original, encoding="utf-8")
+
+        changed = sync.remove_memory("mem_absent")
+
+        assert changed is False
+        assert daily.read_text(encoding="utf-8") == original
+
+    def test_remove_memory_returns_false_when_files_missing(self, tmp_path: Path) -> None:
+        sync = WorkspaceMemorySync(tmp_path)
+
+        changed = sync.remove_memory("mem_missing")
+
+        assert changed is False
+
+    def test_remove_memory_cleans_multiple_daily_logs(self, tmp_path: Path) -> None:
+        sync = WorkspaceMemorySync(tmp_path)
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        first = memory_dir / "2026-02-20.md"
+        second = memory_dir / "2026-02-21.md"
+        first.write_text("- first [id:mem_shared]\n", encoding="utf-8")
+        second.write_text("- second [id:mem_shared]\n", encoding="utf-8")
+
+        changed = sync.remove_memory("mem_shared")
+
+        assert changed is True
+        assert "[id:mem_shared]" not in first.read_text(encoding="utf-8")
+        assert "[id:mem_shared]" not in second.read_text(encoding="utf-8")
+
+    def test_remove_lines_with_marker_returns_false_for_missing_file(
+        self, tmp_path: Path
+    ) -> None:
+        sync = WorkspaceMemorySync(tmp_path)
+        missing = tmp_path / "nope.md"
+
+        changed = sync._remove_lines_with_marker(missing, "[id:mem_any]")
+
+        assert changed is False

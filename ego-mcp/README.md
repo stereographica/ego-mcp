@@ -7,7 +7,7 @@ ego-mcp provides AI agents with persistent memory, abstract desires, and cogniti
 ## Features
 
 - **7 Surface Tools** — `wake_up`, `feel_desires`, `introspect`, `consider_them`, `remember`, `recall`, `am_i_being_genuine`
-- **8 Backend Tools** — `satisfy_desire`, `consolidate`, `link_memories`, `update_relationship`, `update_self`, `search_memories`, `get_episode`, `create_episode`
+- **9 Backend Tools** — `satisfy_desire`, `consolidate`, `forget`, `link_memories`, `update_relationship`, `update_self`, `emotion_trend`, `get_episode`, `create_episode`
 - **Progressive Disclosure** — Surface tools guide the AI to backend tools as needed
 - **Cognitive Scaffolding** — Tool responses include thinking frameworks, not just data
 - **All English Responses** — Saves 2-3x tokens compared to Japanese
@@ -145,10 +145,11 @@ References:
 |---|---|
 | `satisfy_desire` | Mark a desire as satisfied |
 | `consolidate` | Run memory consolidation |
+| `forget` | Delete a memory by ID |
 | `link_memories` | Link two memories |
 | `update_relationship` | Update relationship model |
 | `update_self` | Update self model |
-| `search_memories` | Search memories with filters |
+| `emotion_trend` | Analyze emotional patterns over time |
 | `get_episode` | Get episode details |
 | `create_episode` | Create episode from memories |
 

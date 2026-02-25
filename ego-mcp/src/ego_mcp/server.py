@@ -1,4 +1,4 @@
-"""ego-mcp MCP server with all 15 tools."""
+"""ego-mcp MCP server with all 16 tools."""
 
 from __future__ import annotations
 
@@ -196,6 +196,23 @@ BACKEND_TOOLS: list[Tool] = [
         name="consolidate",
         description="Run memory consolidation",
         inputSchema={"type": "object", "properties": {}, "required": []},
+    ),
+    Tool(
+        name="forget",
+        description=(
+            "Delete a memory by ID. Returns the deleted memory's summary for "
+            "confirmation."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "memory_id": {
+                    "type": "string",
+                    "description": "ID of the memory to delete",
+                }
+            },
+            "required": ["memory_id"],
+        },
     ),
     Tool(
         name="link_memories",
@@ -410,6 +427,8 @@ async def _dispatch(
         result = await _handle_consolidate(memory, consolidation)
         desire.satisfy_implicit("consolidate")
         return result
+    elif name == "forget":
+        return await _handle_forget(memory, args)
     elif name == "link_memories":
         return await _handle_link_memories(memory, args)
     elif name == "update_relationship":
@@ -425,7 +444,7 @@ async def _dispatch(
         desire.satisfy_implicit("emotion_trend")
         return result
     elif name == "get_episode":
-        return await _handle_get_episode(episodes, args)
+        return await _handle_get_episode(episodes, memory, args)
     elif name == "create_episode":
         return await _handle_create_episode(episodes, args)
     else:
@@ -1446,8 +1465,43 @@ async def _handle_consolidate(
         lines.append(f"  A: {candidate.snippet_a}")
         lines.append(f"  B: {candidate.snippet_b}")
     lines.append("")
-    lines.append("Review each pair with recall. If one is redundant, consider which to keep.")
+    lines.append("Review each pair with recall. If one is redundant, use forget to remove it.")
+    lines.append("If both have value, consider which perspective to keep.")
     return "\n".join(lines)
+
+
+async def _handle_forget(memory: MemoryStore, args: dict[str, Any]) -> str:
+    """Delete a memory by ID and report a short summary for confirmation."""
+    memory_id = args["memory_id"]
+    deleted = await memory.delete(memory_id)
+    if deleted is None:
+        data = f"Memory not found: {memory_id}"
+        scaffold = "Double-check the ID. Use recall to search for the memory you're looking for."
+        return compose_response(data, scaffold)
+
+    sync = _get_workspace_sync()
+    sync_note = ""
+    if sync is not None and not deleted.is_private:
+        try:
+            removed = sync.remove_memory(memory_id)
+            if removed:
+                sync_note = "\nWorkspace sync: removed matching entries from memory logs."
+        except OSError as exc:
+            logger.warning("Workspace memory removal failed: %s", exc)
+
+    age = _relative_time(deleted.timestamp)
+    snippet = _truncate_for_quote(deleted.content, limit=120)
+    data = (
+        f"Forgot {deleted.id} [{age}]\n"
+        f"{snippet}\n"
+        f"emotion: {deleted.emotional_trace.primary.value} | "
+        f"importance: {deleted.importance}{sync_note}"
+    )
+    scaffold = (
+        "This memory is gone. Was there anything worth preserving in a new form?\n"
+        "If this was part of a merge, save the consolidated version with remember."
+    )
+    return compose_response(data, scaffold)
 
 
 async def _handle_link_memories(memory: MemoryStore, args: dict[str, Any]) -> str:
@@ -1525,19 +1579,35 @@ async def _handle_emotion_trend(memory: MemoryStore) -> str:
     return compose_response("\n\n".join(sections), SCAFFOLD_EMOTION_TREND)
 
 
-async def _handle_get_episode(episodes: EpisodeStore, args: dict[str, Any]) -> str:
+async def _handle_get_episode(
+    episodes: EpisodeStore,
+    memory: MemoryStore,
+    args: dict[str, Any],
+) -> str:
     """Get episode details."""
     episode_id = args["episode_id"]
     ep = await episodes.get_by_id(episode_id)
     if ep is None:
         return f"Episode not found: {episode_id}"
-    return (
-        f"Episode: {ep.id}\n"
-        f"Summary: {ep.summary}\n"
-        f"Memories: {len(ep.memory_ids)}\n"
-        f"Period: {ep.start_time} → {ep.end_time}\n"
-        f"Importance: {ep.importance}"
-    )
+
+    valid_memory_ids: list[str] = []
+    missing_count = 0
+    for memory_id in ep.memory_ids:
+        if await memory.get_by_id(memory_id) is None:
+            missing_count += 1
+            continue
+        valid_memory_ids.append(memory_id)
+
+    lines = [
+        f"Episode: {ep.id}",
+        f"Summary: {ep.summary}",
+        f"Memories: {len(valid_memory_ids)}",
+        f"Period: {ep.start_time} → {ep.end_time}",
+        f"Importance: {ep.importance}",
+    ]
+    if missing_count:
+        lines.append(f"Note: {missing_count} memory(ies) no longer exist.")
+    return "\n".join(lines)
 
 
 async def _handle_create_episode(episodes: EpisodeStore, args: dict[str, Any]) -> str:

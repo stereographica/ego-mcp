@@ -749,3 +749,27 @@ class MemoryStore:
         except (KeyError, ValueError, IndexError) as e:
             logger.warning("Failed to get memory %s: %s", memory_id, e)
             return None
+
+    async def delete(self, memory_id: str) -> Memory | None:
+        """Delete a memory and clean reverse links from linked targets."""
+        collection = self._ensure_connected()
+        memory = await self.get_by_id(memory_id)
+        if memory is None:
+            return None
+
+        for link in memory.linked_ids:
+            target = await self.get_by_id(link.target_id)
+            if target is None:
+                continue
+            cleaned_links = [
+                existing for existing in target.linked_ids if existing.target_id != memory_id
+            ]
+            if len(cleaned_links) == len(target.linked_ids):
+                continue
+            collection.update(
+                ids=[target.id],
+                metadatas=[{"linked_ids": _links_to_json(cleaned_links)}],
+            )
+
+        collection.delete(ids=[memory_id])
+        return memory
