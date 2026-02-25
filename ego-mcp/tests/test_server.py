@@ -87,3 +87,26 @@ class TestImplicitSatisfactionFromServer:
         assert isinstance(result[0], TextContent)
         assert result[0].text == "considered"
         assert after < before
+
+    @pytest.mark.asyncio
+    async def test_remember_duplicate_does_not_lower_expression(
+        self,
+        desire: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        before = _seed_high_desire(desire, "expression")
+
+        async def fake_handle_remember(_memory: object, _args: dict[str, object]) -> str:
+            return "Not saved — very similar memory already exists."
+
+        monkeypatch.setattr(server_mod, "_handle_remember", fake_handle_remember)
+
+        result = await server_mod.call_tool(
+            "remember",
+            {"content": "duplicate note", "category": "daily"},
+        )
+
+        after = desire.compute_levels()["expression"]
+        assert isinstance(result[0], TextContent)
+        assert "Not saved" in result[0].text
+        assert after == pytest.approx(before)

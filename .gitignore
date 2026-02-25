@@ -1,2 +1,23 @@
+# Submodule
 embodied-claude
+
+# Python
 *.pyc
+__pycache__/
+*.egg-info/
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.uv-cache/
+
+# OS
+.DS_Store
+
+# IDE / Editor
+.mcp.json
+
+# Env
+.env
+.env.*
+!.env.example
