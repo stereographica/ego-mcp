@@ -5,7 +5,7 @@ This monorepo contains **ego-mcp** (MCP server) and **dashboard** (telemetry UI)
 ## Repository Layout
 
 ```
-nyamco-ego/
+ego-mcp/
 ├── ego-mcp/          # Primary MCP server (Python)
 ├── dashboard/        # Telemetry dashboard
 │   ├── src/          #   Backend (FastAPI + PostgreSQL + Redis)

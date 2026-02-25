@@ -1,11 +1,11 @@
 # Project Overview
 
-This monorepo (`nyamco-ego`) contains two main subprojects plus supporting directories.
+This monorepo (`ego-mcp`) contains two main subprojects plus supporting directories.
 
 ## Repository Layout
 
 ```
-nyamco-ego/
+ego-mcp/
 ├── ego-mcp/          # Primary MCP server (Python)
 ├── dashboard/        # Telemetry dashboard (FastAPI backend + React frontend)
 │   ├── src/          #   Backend (ego_dashboard)

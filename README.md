@@ -1,8 +1,8 @@
-# nyamco-ego
+# ego-mcp
 
 > Cognitive scaffolding platform that gives AI agents persistent personality, memory, and emotions.
 
-nyamco-ego is a monorepo containing an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that enables LLM agents to maintain consistent personality, memory, and emotions across sessions, along with a telemetry dashboard for real-time observability.
+ego-mcp is a monorepo containing an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that enables LLM agents to maintain consistent personality, memory, and emotions across sessions, along with a telemetry dashboard for real-time observability.
 
 ## Key Features
 
@@ -15,7 +15,7 @@ nyamco-ego is a monorepo containing an [MCP (Model Context Protocol)](https://mo
 ## Repository Structure
 
 ```
-nyamco-ego/
+ego-mcp/
 ├── ego-mcp/            # MCP server (Python)
 ├── dashboard/          # Telemetry dashboard
 │   ├── src/            #   Backend (FastAPI + TimescaleDB + Redis)
