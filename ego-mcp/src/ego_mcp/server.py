@@ -397,7 +397,9 @@ async def _dispatch(
 
     # --- Surface tools ---
     if name == "wake_up":
-        return await _handle_wake_up(config, memory, desire)
+        result = await _handle_wake_up(config, memory, desire)
+        desire.satisfy_implicit("wake_up")
+        return result
     elif name == "feel_desires":
         return await _handle_feel_desires(config, memory, desire)
     elif name == "introspect":

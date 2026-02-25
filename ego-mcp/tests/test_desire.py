@@ -267,7 +267,7 @@ class TestImplicitSatisfaction:
     def test_unmapped_tool_makes_no_changes(self, engine: DesireEngine) -> None:
         before = deepcopy(engine._state)
 
-        engine.satisfy_implicit("wake_up")
+        engine.satisfy_implicit("satisfy_desire")
 
         assert engine._state == before
 

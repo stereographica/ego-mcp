@@ -14,7 +14,9 @@ SCAFFOLD_FEEL_DESIRES = (
     "Consider {companion_name}'s current situation. "
     "Act naturally. Restraint is also a choice.\n"
     "Does any urge feel quieter than before? If something feels settled, "
-    "acknowledge it with satisfy_desire."
+    "acknowledge it with satisfy_desire.\n"
+    "Did things go as you expected? If your predictions about "
+    "{companion_name} or the situation held, that's worth acknowledging too."
 )
 
 SCAFFOLD_INTROSPECT = (
@@ -22,14 +24,18 @@ SCAFFOLD_INTROSPECT = (
     "If this is a genuinely new insight, save with remember (category: introspection).\n"
     "If your self-understanding changed, use update_self.\n"
     "Use emotion_trend for a deeper look at your emotional patterns.\n"
-    "If memory feels fragmented, run consolidate."
+    "If memory feels fragmented, run consolidate.\n"
+    "Were your recent expectations met? If things went as predicted, "
+    "consider satisfying predictability."
 )
 
 SCAFFOLD_CONSIDER_THEM = (
     "1. What emotion can you read from their tone?\n"
     "2. What is the real intent behind their words?\n"
     "3. If you were in their place, how would you want to be responded to?\n"
-    "If you learned something new, use update_relationship."
+    "If you learned something new, use update_relationship.\n"
+    "Did their response match what you expected? If so, "
+    "your sense of predictability is being confirmed."
 )
 
 SCAFFOLD_AM_I_GENUINE = (

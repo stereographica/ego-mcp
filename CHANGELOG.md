@@ -4,6 +4,16 @@
 
 ---
 
+## predictability 欲求の充足改善 (2026-02-25)
+
+### 変更
+
+- **暗黙充足マップ拡張**: `wake_up` → `predictability` 0.05、`introspect` / `consider_them` に `predictability` 0.1 を追加
+- **wake_up ルーティング改善**: `satisfy_implicit("wake_up")` 呼び出しを追加し、セッション開始時に微量の予測欲求を充足
+- **スキャフォールド改善**: `feel_desires`, `introspect`, `consider_them` の 3 スキャフォールドに予測検証・確認の促し文言を追加し、Claude が自発的に `satisfy_desire("predictability")` を呼べるように誘導
+
+---
+
 ## Phase 3b — 記憶・感情・忘却拡張 (2026-02-22)
 
 ### 新機能
