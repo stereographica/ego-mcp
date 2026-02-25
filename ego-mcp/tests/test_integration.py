@@ -141,6 +141,7 @@ EXPECTED_TOOL_NAMES = {
     "am_i_being_genuine",
     "satisfy_desire",
     "consolidate",
+    "forget",
     "link_memories",
     "update_relationship",
     "update_self",
@@ -2005,7 +2006,7 @@ class TestToolDefinitionSize:
         tools = await server_mod.list_tools()
         total_text = json.dumps([t.model_dump() for t in tools], ensure_ascii=False)
         total_chars = len(total_text)
-        assert len(tools) == 15
+        assert len(tools) == 16
         # Target: 7,000 chars or less
         assert total_chars <= 7000, (
             f"Tool definitions too large: {total_chars} chars (target: ≤7,000)"

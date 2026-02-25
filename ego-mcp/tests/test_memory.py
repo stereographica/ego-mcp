@@ -408,3 +408,52 @@ class TestMemoryGetById:
     async def test_get_nonexistent(self, store: MemoryStore) -> None:
         found = await store.get_by_id("nonexistent_id")
         assert found is None
+
+
+class TestMemoryDelete:
+    @pytest.mark.asyncio
+    async def test_delete_unlinked_memory_returns_deleted_memory(
+        self, store: MemoryStore
+    ) -> None:
+        mem = await store.save(content="delete me")
+
+        deleted = await store.delete(mem.id)
+
+        assert deleted is not None
+        assert deleted.id == mem.id
+        assert deleted.content == "delete me"
+        assert await store.get_by_id(mem.id) is None
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_reverse_link_from_target(self, store: MemoryStore) -> None:
+        source = await store.save(content="source memory")
+        target = await store.save(content="target memory")
+        created = await store.link_memories(source.id, target.id)
+        assert created is True
+
+        before = await store.get_by_id(target.id)
+        assert before is not None
+        assert any(link.target_id == source.id for link in before.linked_ids)
+
+        deleted = await store.delete(source.id)
+
+        assert deleted is not None
+        after = await store.get_by_id(target.id)
+        assert after is not None
+        assert all(link.target_id != source.id for link in after.linked_ids)
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent_returns_none(self, store: MemoryStore) -> None:
+        deleted = await store.delete("nonexistent_id")
+        assert deleted is None
+
+    @pytest.mark.asyncio
+    async def test_delete_decrements_collection_count(self, store: MemoryStore) -> None:
+        first = await store.save(content="one")
+        await store.save(content="two")
+        before = store.collection_count()
+
+        deleted = await store.delete(first.id)
+
+        assert deleted is not None
+        assert store.collection_count() == before - 1
