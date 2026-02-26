@@ -35,7 +35,13 @@ export const DesireHistoryChart = ({
             <XAxis dataKey="ts" hide />
             <YAxis domain={[0, 1]} />
             <ChartTooltip
-              content={<ChartTooltipContent labelFormatter={formatTs} />}
+              content={
+                <ChartTooltipContent
+                  labelFormatter={formatTs}
+                  showAllSeries
+                  missingValueLabel="-"
+                />
+              }
             />
             <ChartLegend content={<ChartLegendContent />} />
             {DESIRE_METRIC_KEYS.map((key) => (

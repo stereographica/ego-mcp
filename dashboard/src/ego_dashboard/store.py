@@ -57,10 +57,13 @@ class TelemetryStore:
 
     def tool_usage(self, start: datetime, end: datetime, bucket: str) -> list[dict[str, object]]:
         events = self._filtered(start, end)
+        tool_names = sorted({ev.tool_name for ev in events})
         rows: list[dict[str, object]] = []
         for at, grouped in self._bucket_events(events, start, end, bucket):
             counts: dict[str, int] = Counter(ev.tool_name for ev in grouped)
-            row: dict[str, object] = {"ts": at.isoformat(), **counts}
+            row: dict[str, object] = {"ts": at.isoformat()}
+            for tool_name in tool_names:
+                row[tool_name] = int(counts.get(tool_name, 0))
             rows.append(row)
         return rows
 

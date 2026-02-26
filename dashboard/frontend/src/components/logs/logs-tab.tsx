@@ -16,6 +16,7 @@ import type { DateRange } from '@/types'
 
 type LogsTabProps = {
   range: DateRange
+  isActive: boolean
 }
 
 const LOG_LEVELS = ['ALL', 'INFO', 'WARNING', 'ERROR'] as const
@@ -38,22 +39,32 @@ const levelVariant = (
 const isNearBottom = (el: HTMLElement, threshold = 24) =>
   el.scrollHeight - el.scrollTop - el.clientHeight <= threshold
 
-export const LogsTab = ({ range }: LogsTabProps) => {
+export const LogsTab = ({ range, isActive }: LogsTabProps) => {
   const [logLevel, setLogLevel] = useState('ALL')
   const [loggerFilter, setLoggerFilter] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
   const [logFeedPinned, setLogFeedPinned] = useState(true)
-  const logFeedRef = useRef<HTMLDivElement | null>(null)
+  const logViewportRef = useRef<HTMLDivElement | null>(null)
   const { formatTs, clientTimeZone } = useTimestampFormatter()
 
-  const logs = useLogData('logs', range, logLevel, loggerFilter)
+  const logs = useLogData(isActive, range, logLevel, loggerFilter)
 
   useEffect(() => {
-    if (autoScroll && logFeedPinned) {
-      const el = logFeedRef.current
-      if (el) el.scrollTop = el.scrollHeight
-    }
-  }, [logs, autoScroll, logFeedPinned])
+    if (!isActive || !autoScroll || !logFeedPinned) return
+    const el = logViewportRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [isActive, logs, autoScroll, logFeedPinned])
+
+  useEffect(() => {
+    if (!isActive) return
+    setLogFeedPinned(true)
+    requestAnimationFrame(() => {
+      const el = logViewportRef.current
+      if (!el) return
+      el.scrollTop = el.scrollHeight
+    })
+  }, [isActive])
 
   return (
     <Card className="min-h-[clamp(380px,62vh,820px)]">
@@ -93,12 +104,14 @@ export const LogsTab = ({ range }: LogsTabProps) => {
           </label>
         </div>
 
-        <ScrollArea className="h-[clamp(360px,62vh,820px)]">
-          <div
-            ref={logFeedRef}
-            className="space-y-2"
-            onScroll={(e) => setLogFeedPinned(isNearBottom(e.currentTarget))}
-          >
+        <ScrollArea
+          className="h-[clamp(360px,62vh,820px)]"
+          viewportRef={logViewportRef}
+          onViewportScroll={(e) =>
+            setLogFeedPinned(isNearBottom(e.currentTarget))
+          }
+        >
+          <div className="space-y-2">
             {logs.map((item, index) => {
               const { ts, level, ...rest } = item
               return (
