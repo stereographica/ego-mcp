@@ -114,6 +114,35 @@ class TestImplicitSatisfactionFromServer:
         assert "Not saved" in result[0].text
         assert after == pytest.approx(before)
 
+    @pytest.mark.asyncio
+    async def test_completion_log_context_emits_snapshot_for_non_feel_desires(self) -> None:
+        class FakeMemoryStore:
+            async def list_recent(self, n: int = 1) -> list[Memory]:
+                assert n == 1
+                return [
+                    Memory(
+                        id="mem_1",
+                        content="latest",
+                        timestamp="2026-02-26T00:00:00+00:00",
+                        emotional_trace=EmotionalTrace(
+                            primary=Emotion.CURIOUS,
+                            intensity=0.8,
+                            valence=0.2,
+                            arousal=0.7,
+                        ),
+                    )
+                ]
+
+        extra = await server_mod._completion_log_context(
+            "remember",
+            cast(Any, FakeMemoryStore()),
+        )
+
+        assert extra["emotion_primary"] == "curious"
+        assert extra["emotion_intensity"] == 0.8
+        assert extra["valence"] == 0.2
+        assert extra["arousal"] == 0.7
+
 
 class TestForgetToolServerHandlers:
     @pytest.mark.asyncio

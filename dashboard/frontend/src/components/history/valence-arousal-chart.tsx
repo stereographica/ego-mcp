@@ -61,7 +61,13 @@ export const ValenceArousalChart = ({
             <XAxis dataKey="ts" hide />
             <YAxis domain={[-1, 1]} />
             <ChartTooltip
-              content={<ChartTooltipContent labelFormatter={formatTs} />}
+              content={
+                <ChartTooltipContent
+                  labelFormatter={formatTs}
+                  showAllSeries
+                  missingValueLabel="-"
+                />
+              }
             />
             <ChartLegend content={<ChartLegendContent />} />
             <Line

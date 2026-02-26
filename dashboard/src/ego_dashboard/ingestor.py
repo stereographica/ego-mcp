@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -197,10 +198,16 @@ class EgoMcpLogProjector:
 
         if isinstance(tool_args.get("emotion"), str):
             params["emotion_primary"] = tool_args["emotion"]
+        elif isinstance(raw.get("emotion_primary"), str):
+            params["emotion_primary"] = raw["emotion_primary"]
         for key in ("intensity", "valence", "arousal"):
             value = tool_args.get(key)
             if isinstance(value, (int, float)):
                 params[key] = value
+                continue
+            raw_value = raw.get(key)
+            if isinstance(raw_value, (int, float)):
+                params[key] = raw_value
 
         body_state = tool_args.get("body_state")
         if isinstance(body_state, dict):
@@ -234,8 +241,12 @@ class EgoMcpLogProjector:
         }
         if isinstance(tool_args.get("emotion"), str):
             event_raw["emotion_primary"] = tool_args["emotion"]
+        elif isinstance(raw.get("emotion_primary"), str):
+            event_raw["emotion_primary"] = raw["emotion_primary"]
         if isinstance(tool_args.get("intensity"), (int, float)):
             event_raw["emotion_intensity"] = tool_args["intensity"]
+        elif isinstance(raw.get("emotion_intensity"), (int, float)):
+            event_raw["emotion_intensity"] = raw["emotion_intensity"]
         return event_raw
 
 
@@ -294,13 +305,18 @@ def _resolve_source_files(path_or_glob: str) -> list[str]:
     return [path_or_glob] if os.path.isfile(path_or_glob) else []
 
 
-def tail_jsonl_file(path: str, store: IngestStoreProtocol, poll_seconds: float = 1.0) -> None:
+def tail_jsonl_file(
+    path: str,
+    store: IngestStoreProtocol,
+    poll_seconds: float = 1.0,
+    stop_event: threading.Event | None = None,
+) -> None:
     """Tail a file path or all files matching a glob pattern."""
     inodes: dict[str, int] = {}
     positions: dict[str, int] = {}
     projectors: dict[str, EgoMcpLogProjector] = {}
 
-    while True:
+    while stop_event is None or not stop_event.is_set():
         selected_paths = _resolve_source_files(path)
         if not selected_paths:
             if inodes:
@@ -308,7 +324,10 @@ def tail_jsonl_file(path: str, store: IngestStoreProtocol, poll_seconds: float =
             inodes.clear()
             positions.clear()
             projectors.clear()
-            time.sleep(poll_seconds)
+            if stop_event is not None and stop_event.wait(poll_seconds):
+                break
+            if stop_event is None:
+                time.sleep(poll_seconds)
             continue
 
         active_set = set(selected_paths)
@@ -319,6 +338,8 @@ def tail_jsonl_file(path: str, store: IngestStoreProtocol, poll_seconds: float =
                 projectors.pop(stale_path, None)
 
         for selected_path in selected_paths:
+            if stop_event is not None and stop_event.is_set():
+                break
             stat = os.stat(selected_path)
             current_inode = inodes.get(selected_path)
             position = positions.get(selected_path, 0)
@@ -335,6 +356,8 @@ def tail_jsonl_file(path: str, store: IngestStoreProtocol, poll_seconds: float =
             with open(selected_path, encoding="utf-8") as handle:
                 handle.seek(position)
                 while True:
+                    if stop_event is not None and stop_event.is_set():
+                        break
                     line = handle.readline()
                     if line == "":
                         break
@@ -342,7 +365,11 @@ def tail_jsonl_file(path: str, store: IngestStoreProtocol, poll_seconds: float =
                 positions[selected_path] = handle.tell()
                 inodes[selected_path] = stat.st_ino
 
-        time.sleep(poll_seconds)
+        if stop_event is not None:
+            if stop_event.wait(poll_seconds):
+                break
+        else:
+            time.sleep(poll_seconds)
 
 
 def run_ingestor() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import psycopg
 from redis import Redis
@@ -114,6 +114,7 @@ class SqlTelemetryStore:
 
     def tool_usage(self, start: datetime, end: datetime, bucket: str) -> list[dict[str, object]]:
         bucket_size = _bucket_to_sql(bucket)
+        bucket_delta = _bucket_to_timedelta(bucket)
         with psycopg.connect(self._db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -127,13 +128,33 @@ class SqlTelemetryStore:
                     (bucket_size, start, end),
                 )
                 rows = cur.fetchall()
+        if not rows:
+            return []
+
+        tool_names = sorted({str(tool_name) for _, tool_name, _ in rows})
         by_ts: dict[str, dict[str, object]] = {}
         for b, tool_name, count in rows:
-            key = b.isoformat()
-            if key not in by_ts:
-                by_ts[key] = {"ts": key}
-            by_ts[key][tool_name] = count
-        return list(by_ts.values())
+            bucket_ts = b if b.tzinfo is not None else b.replace(tzinfo=UTC)
+            key = bucket_ts.astimezone(UTC).isoformat()
+            row = by_ts.get(key)
+            if row is None:
+                row = {"ts": key}
+                by_ts[key] = row
+            row[str(tool_name)] = int(count)
+
+        first_bucket = _bucket_floor(start, bucket_delta)
+        last_bucket = _bucket_floor(end, bucket_delta)
+        cursor = first_bucket
+        dense_rows: list[dict[str, object]] = []
+        while cursor <= last_bucket:
+            key = cursor.isoformat()
+            row = dict(by_ts.get(key, {"ts": key}))
+            for tool_name in tool_names:
+                value = row.get(tool_name, 0)
+                row[tool_name] = int(value) if isinstance(value, (int, float)) else 0
+            dense_rows.append(row)
+            cursor += bucket_delta
+        return dense_rows
 
     def metric_history(
         self, key: str, start: datetime, end: datetime, bucket: str
@@ -429,3 +450,17 @@ class SqlTelemetryStore:
 def _bucket_to_sql(bucket: str) -> str:
     mapping = {"1m": "1 minute", "5m": "5 minute", "15m": "15 minute"}
     return mapping.get(bucket, "1 minute")
+
+
+def _bucket_to_timedelta(bucket: str) -> timedelta:
+    mapping = {"1m": timedelta(minutes=1), "5m": timedelta(minutes=5), "15m": timedelta(minutes=15)}
+    return mapping.get(bucket, timedelta(minutes=1))
+
+
+def _bucket_floor(value: datetime, delta: timedelta) -> datetime:
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    step = int(delta.total_seconds())
+    elapsed = int((aware.astimezone(UTC) - epoch).total_seconds())
+    floored = elapsed - (elapsed % step)
+    return epoch + timedelta(seconds=floored)

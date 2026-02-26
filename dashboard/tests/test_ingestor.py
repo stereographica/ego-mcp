@@ -165,6 +165,10 @@ def test_projector_parses_feel_desires_completion_metrics() -> None:
         "logger": "ego_mcp.server",
         "message": "Tool execution completed",
         "tool_name": "feel_desires",
+        "emotion_primary": "curious",
+        "emotion_intensity": 0.65,
+        "valence": 0.2,
+        "arousal": 0.7,
         "time_phase": "night",
         "tool_output": (
             "information_hunger[0.8/high] social_thirst[0.4/mid] "
@@ -180,7 +184,11 @@ def test_projector_parses_feel_desires_completion_metrics() -> None:
     assert event is not None
     assert event.tool_name == "feel_desires"
     assert event.ok is True
+    assert event.emotion_primary == "curious"
+    assert event.emotion_intensity == 0.65
     assert event.string_metrics["time_phase"] == "night"
+    assert event.numeric_metrics["valence"] == 0.2
+    assert event.numeric_metrics["arousal"] == 0.7
     assert event.numeric_metrics["information_hunger"] == 0.8
     assert event.numeric_metrics["social_thirst"] == 0.4
     assert event.numeric_metrics["cognitive_coherence"] == 0.2

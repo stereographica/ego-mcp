@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ego_dashboard.api import create_app
@@ -57,3 +59,49 @@ def test_cors_preflight_allows_configured_origin() -> None:
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:4173"
+
+
+def test_create_app_starts_local_inmemory_ingestor_when_store_is_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = threading.Event()
+    stopped = threading.Event()
+    calls: list[dict[str, object]] = []
+
+    def fake_tail_jsonl_file(
+        path: str,
+        store: object,
+        poll_seconds: float = 1.0,
+        stop_event: threading.Event | None = None,
+    ) -> None:
+        calls.append(
+            {
+                "path": path,
+                "store_type": type(store).__name__,
+                "poll_seconds": poll_seconds,
+                "has_stop_event": stop_event is not None,
+            }
+        )
+        started.set()
+        if stop_event is not None:
+            stop_event.wait(0.5)
+        stopped.set()
+
+    monkeypatch.setattr("ego_dashboard.api.tail_jsonl_file", fake_tail_jsonl_file)
+
+    app = create_app(
+        settings=DashboardSettings(
+            log_path="/tmp/test-ego-mcp-*.log",
+            ingest_poll_seconds=0.01,
+        )
+    )
+
+    with TestClient(app):
+        assert started.wait(1.0) is True
+
+    assert stopped.wait(1.0) is True
+    assert len(calls) == 1
+    assert calls[0]["path"] == "/tmp/test-ego-mcp-*.log"
+    assert calls[0]["store_type"] == "TelemetryStore"
+    assert calls[0]["poll_seconds"] == 0.01
+    assert calls[0]["has_stop_event"] is True

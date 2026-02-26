@@ -81,13 +81,45 @@ export const useDashboardSocket = (): DashboardSocketState => {
           setCurrent(msg.data as unknown as CurrentResponse)
         } else if (msg.type === 'log_line' && msg.data) {
           setLogLines((prev) => {
+            const fields =
+              typeof msg.data?.fields === 'object' && msg.data.fields !== null
+                ? (msg.data.fields as Record<string, unknown>)
+                : {}
+            const level =
+              typeof msg.data?.level === 'string' ? msg.data.level : undefined
+            const message =
+              typeof msg.data?.message === 'string'
+                ? msg.data.message
+                : undefined
+            const toolName =
+              typeof msg.data?.tool_name === 'string'
+                ? msg.data.tool_name
+                : typeof fields.tool_name === 'string'
+                  ? fields.tool_name
+                  : undefined
             const line: LogLine = {
               ts: (msg.data?.ts as string) ?? new Date().toISOString(),
-              tool_name: msg.data?.tool_name as string | undefined,
-              ok: msg.data?.ok !== false,
-              level: msg.data?.level as string | undefined,
-              logger: msg.data?.logger as string | undefined,
-              message: msg.data?.message as string | undefined,
+              tool_name: toolName,
+              ok:
+                typeof msg.data?.ok === 'boolean'
+                  ? msg.data.ok
+                  : !(level === 'ERROR' || message === 'Tool execution failed'),
+              level,
+              logger:
+                typeof msg.data?.logger === 'string'
+                  ? msg.data.logger
+                  : undefined,
+              message,
+            }
+            const last = prev[prev.length - 1]
+            if (
+              last &&
+              last.ts === line.ts &&
+              last.logger === line.logger &&
+              last.message === line.message &&
+              last.tool_name === line.tool_name
+            ) {
+              return prev
             }
             const next = [...prev, line]
             return next.length > MAX_LOG_LINES
