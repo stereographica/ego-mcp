@@ -49,7 +49,7 @@ export const ToolUsageChart = ({
     toolSeriesKeys.map((key, i) => [
       key,
       {
-        label: key,
+        label: key.replaceAll('_', ' '),
         color: TOOL_CHART_COLORS[i % TOOL_CHART_COLORS.length],
       },
     ]),
@@ -101,7 +101,9 @@ export const ToolUsageChart = ({
             <XAxis dataKey="ts" hide />
             <YAxis />
             <ChartTooltip
-              content={<ChartTooltipContent labelFormatter={formatTs} />}
+              content={
+                <ChartTooltipContent labelFormatter={formatTs} showAllSeries />
+              }
             />
             <ChartLegend content={<ChartLegendContent />} />
             {toolSeriesKeys.map((toolName) => (

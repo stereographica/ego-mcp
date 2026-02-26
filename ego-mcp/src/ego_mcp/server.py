@@ -340,6 +340,32 @@ def _tool_log_context() -> dict[str, str]:
     return {}
 
 
+async def _completion_log_context(name: str, memory: MemoryStore) -> dict[str, object]:
+    """Attach periodic telemetry snapshots for dashboard projection."""
+    del name
+
+    try:
+        recent = await memory.list_recent(n=1)
+    except Exception:
+        logger.debug("Skipped completion telemetry snapshot", exc_info=True)
+        return {}
+
+    if not recent:
+        return {}
+
+    latest = recent[0]
+    trace = latest.emotional_trace
+    extra: dict[str, object] = {
+        "emotion_primary": trace.primary.value,
+        "emotion_intensity": float(trace.intensity),
+        "valence": float(trace.valence),
+        "arousal": float(trace.arousal),
+    }
+    if trace.body_state and trace.body_state.time_phase:
+        extra["time_phase"] = trace.body_state.time_phase
+    return extra
+
+
 @server.call_tool()  # type: ignore[untyped-decorator]
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Dispatch tool calls."""
@@ -369,6 +395,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
     safe_output = _sanitize_tool_output_for_logging(name, arguments, text)
     output_excerpt, output_truncated = _truncate_for_log(safe_output)
+    completion_context = await _completion_log_context(name, memory)
     logger.info(
         "Tool execution completed",
         extra={
@@ -377,6 +404,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             "tool_output_chars": len(text),
             "tool_output_truncated": output_truncated,
             **log_context,
+            **completion_context,
         },
     )
     return [TextContent(type="text", text=text)]

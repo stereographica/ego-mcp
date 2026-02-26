@@ -38,8 +38,11 @@ def test_tool_usage_and_metric_history() -> None:
     intensity = store.metric_history("intensity", start, end, bucket="1m")
 
     assert usage[0]["feel_desires"] == 1
+    assert usage[0]["remember"] == 0
     assert usage[1]["feel_desires"] == 1
     assert usage[1]["remember"] == 1
+    assert usage[2]["feel_desires"] == 0
+    assert usage[2]["remember"] == 0
     assert intensity[0]["value"] == 0.3
     assert intensity[1]["value"] == 0.7
 

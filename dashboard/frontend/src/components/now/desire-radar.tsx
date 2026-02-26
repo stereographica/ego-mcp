@@ -1,4 +1,10 @@
-import { PolarAngleAxis, PolarGrid, Radar, RadarChart } from 'recharts'
+import {
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
+} from 'recharts'
 
 import {
   ChartContainer,
@@ -40,6 +46,7 @@ export const DesireRadar = ({ current }: DesireRadarProps) => {
               dataKey="name"
               tick={{ fontSize: 10, fill: 'var(--color-muted-foreground)' }}
             />
+            <PolarRadiusAxis domain={[0, 1]} tick={false} axisLine={false} />
             <PolarGrid stroke="var(--color-border)" />
             <Radar
               dataKey="value"

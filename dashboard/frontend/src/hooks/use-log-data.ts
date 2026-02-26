@@ -4,7 +4,7 @@ import { fetchLogs } from '@/api'
 import type { DateRange, LogPoint } from '@/types'
 
 export const useLogData = (
-  activeTab: string,
+  enabled: boolean,
   range: DateRange,
   logLevel: string,
   loggerFilter: string,
@@ -12,7 +12,7 @@ export const useLogData = (
   const [logs, setLogs] = useState<LogPoint[]>([])
 
   useEffect(() => {
-    if (activeTab !== 'logs') return
+    if (!enabled) return
 
     let disposed = false
     const loadLogs = async () => {
@@ -27,7 +27,7 @@ export const useLogData = (
       disposed = true
       clearInterval(timer)
     }
-  }, [activeTab, range, logLevel, loggerFilter])
+  }, [enabled, range, logLevel, loggerFilter])
 
   return logs
 }
