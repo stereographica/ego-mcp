@@ -11,8 +11,8 @@ const getStatus = (current: CurrentResponse | null): StatusLevel => {
   const ts = current?.latest?.ts
   if (!ts) return 'no_data'
   const age = Date.now() - new Date(ts).getTime()
-  if (age < 30_000) return 'active'
-  if (age < 300_000) return 'idle'
+  if (age <= 15 * 60_000) return 'active'
+  if (age <= 60 * 60_000) return 'idle'
   return 'no_data'
 }
 

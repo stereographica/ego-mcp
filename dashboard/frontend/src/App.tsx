@@ -78,7 +78,7 @@ const App = () => {
         </TabsContent>
 
         <TabsContent value="logs">
-          <LogsTab range={range} />
+          <LogsTab range={range} isActive={activeTab === 'logs'} />
         </TabsContent>
       </Tabs>
     </main>
