@@ -42,7 +42,7 @@ const isNearBottom = (el: HTMLElement, threshold = 24) =>
 
 export const LogsTab = ({ range, preset, isActive }: LogsTabProps) => {
   const [logLevel, setLogLevel] = useState('ALL')
-  const [loggerFilter, setLoggerFilter] = useState('')
+  const [loggerFilter, setLoggerFilter] = useState('ego_mcp.server')
   const [autoScroll, setAutoScroll] = useState(true)
   const [logFeedPinned, setLogFeedPinned] = useState(true)
   const logViewportRef = useRef<HTMLDivElement | null>(null)
