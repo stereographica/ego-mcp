@@ -12,10 +12,11 @@ import {
 } from '@/components/ui/select'
 import { useLogData } from '@/hooks/use-log-data'
 import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
-import type { DateRange } from '@/types'
+import type { DateRange, TimeRangePreset } from '@/types'
 
 type LogsTabProps = {
   range: DateRange
+  preset: TimeRangePreset
   isActive: boolean
 }
 
@@ -39,7 +40,7 @@ const levelVariant = (
 const isNearBottom = (el: HTMLElement, threshold = 24) =>
   el.scrollHeight - el.scrollTop - el.clientHeight <= threshold
 
-export const LogsTab = ({ range, isActive }: LogsTabProps) => {
+export const LogsTab = ({ range, preset, isActive }: LogsTabProps) => {
   const [logLevel, setLogLevel] = useState('ALL')
   const [loggerFilter, setLoggerFilter] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
@@ -47,7 +48,7 @@ export const LogsTab = ({ range, isActive }: LogsTabProps) => {
   const logViewportRef = useRef<HTMLDivElement | null>(null)
   const { formatTs, clientTimeZone } = useTimestampFormatter()
 
-  const logs = useLogData(isActive, range, logLevel, loggerFilter)
+  const logs = useLogData(isActive, preset, range, logLevel, loggerFilter)
 
   useEffect(() => {
     if (!isActive || !autoScroll || !logFeedPinned) return
