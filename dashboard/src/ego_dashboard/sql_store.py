@@ -313,6 +313,7 @@ class SqlTelemetryStore:
         if latest is None:
             return {
                 "latest": None,
+                "latest_emotion": None,
                 "tool_calls_per_min": 0,
                 "error_rate": 0.0,
                 "window_24h": {"tool_calls": 0, "error_rate": 0.0},
@@ -376,21 +377,23 @@ class SqlTelemetryStore:
                     (latest_ts, latest_ts),
                 )
                 log_row_24h = cur.fetchone()
-                if latest.get("emotion_primary") is None or latest.get("emotion_intensity") is None:
-                    cur.execute(
-                        """
-                        SELECT emotion_primary, emotion_intensity
-                        FROM tool_events
-                        WHERE ts <= %s
-                          AND (emotion_primary IS NOT NULL OR emotion_intensity IS NOT NULL)
-                        ORDER BY ts DESC
-                        LIMIT 1
-                        """,
-                        (latest_ts,),
-                    )
-                    emotion_row = cur.fetchone()
-                else:
-                    emotion_row = None
+                cur.execute(
+                    """
+                    SELECT
+                      ts,
+                      emotion_primary,
+                      emotion_intensity,
+                      numeric_metrics ->> 'valence',
+                      numeric_metrics ->> 'arousal'
+                    FROM tool_events
+                    WHERE ts <= %s
+                      AND (emotion_primary IS NOT NULL OR emotion_intensity IS NOT NULL)
+                    ORDER BY ts DESC
+                    LIMIT 1
+                    """,
+                    (latest_ts,),
+                )
+                latest_emotion_row = cur.fetchone()
                 latest_desires: dict[str, float] = {}
                 for key in DESIRE_METRIC_KEYS:
                     cur.execute(
@@ -421,14 +424,33 @@ class SqlTelemetryStore:
         log_calls_24h_raw, log_failures_24h_raw = log_row_24h if log_row_24h is not None else (0, 0)
         log_calls_24h = int(log_calls_24h_raw or 0)
         log_failures_24h = int(log_failures_24h_raw or 0)
-        if emotion_row is not None:
-            emotion_primary, emotion_intensity = emotion_row
+        latest_emotion: dict[str, object] | None = None
+        if latest_emotion_row is not None:
+            (
+                emotion_ts,
+                emotion_primary,
+                emotion_intensity,
+                valence_raw,
+                arousal_raw,
+            ) = latest_emotion_row
+            valence = float(valence_raw) if isinstance(valence_raw, str) else None
+            arousal = float(arousal_raw) if isinstance(arousal_raw, str) else None
+            latest_emotion = {
+                "ts": emotion_ts.isoformat(),
+                "emotion_primary": str(emotion_primary) if emotion_primary is not None else None,
+                "emotion_intensity": (
+                    float(emotion_intensity) if emotion_intensity is not None else None
+                ),
+                "valence": valence,
+                "arousal": arousal,
+            }
             if latest.get("emotion_primary") is None and emotion_primary is not None:
                 latest["emotion_primary"] = str(emotion_primary)
             if latest.get("emotion_intensity") is None and emotion_intensity is not None:
                 latest["emotion_intensity"] = float(emotion_intensity)
         return {
             "latest": latest,
+            "latest_emotion": latest_emotion,
             "tool_calls_per_min": log_calls if log_calls > 0 else total_calls,
             "error_rate": (
                 (log_failures / log_calls)

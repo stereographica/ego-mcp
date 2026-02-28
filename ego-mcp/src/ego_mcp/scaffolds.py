@@ -34,6 +34,8 @@ SCAFFOLD_CONSIDER_THEM = (
     "2. What is the real intent behind their words?\n"
     "3. If you were in their place, how would you want to be responded to?\n"
     "If you learned something new, use update_relationship.\n"
+    "If you're sharing a meaningful moment, capture it with "
+    "remember(shared_with=...) to build your shared history.\n"
     "Did their response match what you expected? If so, "
     "your sense of predictability is being confirmed."
 )

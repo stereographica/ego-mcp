@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -9,6 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from ego_mcp.types import RelationshipModel
+
+_UPDATABLE_FIELDS = frozenset(
+    field.name
+    for field in dataclasses.fields(RelationshipModel)
+    if field.name not in ("person_id",)
+)
 
 
 class RelationshipStore:
@@ -66,6 +73,14 @@ class RelationshipStore:
         )
 
     def update(self, person_id: str, patch: dict[str, Any]) -> RelationshipModel:
+        invalid_fields = sorted(key for key in patch if key not in _UPDATABLE_FIELDS)
+        if invalid_fields:
+            valid_fields = ", ".join(sorted(_UPDATABLE_FIELDS))
+            invalid = ", ".join(invalid_fields)
+            raise ValueError(
+                f"Invalid relationship field(s): {invalid}. "
+                f"Valid fields: {valid_fields}"
+            )
         raw = self._get_raw(person_id)
         for key, value in patch.items():
             raw[key] = value
