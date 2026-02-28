@@ -94,6 +94,41 @@ def test_logs_filtering() -> None:
     assert info_logs[0]["fields"] == {"tool_name": "remember"}
 
 
+def test_logs_logger_filter_substring_match() -> None:
+    from ego_dashboard.models import LogEvent
+
+    store = TelemetryStore()
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    end = base + timedelta(minutes=1)
+    store.ingest_log(
+        LogEvent(ts=base, level="INFO", logger="ego_mcp.server", message="a", private=False)
+    )
+    store.ingest_log(
+        LogEvent(ts=base, level="INFO", logger="ego_mcp.tool_handler", message="b", private=False)
+    )
+    store.ingest_log(
+        LogEvent(ts=base, level="INFO", logger="other.module", message="c", private=False)
+    )
+
+    # Partial match: "ego_mcp" matches both ego_mcp.* loggers
+    result = store.logs(base, end, logger="ego_mcp")
+    assert len(result) == 2
+    assert {r["logger"] for r in result} == {"ego_mcp.server", "ego_mcp.tool_handler"}
+
+    # Case-insensitive match
+    result = store.logs(base, end, logger="EGO_MCP")
+    assert len(result) == 2
+
+    # More specific suffix still works
+    result = store.logs(base, end, logger="ego_mcp.server")
+    assert len(result) == 1
+    assert result[0]["logger"] == "ego_mcp.server"
+
+    # No match
+    result = store.logs(base, end, logger="nonexistent")
+    assert len(result) == 0
+
+
 def test_current_backfills_latest_emotion_from_recent_telemetry() -> None:
     store = TelemetryStore()
     store.ingest(_event(0, "remember", 0.8, "night"))

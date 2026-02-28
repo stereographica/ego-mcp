@@ -230,11 +230,11 @@ class SqlTelemetryStore:
                         """
                         SELECT ts, level, logger, message, private, fields
                         FROM log_events
-                        WHERE ts >= %s AND ts <= %s AND level = %s AND logger = %s
+                        WHERE ts >= %s AND ts <= %s AND level = %s AND logger ILIKE %s
                         ORDER BY ts ASC
                         LIMIT 300
                         """,
-                        (start, end, level.upper(), logger),
+                        (start, end, level.upper(), f"%{logger}%"),
                     )
                 elif level:
                     cur.execute(
@@ -252,11 +252,11 @@ class SqlTelemetryStore:
                         """
                         SELECT ts, level, logger, message, private, fields
                         FROM log_events
-                        WHERE ts >= %s AND ts <= %s AND logger = %s
+                        WHERE ts >= %s AND ts <= %s AND logger ILIKE %s
                         ORDER BY ts ASC
                         LIMIT 300
                         """,
-                        (start, end, logger),
+                        (start, end, f"%{logger}%"),
                     )
                 else:
                     cur.execute(

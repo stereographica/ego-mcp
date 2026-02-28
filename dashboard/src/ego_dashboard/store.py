@@ -110,7 +110,7 @@ class TelemetryStore:
         if level:
             values = [log for log in values if log.level == level.upper()]
         if logger:
-            values = [log for log in values if log.logger == logger]
+            values = [log for log in values if logger.lower() in log.logger.lower()]
         rows: list[dict[str, object]] = []
         for item in values[-300:]:
             row = item.model_dump(mode="json")
