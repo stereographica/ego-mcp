@@ -116,15 +116,25 @@ If any code under `ego-mcp/` or `dashboard/` is changed, run the
 corresponding checks defined in `.github/workflows/ego-mcp-ci.yml`
 before finishing work.
 
+### Test addition rule
+
+**Every bug fix or new feature MUST include tests** that verify the changed behavior.
+- Backend fix → add/update test in `dashboard/tests/` or `ego-mcp/tests/`
+- Frontend fix → add/update test in `dashboard/frontend/src/`
+- A PR that changes behavior without tests will be rejected.
+
 ### ego-mcp CI sequence
+
+CI runs with Python 3.11. Locally, `ego-mcp/.python-version` pins 3.14, so
+use `UV_PYTHON=3.11` to match CI exactly:
 
 ```bash
 cd ego-mcp
-uv sync --extra dev
-GEMINI_API_KEY=test-key uv run pytest tests -v
-uv run isort --check-only src tests
-uv run ruff check src tests
-uv run mypy src tests
+UV_PYTHON=3.11 uv sync --extra dev
+UV_PYTHON=3.11 GEMINI_API_KEY=test-key uv run pytest tests -v
+UV_PYTHON=3.11 uv run isort --check-only src tests
+UV_PYTHON=3.11 uv run ruff check src tests
+UV_PYTHON=3.11 uv run mypy src tests
 ```
 
 ### dashboard backend CI sequence

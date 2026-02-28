@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 import App from './App'
 
@@ -55,5 +56,12 @@ describe('App', () => {
   it('shows desire radar chart section', async () => {
     render(<App />)
     expect(await screen.findByText('Desire parameters')).toBeInTheDocument()
+  })
+
+  it('shows logs tab with live tail heading and default logger filter', async () => {
+    render(<App />)
+    await userEvent.click(screen.getByRole('tab', { name: 'Logs' }))
+    expect(await screen.findByText('Live tail')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('logger')).toHaveValue('ego_mcp.server')
   })
 })

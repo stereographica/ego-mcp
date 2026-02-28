@@ -1,22 +1,44 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { fetchLogs } from '@/api'
-import type { DateRange, LogPoint } from '@/types'
+import type { DateRange, LogPoint, TimeRangePreset } from '@/types'
+
+const PRESET_MINUTES: Record<Exclude<TimeRangePreset, 'custom'>, number> = {
+  '15m': 15,
+  '1h': 60,
+  '6h': 360,
+  '24h': 1440,
+  '7d': 10080,
+}
 
 export const useLogData = (
   enabled: boolean,
+  preset: TimeRangePreset,
   range: DateRange,
   logLevel: string,
   loggerFilter: string,
 ) => {
   const [logs, setLogs] = useState<LogPoint[]>([])
+  const rangeRef = useRef(range)
+  rangeRef.current = range
 
   useEffect(() => {
     if (!enabled) return
 
     let disposed = false
     const loadLogs = async () => {
-      const data = await fetchLogs(range, logLevel, loggerFilter)
+      // For presets, compute a fresh range on every poll so the window
+      // always ends at "now" and new logs are not excluded.
+      let currentRange: DateRange
+      if (preset === 'custom') {
+        currentRange = rangeRef.current
+      } else {
+        const to = new Date()
+        const from = new Date(to)
+        from.setMinutes(from.getMinutes() - PRESET_MINUTES[preset])
+        currentRange = { from: from.toISOString(), to: to.toISOString() }
+      }
+      const data = await fetchLogs(currentRange, logLevel, loggerFilter)
       if (!disposed) {
         setLogs(data)
       }
@@ -27,7 +49,7 @@ export const useLogData = (
       disposed = true
       clearInterval(timer)
     }
-  }, [enabled, range, logLevel, loggerFilter])
+  }, [enabled, preset, logLevel, loggerFilter])
 
   return logs
 }
