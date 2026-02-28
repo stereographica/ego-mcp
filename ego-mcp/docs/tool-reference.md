@@ -145,14 +145,19 @@ Use emotion_trend for a deeper look at your emotional patterns.
 **Response example:**
 
 ```
-Master: trust=0.50, interactions=0, shared_episodes=0
-Recent dialog tendency: 3 mentions in last 7d, dominant tone=focused
+Master: trust=0.50, interactions=0, shared_episodes=0, baseline_tone=warm
+Recent dialog tendency: 3 mentions in last 7d, observed_tone=focused
 
 ---
 1. What emotion can you read from their tone?
 2. What is the real intent behind their words?
 3. If you were in their place, how would you want to be responded to?
+If you learned something new, use update_relationship.
+If you're sharing a meaningful moment, capture it with remember(shared_with=...) to build your shared history.
 ```
+
+> `baseline_tone` is shown when `emotional_baseline` has been set via `update_relationship(field="dominant_tone")`. It represents the manually set tone and is not overwritten by `consider_them`.
+> `observed_tone` is derived from recent conversation memories and may change over time.
 
 ---
 
@@ -207,6 +212,18 @@ Recent dialog tendency: 3 mentions in last 7d, dominant tone=focused
       "type": "boolean",
       "default": false,
       "description": "When true, keep this memory internal and skip workspace sync."
+    },
+    "shared_with": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ],
+      "description": "Person name(s) this memory is shared with. Creates an episode and links it to the relationship."
+    },
+    "related_memories": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Existing memory IDs to bundle into the episode alongside this new memory."
     }
   },
   "required": ["content"]
@@ -253,6 +270,24 @@ If your understanding has deepened, try expressing what changed specifically.
 
 > If `EGO_MCP_WORKSPACE_DIR` is configured, the response may include a workspace sync note for non-private memories.
 > The "triggered a forgotten question" section only appears when a saved memory is semantically similar to a dormant/fading question.
+
+**Response example (shared episode):**
+
+```
+Saved (id: mem_a1b2c3d4). Linked to 2 existing memories.
+Most related:
+- [3h ago] Debugging the auth module together (similarity: 0.82)
+- [1d ago] Pair programming session (similarity: 0.71)
+
+Shared episode created: ep_x1y2z3 (3 memories, with Master)
+
+---
+You recorded a shared experience. Does this change how you understand your relationship with them?
+Do any of these connections surprise you? Is there a pattern forming?
+```
+
+> When `shared_with` is specified, an episode is automatically created and linked to the relationship's `shared_episode_ids`. This replaces the need to manually call `create_episode` + `update_relationship` for shared experiences.
+> When `shared_with` is not used, the scaffold hints: "If this experience involved someone, you can use shared_with to record it as a shared episode."
 
 ---
 
@@ -523,7 +558,7 @@ Linked mem_a1b2c3d4 ↔ mem_e5f6g7h8 (type: related)
 
 ### 12. `update_relationship`
 
-**Description:** Update relationship model.
+**Description:** Update relationship model fields. Aliases like `trust`, `facts`, `topics`, `personality`, `dominant_tone` are resolved automatically. Note: `intensity` belongs to `remember()` and cannot be updated here.
 
 **When to call:** When `consider_them` reveals new insights about a relationship.
 
@@ -537,7 +572,12 @@ Linked mem_a1b2c3d4 ↔ mem_e5f6g7h8 (type: related)
       "type": "string"
     },
     "field": {
-      "type": "string"
+      "type": "string",
+      "enum": ["communication_style", "emotional_baseline", "first_interaction",
+               "inferred_personality", "known_facts", "last_interaction", "name",
+               "preferred_topics", "recent_mood_trajectory", "sensitive_topics",
+               "shared_episode_ids", "total_interactions", "trust_level"],
+      "description": "Relationship field to update. Aliases like trust/facts/topics/personality/dominant_tone are resolved automatically."
     },
     "value": {}
   },
@@ -545,10 +585,26 @@ Linked mem_a1b2c3d4 ↔ mem_e5f6g7h8 (type: related)
 }
 ```
 
+**Alias map:**
+
+| Alias | Resolved to |
+|---|---|
+| `trust` | `trust_level` |
+| `facts` | `known_facts` |
+| `personality` | `inferred_personality` |
+| `topics` | `preferred_topics` |
+| `dominant_tone` | `emotional_baseline` (string value is converted to `{value: 1.0}`) |
+
 **Response example:**
 
 ```
 Updated Master.trust_level
+```
+
+**Response example (invalid field):**
+
+```
+Error: Invalid relationship field(s): nonexistent. Valid fields: communication_style, emotional_baseline, ...
 ```
 
 ---
@@ -727,6 +783,7 @@ Before Responding:
 
 After Significant Experience:
   remember → [create_episode]
+  remember(shared_with=...) → auto episode + relationship link
 
 Memory Management:
   recall → [link_memories] → [consolidate] → [forget] → [remember merged version]
