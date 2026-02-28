@@ -100,9 +100,15 @@ def test_logs_logger_filter_substring_match() -> None:
     store = TelemetryStore()
     base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     end = base + timedelta(minutes=1)
-    store.ingest_log(LogEvent(ts=base, level="INFO", logger="ego_mcp.server", message="a", private=False))
-    store.ingest_log(LogEvent(ts=base, level="INFO", logger="ego_mcp.tool_handler", message="b", private=False))
-    store.ingest_log(LogEvent(ts=base, level="INFO", logger="other.module", message="c", private=False))
+    store.ingest_log(
+        LogEvent(ts=base, level="INFO", logger="ego_mcp.server", message="a", private=False)
+    )
+    store.ingest_log(
+        LogEvent(ts=base, level="INFO", logger="ego_mcp.tool_handler", message="b", private=False)
+    )
+    store.ingest_log(
+        LogEvent(ts=base, level="INFO", logger="other.module", message="c", private=False)
+    )
 
     # Partial match: "ego_mcp" matches both ego_mcp.* loggers
     result = store.logs(base, end, logger="ego_mcp")
