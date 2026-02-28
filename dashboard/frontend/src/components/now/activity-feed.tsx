@@ -3,14 +3,15 @@ import { useEffect, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import type { LogLine } from '@/hooks/use-dashboard-socket'
+import type { LogLine } from '@/types'
 import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
 
 type ActivityFeedProps = {
   logLines: LogLine[]
+  connected: boolean
 }
 
-export const ActivityFeed = ({ logLines }: ActivityFeedProps) => {
+export const ActivityFeed = ({ logLines, connected }: ActivityFeedProps) => {
   const { formatTs } = useTimestampFormatter()
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -20,8 +21,14 @@ export const ActivityFeed = ({ logLines }: ActivityFeedProps) => {
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-sm">Activity feed</CardTitle>
+        <Badge
+          variant={connected ? 'secondary' : 'outline'}
+          className="text-[10px]"
+        >
+          {connected ? 'WebSocket' : 'HTTP polling'}
+        </Badge>
       </CardHeader>
       <CardContent>
         <ScrollArea className="h-[220px]">

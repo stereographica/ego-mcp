@@ -3,12 +3,7 @@ import { useEffect, useState } from 'react'
 import { fetchUsage } from '@/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
-import type { CurrentResponse } from '@/types'
 import type { DateRange, UsagePoint } from '@/types'
-
-type SessionSummaryProps = {
-  current: CurrentResponse | null
-}
 
 const sumToolCalls = (rows: UsagePoint[]) =>
   rows.reduce((sum, row) => {
@@ -42,7 +37,7 @@ const localDayRanges = (): { today: DateRange; yesterday: DateRange } => {
   }
 }
 
-export const SessionSummary = ({ current }: SessionSummaryProps) => {
+export const SessionSummary = () => {
   const [todayToolCalls, setTodayToolCalls] = useState(0)
   const [yesterdayToolCalls, setYesterdayToolCalls] = useState(0)
   const { clientTimeZone } = useTimestampFormatter()
@@ -72,7 +67,7 @@ export const SessionSummary = ({ current }: SessionSummaryProps) => {
 
   return (
     <div className="space-y-2">
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-muted-foreground text-xs font-medium">
@@ -92,21 +87,6 @@ export const SessionSummary = ({ current }: SessionSummaryProps) => {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold">{yesterdayToolCalls}</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-muted-foreground text-xs font-medium">
-              latest latency
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-3xl font-bold">
-              {current?.latest?.duration_ms != null
-                ? `${current.latest.duration_ms}ms`
-                : 'n/a'}
-            </p>
           </CardContent>
         </Card>
       </div>

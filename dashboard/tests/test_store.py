@@ -131,7 +131,11 @@ def test_logs_logger_filter_substring_match() -> None:
 
 def test_current_backfills_latest_emotion_from_recent_telemetry() -> None:
     store = TelemetryStore()
-    store.ingest(_event(0, "remember", 0.8, "night"))
+    store.ingest(
+        _event(0, "remember", 0.8, "night").model_copy(
+            update={"numeric_metrics": {"intensity": 0.8, "valence": 0.4, "arousal": 0.6}}
+        )
+    )
     store.ingest(
         _event(1, "wake_up", 0.0, "morning").model_copy(
             update={"emotion_primary": None, "emotion_intensity": None}
@@ -140,9 +144,26 @@ def test_current_backfills_latest_emotion_from_recent_telemetry() -> None:
 
     current = store.current()
     latest = cast(dict[str, Any], current["latest"])
+    latest_emotion = cast(dict[str, Any], current["latest_emotion"])
 
     assert latest["emotion_primary"] == "curious"
     assert latest["emotion_intensity"] == 0.8
+    assert latest_emotion["emotion_primary"] == "curious"
+    assert latest_emotion["emotion_intensity"] == 0.8
+    assert latest_emotion["valence"] == 0.4
+    assert latest_emotion["arousal"] == 0.6
+
+
+def test_current_returns_null_latest_emotion_when_not_present() -> None:
+    store = TelemetryStore()
+    store.ingest(
+        _event(0, "wake_up", 0.0, "morning").model_copy(
+            update={"emotion_primary": None, "emotion_intensity": None}
+        )
+    )
+
+    current = store.current()
+    assert current["latest_emotion"] is None
 
 
 def test_current_prefers_log_derived_counts_and_error_rate() -> None:

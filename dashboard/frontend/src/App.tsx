@@ -70,7 +70,7 @@ const App = () => {
         )}
 
         <TabsContent value="now">
-          <NowTab current={current} logLines={logLines} />
+          <NowTab current={current} logLines={logLines} connected={connected} />
         </TabsContent>
 
         <TabsContent value="history">
