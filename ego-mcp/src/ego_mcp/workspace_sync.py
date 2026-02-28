@@ -8,13 +8,6 @@ from pathlib import Path
 
 from ego_mcp.types import Category, Memory
 
-CURATION_CATEGORIES = {
-    Category.INTROSPECTION,
-    Category.RELATIONSHIP,
-    Category.SELF_DISCOVERY,
-    Category.LESSON,
-}
-
 
 @dataclass(frozen=True)
 class SyncResult:
@@ -22,7 +15,6 @@ class SyncResult:
 
     daily_updated: bool
     latest_monologue_updated: bool
-    curated_updated: bool
 
 
 class WorkspaceMemorySync:
@@ -32,7 +24,6 @@ class WorkspaceMemorySync:
         self._workspace_dir = workspace_dir
         self._memory_dir = workspace_dir / "memory"
         self._latest_monologue = self._memory_dir / "inner-monologue-latest.md"
-        self._curated_memory = workspace_dir / "MEMORY.md"
 
     @property
     def workspace_dir(self) -> Path:
@@ -75,24 +66,19 @@ class WorkspaceMemorySync:
             self.write_latest_monologue(memory.content, memory.timestamp)
             latest_updated = True
 
-        curated_updated = self._append_curated(memory)
         return SyncResult(
             daily_updated=daily_updated,
             latest_monologue_updated=latest_updated,
-            curated_updated=curated_updated,
         )
 
     def remove_memory(self, memory_id: str) -> bool:
-        """Remove synced entries for a memory from daily/curated Markdown files."""
+        """Remove synced entries for a memory from daily Markdown files."""
         marker = f"[id:{memory_id}]"
         modified = False
 
         for daily_file in self._memory_dir.glob("????-??-??.md"):
             if self._remove_lines_with_marker(daily_file, marker):
                 modified = True
-
-        if self._remove_lines_with_marker(self._curated_memory, marker):
-            modified = True
 
         return modified
 
@@ -126,31 +112,6 @@ class WorkspaceMemorySync:
             f"intensity: {memory.emotional_trace.intensity:.2f}) {marker}\n"
         )
         daily_file.write_text(current + entry, encoding="utf-8")
-        return True
-
-    def _append_curated(self, memory: Memory) -> bool:
-        if memory.importance < 4 and memory.category not in CURATION_CATEGORIES:
-            return False
-
-        if self._curated_memory.exists():
-            current = self._curated_memory.read_text(encoding="utf-8")
-        else:
-            current = "# Curated Memory\n\n"
-
-        marker = f"[id:{memory.id}]"
-        if marker in current:
-            return False
-
-        date_str, _ = _timestamp_parts(memory.timestamp)
-        short = memory.content.replace("\n", " ").strip()
-        if len(short) > 180:
-            short = short[:177].rstrip() + "..."
-
-        entry = (
-            f"- [{date_str}] ({memory.category.value}) {short} "
-            f"(emotion: {memory.emotional_trace.primary.value}) {marker}\n"
-        )
-        self._curated_memory.write_text(current + entry, encoding="utf-8")
         return True
 
     def _remove_lines_with_marker(self, path: Path, marker: str) -> bool:

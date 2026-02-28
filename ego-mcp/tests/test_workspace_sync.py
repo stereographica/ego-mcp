@@ -53,20 +53,6 @@ class TestWorkspaceMemorySync:
         daily = (tmp_path / "memory" / "2026-02-20.md").read_text(encoding="utf-8")
         assert "[id:mem_intro]" in daily
 
-    def test_sync_curated_for_high_importance(self, tmp_path: Path) -> None:
-        sync = WorkspaceMemorySync(tmp_path)
-        mem = _memory(
-            memory_id="mem_major",
-            content="Breakthrough insight from today's collaboration.",
-            category=Category.TECHNICAL,
-            importance=5,
-            emotion=Emotion.EXCITED,
-        )
-        result = sync.sync_memory(mem)
-        assert result.curated_updated is True
-        curated = (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
-        assert "[id:mem_major]" in curated
-
     def test_sync_deduplicates_by_memory_id(self, tmp_path: Path) -> None:
         sync = WorkspaceMemorySync(tmp_path)
         mem = _memory(
@@ -98,25 +84,6 @@ class TestWorkspaceMemorySync:
 
         assert changed is True
         content = daily.read_text(encoding="utf-8")
-        assert "[id:mem_drop]" not in content
-        assert "[id:mem_keep]" in content
-
-    def test_remove_memory_removes_marker_line_from_curated_memory(
-        self, tmp_path: Path
-    ) -> None:
-        sync = WorkspaceMemorySync(tmp_path)
-        curated = tmp_path / "MEMORY.md"
-        curated.write_text(
-            "# Curated Memory\n\n"
-            "- keep [id:mem_keep]\n"
-            "- drop [id:mem_drop]\n",
-            encoding="utf-8",
-        )
-
-        changed = sync.remove_memory("mem_drop")
-
-        assert changed is True
-        content = curated.read_text(encoding="utf-8")
         assert "[id:mem_drop]" not in content
         assert "[id:mem_keep]" in content
 
