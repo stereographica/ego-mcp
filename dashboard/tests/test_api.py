@@ -47,8 +47,12 @@ def test_logs_endpoint_logger_filter_returns_partial_matches() -> None:
 
     store = TelemetryStore()
     base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-    store.ingest_log(LogEvent(ts=base, level="INFO", logger="ego_mcp.server", message="hello", private=False))
-    store.ingest_log(LogEvent(ts=base, level="INFO", logger="other.module", message="world", private=False))
+    store.ingest_log(
+        LogEvent(ts=base, level="INFO", logger="ego_mcp.server", message="hello", private=False)
+    )
+    store.ingest_log(
+        LogEvent(ts=base, level="INFO", logger="other.module", message="world", private=False)
+    )
 
     app = create_app(store)
     client = TestClient(app)
