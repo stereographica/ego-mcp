@@ -166,6 +166,24 @@ class TestMcpBoundary:
         assert "date_to" in props
 
     @pytest.mark.asyncio
+    async def test_update_relationship_schema_lists_updatable_fields(self) -> None:
+        tools = await server_mod.list_tools()
+        update_tool = next(tool for tool in tools if tool.name == "update_relationship")
+        props = update_tool.inputSchema["properties"]
+        field_prop = props["field"]
+        assert "enum" in field_prop
+        assert "trust_level" in field_prop["enum"]
+        assert "intensity" in str(field_prop.get("description", ""))
+
+    @pytest.mark.asyncio
+    async def test_remember_schema_includes_shared_episode_fields(self) -> None:
+        tools = await server_mod.list_tools()
+        remember_tool = next(tool for tool in tools if tool.name == "remember")
+        props = remember_tool.inputSchema["properties"]
+        assert "shared_with" in props
+        assert "related_memories" in props
+
+    @pytest.mark.asyncio
     async def test_call_tool_logs_output(
         self,
         caplog: pytest.LogCaptureFixture,
@@ -661,6 +679,46 @@ class TestConsiderThem:
         assert len(rel.recent_mood_trajectory) >= 1
         assert "technical" in rel.preferred_topics or "planning" in rel.preferred_topics
 
+    @pytest.mark.asyncio
+    async def test_includes_baseline_tone_and_preserves_emotional_baseline(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        await _call(
+            "update_relationship",
+            {"person": "Master", "field": "dominant_tone", "value": "warm"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        await memory.save(
+            content="Master sounded focused while discussing tests",
+            category="conversation",
+            emotion="curious",
+        )
+
+        result = await _call(
+            "consider_them",
+            {"person": "Master"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+
+        store = server_mod._relationship_store(config)
+        rel = store.get("Master")
+        assert rel.emotional_baseline == {"warm": 1.0}
+        assert "baseline_tone=warm" in result
+        assert "observed_tone=" in result
+
 
 class TestRemember:
     @pytest.mark.asyncio
@@ -937,6 +995,173 @@ class TestRemember:
             consolidation,
         )
         assert "triggered a forgotten question" not in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_remember_shared_with_creates_episode_and_links_relationship(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "remember",
+            {"content": "We solved the release issue together.", "shared_with": "Master"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert "Shared episode created:" in result
+
+        created = await episodes.list_episodes()
+        assert len(created) == 1
+        ep = created[0]
+
+        rel = server_mod._relationship_store(config).get("Master")
+        assert rel.shared_episode_ids == [ep.id]
+
+    @pytest.mark.asyncio
+    async def test_remember_shared_with_related_memories_bundles_new_and_existing(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        original_save_with_auto_link = memory.save_with_auto_link
+
+        async def save_without_dedup(**kwargs: Any) -> tuple[
+            Memory | None,
+            int,
+            list[MemorySearchResult],
+            MemorySearchResult | None,
+        ]:
+            kwargs["dedup_threshold"] = -1.0
+            return await original_save_with_auto_link(**kwargs)
+
+        monkeypatch.setattr(memory, "save_with_auto_link", save_without_dedup)
+
+        related_a = await memory.save(content="Alpha anchor memory 111111.")
+        related_b = await memory.save(content="Beta anchor memory 222222.")
+        result = await _call(
+            "remember",
+            {
+                "content": "Gamma shared moment 333333 with a distinct narrative.",
+                "shared_with": "Master",
+                "related_memories": [related_a.id, related_b.id],
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+
+        assert "Saved (id:" in result
+        new_memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        created = await episodes.list_episodes()
+        assert len(created) == 1
+        memory_ids = set(created[0].memory_ids)
+        assert memory_ids == {new_memory_id, related_a.id, related_b.id}
+
+    @pytest.mark.asyncio
+    async def test_remember_shared_with_skips_unknown_related_memory_ids(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "remember",
+            {
+                "content": "Master and I shared a short check-in.",
+                "shared_with": "Master",
+                "related_memories": ["mem_missing"],
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+
+        new_memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        created = await episodes.list_episodes()
+        assert len(created) == 1
+        assert created[0].memory_ids == [new_memory_id]
+
+    @pytest.mark.asyncio
+    async def test_remember_with_empty_shared_with_does_not_create_episode(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "remember",
+            {"content": "This is private context.", "shared_with": ""},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert "Saved (id:" in result
+        assert "Shared episode created:" not in result
+
+        created = await episodes.list_episodes()
+        assert created == []
+
+    @pytest.mark.asyncio
+    async def test_remember_related_memories_without_shared_with_skips_episode(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        original_save_with_auto_link = memory.save_with_auto_link
+
+        async def save_without_dedup(**kwargs: Any) -> tuple[
+            Memory | None,
+            int,
+            list[MemorySearchResult],
+            MemorySearchResult | None,
+        ]:
+            kwargs["dedup_threshold"] = -1.0
+            return await original_save_with_auto_link(**kwargs)
+
+        monkeypatch.setattr(memory, "save_with_auto_link", save_without_dedup)
+
+        existing = await memory.save(content="Stable anchor content 1234567890.")
+        result = await _call(
+            "remember",
+            {
+                "content": "Distinct standalone content XYZ-987654321 with clear separation.",
+                "related_memories": [existing.id],
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert "Saved (id:" in result
+        assert "Shared episode created:" not in result
+
+        created = await episodes.list_episodes()
+        assert created == []
 
 
 class TestRelativeTimeFormatting:
@@ -1752,7 +1977,7 @@ class TestLinkMemories:
 
 class TestUpdateRelationship:
     @pytest.mark.asyncio
-    async def test_update(
+    async def test_alias_field_updates_trust_level_and_roundtrips(
         self,
         config: EgoConfig,
         memory: MemoryStore,
@@ -1769,7 +1994,64 @@ class TestUpdateRelationship:
             episodes,
             consolidation,
         )
-        assert "Updated Master.trust" in result
+        assert "Updated Master.trust_level" in result
+
+        consider = await _call(
+            "consider_them",
+            {"person": "Master"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert "trust=0.90" in consider
+
+    @pytest.mark.asyncio
+    async def test_invalid_field_returns_error(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "update_relationship",
+            {"person": "Master", "field": "nonexistent", "value": 0.9},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert result.startswith("Error:")
+        assert "Invalid relationship field" in result
+        assert "nonexistent" in result
+
+    @pytest.mark.asyncio
+    async def test_dominant_tone_alias_updates_emotional_baseline(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "update_relationship",
+            {"person": "Master", "field": "dominant_tone", "value": "warm"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert "Updated Master.emotional_baseline" in result
+
+        store = server_mod._relationship_store(config)
+        rel = store.get("Master")
+        assert rel.emotional_baseline == {"warm": 1.0}
 
 
 class TestUpdateSelf:

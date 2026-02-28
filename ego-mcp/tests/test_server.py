@@ -13,7 +13,7 @@ from mcp.types import TextContent
 import ego_mcp.server as server_mod
 from ego_mcp.consolidation import ConsolidationStats, MergeCandidate
 from ego_mcp.desire import DesireEngine
-from ego_mcp.types import Emotion, EmotionalTrace, Memory
+from ego_mcp.types import Category, Emotion, EmotionalTrace, Memory
 
 
 def _seed_high_desire(desire: DesireEngine, name: str) -> float:
@@ -49,7 +49,9 @@ class TestImplicitSatisfactionFromServer:
     ) -> None:
         before = _seed_high_desire(desire, "expression")
 
-        async def fake_handle_remember(_memory: object, _args: dict[str, object]) -> str:
+        async def fake_handle_remember(
+            _config: object, _memory: object, _args: dict[str, object]
+        ) -> str:
             return "saved"
 
         monkeypatch.setattr(server_mod, "_handle_remember", fake_handle_remember)
@@ -99,7 +101,9 @@ class TestImplicitSatisfactionFromServer:
     ) -> None:
         before = _seed_high_desire(desire, "expression")
 
-        async def fake_handle_remember(_memory: object, _args: dict[str, object]) -> str:
+        async def fake_handle_remember(
+            _config: object, _memory: object, _args: dict[str, object]
+        ) -> str:
             return "Not saved — very similar memory already exists."
 
         monkeypatch.setattr(server_mod, "_handle_remember", fake_handle_remember)
@@ -142,6 +146,128 @@ class TestImplicitSatisfactionFromServer:
         assert extra["emotion_intensity"] == 0.8
         assert extra["valence"] == 0.2
         assert extra["arousal"] == 0.7
+
+
+class TestWakeUpServerHandler:
+    @pytest.mark.asyncio
+    async def test_handle_wake_up_prefers_workspace_monologue(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeSync:
+            def read_latest_monologue(self) -> tuple[str | None, str | None]:
+                return ("A synced introspection note", "workspace-note")
+
+        class FakeMemoryStore:
+            async def list_recent(self, **_kwargs: Any) -> list[Memory]:
+                pytest.fail("list_recent should not be used when workspace monologue exists")
+
+        class FakeDesire:
+            def format_summary(self) -> str:
+                return "curiosity:0.7"
+
+        async def fake_relationship_snapshot(
+            _config: object, _memory: object, _person: str
+        ) -> str:
+            return "relationship snapshot"
+
+        monkeypatch.setattr(server_mod, "_workspace_sync", FakeSync())
+        monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
+
+        text = await server_mod._handle_wake_up(
+            cast(Any, SimpleNamespace(companion_name="Master")),
+            cast(Any, FakeMemoryStore()),
+            cast(Any, FakeDesire()),
+        )
+
+        assert "Last introspection (workspace-note)" in text
+        assert "A synced introspection note" in text
+        assert "Desires: curiosity:0.7" in text
+        assert "relationship snapshot" in text
+
+    @pytest.mark.asyncio
+    async def test_handle_wake_up_falls_back_to_recent_introspection(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeSync:
+            def read_latest_monologue(self) -> tuple[str | None, str | None]:
+                return (None, None)
+
+        introspection = Memory(
+            id="mem_intro",
+            content="Remember this introspection fallback",
+            timestamp="2026-02-20T12:34:56+00:00",
+            category=Category.INTROSPECTION,
+        )
+
+        class FakeMemoryStore:
+            async def list_recent(
+                self, n: int = 1, category_filter: str | None = None
+            ) -> list[Memory]:
+                assert n == 1
+                assert category_filter == "introspection"
+                return [introspection]
+
+        class FakeDesire:
+            def format_summary(self) -> str:
+                return "coherence:0.8"
+
+        async def fake_relationship_snapshot(
+            _config: object, _memory: object, _person: str
+        ) -> str:
+            return "relationship snapshot"
+
+        monkeypatch.setattr(server_mod, "_workspace_sync", FakeSync())
+        monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
+
+        text = await server_mod._handle_wake_up(
+            cast(Any, SimpleNamespace(companion_name="Master")),
+            cast(Any, FakeMemoryStore()),
+            cast(Any, FakeDesire()),
+        )
+
+        assert "Last introspection (2026-02-20T12:34)" in text
+        assert "Remember this introspection fallback" in text
+        assert "Desires: coherence:0.8" in text
+
+    @pytest.mark.asyncio
+    async def test_handle_wake_up_without_any_introspection(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeSync:
+            def read_latest_monologue(self) -> tuple[str | None, str | None]:
+                return (None, None)
+
+        class FakeMemoryStore:
+            async def list_recent(
+                self, n: int = 1, category_filter: str | None = None
+            ) -> list[Memory]:
+                assert n == 1
+                assert category_filter == "introspection"
+                return []
+
+        class FakeDesire:
+            def format_summary(self) -> str:
+                return "expression:0.4"
+
+        async def fake_relationship_snapshot(
+            _config: object, _memory: object, _person: str
+        ) -> str:
+            return "relationship snapshot"
+
+        monkeypatch.setattr(server_mod, "_workspace_sync", FakeSync())
+        monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
+
+        text = await server_mod._handle_wake_up(
+            cast(Any, SimpleNamespace(companion_name="Master")),
+            cast(Any, FakeMemoryStore()),
+            cast(Any, FakeDesire()),
+        )
+
+        assert "No introspection yet." in text
+        assert "Desires: expression:0.4" in text
 
 
 class TestForgetToolServerHandlers:

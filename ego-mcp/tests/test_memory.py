@@ -457,3 +457,82 @@ class TestMemoryDelete:
 
         assert deleted is not None
         assert store.collection_count() == before - 1
+
+
+class TestMemoryLinking:
+    @pytest.mark.asyncio
+    async def test_link_memories_returns_false_when_either_side_is_missing(
+        self, store: MemoryStore
+    ) -> None:
+        created = await store.link_memories("mem_missing_a", "mem_missing_b")
+        assert created is False
+
+    @pytest.mark.asyncio
+    async def test_link_memories_is_idempotent(self, store: MemoryStore) -> None:
+        source = await store.save(content="source for idempotent link")
+        target = await store.save(content="target for idempotent link")
+
+        first = await store.link_memories(source.id, target.id, link_type="related")
+        second = await store.link_memories(source.id, target.id, link_type="related")
+
+        assert first is True
+        assert second is False
+        reloaded = await store.get_by_id(source.id)
+        assert reloaded is not None
+        assert [link.target_id for link in reloaded.linked_ids].count(target.id) == 1
+
+    @pytest.mark.asyncio
+    async def test_bump_link_confidence_creates_link_and_caps_at_one(
+        self, store: MemoryStore
+    ) -> None:
+        source = await store.save(content="source for confidence bump")
+        target = await store.save(content="target for confidence bump")
+
+        created = await store.bump_link_confidence(source.id, target.id, delta=0.8)
+        assert created is True
+
+        source_reloaded = await store.get_by_id(source.id)
+        target_reloaded = await store.get_by_id(target.id)
+        assert source_reloaded is not None
+        assert target_reloaded is not None
+
+        source_link = next(
+            link for link in source_reloaded.linked_ids if link.target_id == target.id
+        )
+        target_link = next(
+            link for link in target_reloaded.linked_ids if link.target_id == source.id
+        )
+        assert source_link.confidence == pytest.approx(1.0)
+        assert target_link.confidence == pytest.approx(1.0)
+
+        unchanged = await store.bump_link_confidence(source.id, target.id, delta=0.5)
+        assert unchanged is False
+
+
+class TestMemoryFallbacks:
+    @pytest.mark.asyncio
+    async def test_save_unknown_emotion_and_category_falls_back_to_defaults(
+        self, store: MemoryStore
+    ) -> None:
+        mem = await store.save(
+            content="unknown emotion/category",
+            emotion="not-an-emotion",
+            secondary=["happy", "not-an-emotion"],
+            category="not-a-category",
+        )
+
+        assert mem.emotional_trace.primary == Emotion.NEUTRAL
+        assert [emotion.value for emotion in mem.emotional_trace.secondary] == ["happy"]
+        assert mem.category.value == "daily"
+
+    @pytest.mark.asyncio
+    async def test_get_by_id_returns_none_when_collection_errors(
+        self, store: MemoryStore
+    ) -> None:
+        class BrokenCollection:
+            def get(self, **_kwargs: Any) -> dict[str, Any]:
+                raise KeyError("broken metadata")
+
+        store._collection = BrokenCollection()
+        found = await store.get_by_id("mem_any")
+        assert found is None

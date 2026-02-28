@@ -3,6 +3,7 @@ import type {
   CurrentResponse,
   DateRange,
   HeatmapPoint,
+  LogLine,
   LogPoint,
   SeriesPoint,
   StringPoint,
@@ -24,12 +25,40 @@ const get = async <T>(path: string, fallback: T): Promise<T> => {
 const encodeRange = (range: DateRange) =>
   `from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`
 
+const toLogLine = (item: LogPoint): LogLine => {
+  const fields =
+    typeof item.fields === 'object' && item.fields !== null
+      ? (item.fields as Record<string, unknown>)
+      : {}
+  const level = typeof item.level === 'string' ? item.level : undefined
+  const message = typeof item.message === 'string' ? item.message : undefined
+  const toolName =
+    typeof item.tool_name === 'string'
+      ? item.tool_name
+      : typeof fields.tool_name === 'string'
+        ? fields.tool_name
+        : undefined
+
+  return {
+    ts: String(item.ts ?? new Date().toISOString()),
+    tool_name: toolName,
+    ok:
+      typeof item.ok === 'boolean'
+        ? item.ok
+        : !(level === 'ERROR' || message === 'Tool execution failed'),
+    level,
+    logger: typeof item.logger === 'string' ? item.logger : undefined,
+    message,
+  }
+}
+
 export const fetchCurrent = async (): Promise<CurrentResponse> =>
   get('/api/v1/current', {
     tool_calls_per_min: 0,
     error_rate: 0,
     window_24h: { tool_calls: 0, error_rate: 0 },
     latest_desires: {},
+    latest_emotion: null,
     latest: { emotion_primary: 'n/a', emotion_intensity: 0 },
   })
 
@@ -82,11 +111,27 @@ export const fetchHeatmap = async (
   return data.items
 }
 
-export const fetchLogs = async (
+export async function fetchLogs(): Promise<LogLine[]>
+export async function fetchLogs(
   range: DateRange,
   level: string,
   logger: string,
-): Promise<LogPoint[]> => {
+): Promise<LogPoint[]>
+export async function fetchLogs(
+  range?: DateRange,
+  level = 'ALL',
+  logger = '',
+): Promise<LogLine[] | LogPoint[]> {
+  if (range == null) {
+    const now = new Date()
+    const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000)
+    const data = await get<{ items: LogPoint[] }>(
+      `/api/v1/logs?from=${encodeURIComponent(fiveMinAgo.toISOString())}&to=${encodeURIComponent(now.toISOString())}`,
+      { items: [] },
+    )
+    return (data.items ?? []).map(toLogLine)
+  }
+
   const levelQuery = level === 'ALL' ? '' : `&level=${level}`
   const loggerQuery = logger ? `&logger=${encodeURIComponent(logger)}` : ''
   const data = await get<{ items: LogPoint[] }>(

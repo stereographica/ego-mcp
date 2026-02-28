@@ -6,6 +6,13 @@ export type CurrentResponse = {
     error_rate: number
   }
   latest_desires?: Record<string, number>
+  latest_emotion?: {
+    ts: string
+    emotion_primary?: string
+    emotion_intensity?: number
+    valence?: number
+    arousal?: number
+  } | null
   latest: {
     ts?: string
     emotion_intensity?: number
@@ -43,4 +50,13 @@ export type LogPoint = {
   private: boolean
   fields?: Record<string, unknown>
   [key: string]: unknown
+}
+
+export type LogLine = {
+  ts: string
+  tool_name?: string
+  ok: boolean
+  level?: string
+  logger?: string
+  message?: string
 }
