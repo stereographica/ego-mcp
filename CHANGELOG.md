@@ -1,101 +1,127 @@
 # Changelog
 
-このプロジェクトの主要な変更を記録する。
+ego-mcp のリリース履歴。
 
----
+## [0.2.7] - 2026-02-28
 
-## predictability 欲求の充足改善 (2026-02-25)
+### Fixed
+- `update_relationship` にフィールド名バリデーションを追加し、不正フィールド更新をエラーメッセージで返すように変更
+- `update_relationship` のエイリアス解決を追加（`trust` → `trust_level`、`facts` → `known_facts` など）
+- `update_relationship(field="dominant_tone")` が `emotional_baseline` を通じて永続化されるように修正
+- Dashboard Now タブの Emotional state が最新の感情イベント（`latest_emotion`）を表示するように修正
+- Dashboard Activity feed が WebSocket 未接続時でも HTTP ポーリングでログを表示するように修正
 
-### 変更
+### Added
+- `remember` に `shared_with` / `related_memories` パラメータを追加
+- `remember(shared_with=...)` 実行時に shared episode を自動作成し、relationship の `shared_episode_ids` に連携
 
-- **暗黙充足マップ拡張**: `wake_up` → `predictability` 0.05、`introspect` / `consider_them` に `predictability` 0.1 を追加
-- **wake_up ルーティング改善**: `satisfy_implicit("wake_up")` 呼び出しを追加し、セッション開始時に微量の予測欲求を充足
-- **スキャフォールド改善**: `feel_desires`, `introspect`, `consider_them` の 3 スキャフォールドに予測検証・確認の促し文言を追加し、Claude が自発的に `satisfy_desire("predictability")` を呼べるように誘導
+### Changed
+- Dashboard SessionSummary から `latest latency` パネルを削除し、Now タブのサマリーを 2 カラム表示に変更
+- `server.py` / `memory.py` をモジュール分割しリファクタリング（public API に変更なし）
 
----
+## [0.2.6] - 2026-02-28
 
-## Phase 3b — 記憶・感情・忘却拡張 (2026-02-22)
+### Removed
+- `MEMORY.md` への自動書き込み — `WorkspaceMemorySync._append_curated()` メソッド、`CURATION_CATEGORIES` 定数、`SyncResult.curated_updated` フィールドを削除
+- `forget` 実行時の `MEMORY.md` エントリ除去処理
 
-### 新機能
+### Changed
+- `remember` のワークスペース同期を `memory/YYYY-MM-DD.md` と `memory/inner-monologue-latest.md` のみに限定
+- `docs/workspace-guide.md` に手動キュレーション推奨ワークフローを追記
+- `docs/tool-reference.md` の `remember` / `forget` 説明にワークスペース同期の挙動を明記
 
-- **Emotion enum 拡張**: `melancholy`, `anxious`, `contentment`, `frustrated` の 4 感情を追加し、valence-arousal 空間上のネガティブ象限の表現力を向上
-- **emotion_trend バックエンドツール**: 3 層時間窓（vivid / moderate / impressionistic）による感情パターンの俯瞰分析を新設
-  - Undercurrent（底流）分析: secondary 感情の加重カウントで表面に現れない感情の流れを検出
-  - 月次印象語: valence-arousal 平均から人間的な印象語を生成
-  - ピーク・エンドの法則: 月次サマリに intensity 最大の記憶と最新の記憶を明示
-  - fading タグ: 時間経過で印象が薄れる感情クラスタを可視化
-  - Graceful Degradation: 記憶数に応じて段階的に機能をリッチにする
-- **remember リンク記憶の可視化**: 保存時にセマンティック類似度の高い既存記憶を最大 3 件表示し、連想の展開を促進
-- **未解決の問いのライフサイクル**:
-  - importance（1-5）と created_at を question_log に追加
-  - salience に基づく自然な忘却（Active → Fading → Dormant）
-  - `update_self(field="resolve_question")` で問いを解決済みにする機能
-  - `update_self(field="question_importance")` で重要度を変更する機能
-  - introspect の Resurfacing セクションで「ふと思い出す」体験を再現
-- **忘却と欲求の連動**:
-  - 経路 1: remember 時に dormant/fading な問いとの embedding 類似度を比較し、関連があれば再浮上
-  - 経路 2: fading 状態の高重要度の問いが cognitive_coherence 欲求にブースト（「何か引っかかる」感覚）
-  - feel_desires に「nagging feeling」スキャフォールドを追加
+### Design
+- `design/wip/workspace-memory-curation-design.md` — ワークスペース記憶同期の整理設計書
 
-### 変更
+## [0.2.4] - 2026-02-25
 
-- **recall フィルタ強化**: `date_from` / `date_to` パラメータを追加し、日付範囲での絞り込みが可能に
-- **recall 結果表示の刷新**: 相対時間表記、undercurrent 表示、intensity の条件付き数値表示、total count 表示
-- **recall の動的スキャフォールド**: 使用されたフィルタに応じてスキャフォールドのフィルタ案内を動的に切り替え
-- **recall の n_results 上限キャップ**: 最大 10 件に制限（デフォルト 3 件は維持）
-- **introspect の問い表示改修**: question ID と importance を表示し、resolve の案内を追加
-- **EMOTION_BOOST_MAP 拡張**: 新感情 4 種にブースト値を設定（frustrated: 0.28, anxious: 0.22, melancholy: 0.18, contentment: 0.08）
-- **`_derive_desire_modulation` の拡張**: frustrated → prediction_error、anxious → cognitive_coherence + social_thirst にブースト
-- **`save_with_auto_link` の返り値拡張**: リンク先の `MemorySearchResult` リストも返すように変更
+### Changed
+- `IMPLICIT_SATISFACTION_MAP` に `wake_up` エントリ追加（`predictability` 0.05）
+- `introspect` / `consider_them` の暗黙充足に `predictability` 0.1 を追加
+- `wake_up` ルーティングで `satisfy_implicit("wake_up")` を呼び出すように変更
+- `SCAFFOLD_FEEL_DESIRES` に予測検証の促し文言を追加
+- `SCAFFOLD_INTROSPECT` に予測の振り返り文言を追加
+- `SCAFFOLD_CONSIDER_THEM` に予測確認の文言を追加
 
-### 削除
 
-- **`search_memories` バックエンドツールの廃止**: 全機能を `recall` に統合。ツール総数は 15 のまま維持（emotion_trend が新設されたため ±0）
+## [0.2.3] - 2026-02-25
 
-### 品質改善
+### Added
+- `forget` ツール（記憶 ID 指定削除）
+- `MemoryStore.delete` メソッド（双方向リンクの逆リンククリーンアップ付き）
+- `WorkspaceMemorySync.remove_memory` メソッド（同期済み Markdown エントリ除去）
 
-- `MemoryStore` にカプセル化された公開 API を追加（`data_dir` property, `embed()`, `collection_count()`）
-- `_count_emotions_weighted` を公開関数にリネーム（`count_emotions_weighted`）
-- 型注釈の厳密化（`list[Any]` → `list[Memory]`, `result: Any` → `result: MemorySearchResult`）
-- `_sanitize_tool_output_for_logging` の 2 行フォーマット対応テストを追加
-- `_derive_desire_modulation` に引数キャッシュ導入（`fading_important_questions`, `recent_memories`）で I/O 重複を削減
-- isort 導入による import 順序の統一
+### Changed
+- `consolidate` のマージ候補スキャフォールドに `forget` への導線を追加
+- `get_episode` で削除済み `memory_ids` をフィルタし、欠損数を注記
+- `docs/tool-reference.md` / `README.md` のツール一覧・フローを更新
 
----
+### Design
+- `design/forget-tool-design.md` — forget ツール設計書
 
-## Private Memory (2026-02-21)
 
-### 新機能
+## [0.2.2] - 2026-02-25
 
-- **private フラグ**: `remember(private=true)` で外部に出さない記憶を保存可能に
-- **workspace sync 抑止**: private 記憶は `memory/*.md`, `MEMORY.md`, `inner-monologue-latest.md` に同期されない
-- **ログ redaction**: private 記憶の本文はログに `[REDACTED_PRIVATE_MEMORY]` として記録
-- **recall での private 表示**: 検索結果に `private` フラグを明示し、LLM の判断材料とする
-- **wake_up スキャフォールド**: private 記憶の存在をさりげなく想起させる案内を追加
+### Added
+- `remember` 実行時の保存前重複検出ガード — コサイン距離 0.05 未満（similarity 0.95 以上）の既存記憶がある場合、保存をブロックし既存記憶の情報を返す
+- `consolidate` 実行時のマージ候補検出 — コサイン距離 0.10 未満の類似記憶ペアを検出し、統合候補として提示
+- `MergeCandidate` データクラス（consolidation.py）
+- `ConsolidationStats` に `merge_candidates` フィールドを追加
 
----
+### Changed
+- `save_with_auto_link` の返り値を 3 要素から 4 要素タプルに拡張（`duplicate_of` を追加）
+- `SCAFFOLD_INTROSPECT` の `remember` 誘導に新規性の自己評価を追加（`"If this is a genuinely new insight, save with remember"`）
+- `_handle_consolidate` のレスポンスにマージ候補の表示を追加
 
-## Dashboard (2026-02-21)
+### Design
+- `design/memory-dedup-design.md` — 記憶重複防止・統合の設計書
 
-### 新機能
+## [0.2.1] - 2026-02-23
 
-- **利用状況ダッシュボード**: ego-mcp のツール使用状況をリアルタイムに可視化
-  - Now タブ: サマリーカード + リアルタイムチャート + イベントフィード
-  - History タブ: タイムレンジ指定でツール使用回数・パラメータ推移を分析
-  - Logs タブ: マスク済みログの live tail
-- **JSONL ログベースの telemetry**: 既存ログから構造化イベントを取り込み
-- **private データ保護**: 収集・保存・配信・表示の 4 層でマスキング
+### Added
+- 暗黙の充足（Implicit Satisfaction）— ツール使用に連動した自動的な部分充足
+- `DesireEngine.satisfy_implicit` メソッド
+- `IMPLICIT_SATISFACTION_MAP` — ツールと欲求の充足マッピング
 
----
+### Changed
+- 全 9 欲求の `satisfaction_hours` をリバランス（セッション間隔に合わせたスケール調整）
+- `SCAFFOLD_FEEL_DESIRES` を認知の型に改善（行動指示から内的気づきへの転換）
 
-## 初期リリース
+### Infrastructure
+- データファイルのマイグレーションフレームワーク（`ego_mcp.migrations`）
+- `0002_desire_rebalance` マイグレーション — 全欲求の `last_satisfied` をリセット
+- `CLAUDE.md` にリリースワークフローを追記
 
-- ego-mcp MCP サーバーの基本実装
-- 表面ツール 7 個 + バックエンドツール 8 個
-- ChromaDB ベースの記憶システム（セマンティック検索 + Hopfield パターン補完）
-- 欲求システム（非線形計算 + 感情/記憶変調）
-- 関係性モデル
-- 自己モデル
-- 内部独白
-- OpenClaw workspace sync
-- JSONL ランタイムログ
+### Design
+- `design/desire-system-rebalance.md` — 欲求システム・リバランスの設計書
+
+## [0.2.0] - 2026-02-16
+
+### Added
+- Emotion enum に 4 値を追加（`melancholy`, `anxious`, `contentment`, `frustrated`）
+- `recall` のフィルタ強化（`date_from`, `date_to`, `valence_range`, `arousal_range`）
+- `remember` リンク記憶の可視化（上位 3 件の類似記憶を表示）
+- `emotion_trend` ツール — 感情パターンの時系列分析
+- 忘却と欲求の統合 — fading question が `cognitive_coherence` をブースト
+- 問いかけライフサイクル管理（salience decay, band 分類）
+
+### Changed
+- `EMOTION_BOOST_MAP` に新 Emotion のエントリを追加
+- `_derive_desire_modulation` に新 Emotion の判定ロジックを追加
+
+## [0.1.0] - 2026-01-26
+
+初回リリース。
+
+### Added
+- MCP サーバー基盤（`mcp` SDK 統合）
+- 7 Surface Tools + 8 Backend Tools
+- ChromaDB ベースの記憶ストア（embedding: Gemini / OpenAI）
+- Hopfield ネットワークによる連想的記憶想起
+- 欲求エンジン（9 欲求、シグモイド計算）
+- 認知スキャフォールド（6 テンプレート）
+- 自己モデル・関係性モデル
+- エピソード記憶
+- 記憶の統合（ConsolidationEngine）
+- 連想エンジン（AssociationEngine）
+- Workspace 同期（OpenClaw 連携）

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ego_mcp.relationship import RelationshipStore
+import pytest
+
+from ego_mcp.relationship import _UPDATABLE_FIELDS, RelationshipStore
 
 
 class TestRelationshipStore:
@@ -26,6 +28,14 @@ class TestRelationshipStore:
         again = store.get("Master")
         assert again.trust_level == 0.9
         assert again.known_facts == ["busy"]
+
+    def test_update_rejects_unknown_field(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        with pytest.raises(ValueError, match="Invalid relationship field"):
+            store.update("Master", {"trust": 0.9})
+
+    def test_updatable_fields_excludes_person_id(self) -> None:
+        assert "person_id" not in _UPDATABLE_FIELDS
 
     def test_add_interaction(self, tmp_path: Path) -> None:
         store = RelationshipStore(tmp_path / "relationships.json")

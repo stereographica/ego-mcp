@@ -6,17 +6,36 @@ type EmotionStatusProps = {
   current: CurrentResponse | null
 }
 
+const relativeAge = (timestamp: string): string | null => {
+  const parsed = new Date(timestamp)
+  if (Number.isNaN(parsed.getTime())) return null
+  const seconds = Math.max(
+    0,
+    Math.floor((Date.now() - parsed.getTime()) / 1000),
+  )
+  if (seconds < 60) return 'just now'
+  if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m ago`
+  if (seconds < 86400) return `${Math.max(1, Math.floor(seconds / 3600))}h ago`
+  return `${Math.max(1, Math.floor(seconds / 86400))}d ago`
+}
+
 export const EmotionStatus = ({ current }: EmotionStatusProps) => {
-  const latest = current?.latest
-  const intensity = latest?.emotion_intensity ?? 0
-  const emotion = latest?.emotion_primary ?? 'n/a'
-  const valence = latest?.numeric_metrics?.valence
-  const arousal = latest?.numeric_metrics?.arousal
+  const emotionData = current?.latest_emotion ?? current?.latest
+  const intensity = emotionData?.emotion_intensity ?? 0
+  const emotion = emotionData?.emotion_primary ?? 'n/a'
+  const valence =
+    current?.latest_emotion?.valence ??
+    current?.latest?.numeric_metrics?.valence
+  const arousal =
+    current?.latest_emotion?.arousal ??
+    current?.latest?.numeric_metrics?.arousal
+  const age = emotionData?.ts ? relativeAge(emotionData.ts) : null
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-sm">Emotional state</CardTitle>
+        {age && <span className="text-muted-foreground text-xs">{age}</span>}
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
