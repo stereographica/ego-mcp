@@ -2,6 +2,20 @@
 
 ego-mcp のリリース履歴。
 
+## [0.2.6] - 2026-02-28
+
+### Removed
+- `MEMORY.md` への自動書き込み — `WorkspaceMemorySync._append_curated()` メソッド、`CURATION_CATEGORIES` 定数、`SyncResult.curated_updated` フィールドを削除
+- `forget` 実行時の `MEMORY.md` エントリ除去処理
+
+### Changed
+- `remember` のワークスペース同期を `memory/YYYY-MM-DD.md` と `memory/inner-monologue-latest.md` のみに限定
+- `docs/workspace-guide.md` に手動キュレーション推奨ワークフローを追記
+- `docs/tool-reference.md` の `remember` / `forget` 説明にワークスペース同期の挙動を明記
+
+### Design
+- `design/wip/workspace-memory-curation-design.md` — ワークスペース記憶同期の整理設計書
+
 ## [0.2.4] - 2026-02-25
 
 ### Changed

@@ -1348,7 +1348,7 @@ async def _handle_remember(memory: MemoryStore, args: dict[str, Any]) -> str:
             sync_result = sync.sync_memory(mem)
             if sync_result.latest_monologue_updated:
                 sync_note = " Synced latest introspection to workspace."
-            elif sync_result.daily_updated or sync_result.curated_updated:
+            elif sync_result.daily_updated:
                 sync_note = " Synced to workspace memory logs."
         except OSError as exc:
             logger.warning("Workspace sync failed: %s", exc)

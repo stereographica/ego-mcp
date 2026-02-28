@@ -15,9 +15,18 @@ export EGO_MCP_WORKSPACE_DIR="/path/to/openclaw-workspace"
 When enabled, `remember` syncs to:
 - `memory/YYYY-MM-DD.md` (append daily log entries)
 - `memory/inner-monologue-latest.md` (updated when `category=introspection`)
-- `MEMORY.md` (curated append for high-importance/significant categories)
+
+`MEMORY.md` is never auto-written by ego-mcp.
 
 > Private memories (`remember(private=true)`) are never synced to workspace files.
+
+### Recommended `MEMORY.md` Curation Workflow
+
+1. Review `memory/YYYY-MM-DD.md` regularly.
+2. Identify recurring patterns, high-signal insights, and long-term lessons.
+3. Write structured summaries into `MEMORY.md` (not raw copy-paste; summarize and group).
+4. Update or remove stale items in `MEMORY.md` as context changes.
+5. Keep `MEMORY.md` concise as a long-term memory digest.
 
 ---
 

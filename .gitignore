@@ -17,6 +17,12 @@ __pycache__/
 # IDE / Editor
 .mcp.json
 
+# Working design docs
+design/wip/
+
+# task
+tasks/
+
 # Env
 .env
 .env.*
