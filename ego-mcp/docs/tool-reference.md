@@ -247,6 +247,10 @@ If your understanding has deepened, try expressing what changed specifically.
 
 > When a new memory is very similar (similarity >= 0.95) to an existing one, it is not saved. The response shows the existing memory and prompts the agent to reconsider.
 
+> Saved memories are automatically logged to `memory/YYYY-MM-DD.md` when workspace sync is enabled.
+> If `category=introspection`, `memory/inner-monologue-latest.md` is also updated.
+> `MEMORY.md` is not auto-written; curate it manually.
+
 > If `EGO_MCP_WORKSPACE_DIR` is configured, the response may include a workspace sync note for non-private memories.
 > The "triggered a forgotten question" section only appears when a saved memory is semantically similar to a dormant/fading question.
 
@@ -477,6 +481,8 @@ Memory not found: mem_missing123
 ---
 Double-check the ID. Use recall to search for the memory you're looking for.
 ```
+
+> Workspace removal from `forget` only deletes matching entries from `memory/YYYY-MM-DD.md`.
 
 ---
 

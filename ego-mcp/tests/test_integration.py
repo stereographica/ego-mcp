@@ -739,8 +739,10 @@ class TestRemember:
             consolidation,
         )
 
-        assert (sync.workspace_dir / "memory" / "inner-monologue-latest.md").exists()
-        assert (sync.workspace_dir / "MEMORY.md").exists()
+        memory_dir = sync.workspace_dir / "memory"
+        assert (memory_dir / "inner-monologue-latest.md").exists()
+        assert list(memory_dir.glob("????-??-??.md"))
+        assert not (sync.workspace_dir / "MEMORY.md").exists()
 
     @pytest.mark.asyncio
     async def test_private_memory_skips_workspace_sync_and_persists_flag(
