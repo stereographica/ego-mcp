@@ -15,4 +15,25 @@ describe('ActivityFeed', () => {
 
     expect(screen.getByText('WebSocket')).toBeInTheDocument()
   })
+
+  it('truncates long tool names to avoid horizontal overflow', () => {
+    render(
+      <ActivityFeed
+        connected={true}
+        logLines={[
+          {
+            ts: '2025-01-01T00:00:00.000Z',
+            ok: true,
+            tool_name: 'this-is-an-extremely-long-tool-name-for-mobile-layouts',
+            message: 'example',
+          },
+        ]}
+      />,
+    )
+
+    const toolBadge = screen.getByText(
+      'this-is-an-extremely-long-tool-name-for-mobile-layouts',
+    )
+    expect(toolBadge).toHaveClass('max-w-[8rem]', 'truncate')
+  })
 })
