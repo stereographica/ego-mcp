@@ -20,8 +20,13 @@ class _FakeRedis:
 
 
 class _FakeCursor:
-    def __init__(self, rows: list[tuple[Any, ...] | None]) -> None:
+    def __init__(
+        self,
+        rows: list[tuple[Any, ...] | None],
+        all_rows: list[tuple[Any, ...]] | None = None,
+    ) -> None:
         self._rows = rows
+        self._all_rows = all_rows if all_rows is not None else []
         self._index = 0
 
     def execute(self, *_args: object, **_kwargs: object) -> None:
@@ -32,6 +37,9 @@ class _FakeCursor:
         self._index += 1
         return value
 
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return self._all_rows
+
     def __enter__(self) -> _FakeCursor:
         return self
 
@@ -40,8 +48,12 @@ class _FakeCursor:
 
 
 class _FakeConnection:
-    def __init__(self, rows: list[tuple[Any, ...] | None]) -> None:
-        self._cursor = _FakeCursor(rows)
+    def __init__(
+        self,
+        rows: list[tuple[Any, ...] | None],
+        all_rows: list[tuple[Any, ...]] | None = None,
+    ) -> None:
+        self._cursor = _FakeCursor(rows, all_rows)
 
     def cursor(self) -> _FakeCursor:
         return self._cursor
@@ -194,3 +206,55 @@ def test_current_latest_emotion_query_is_bounded_by_latest_ts(
     compact_sql = " ".join(sql.split())
     assert "WHERE ts <= %s" in compact_sql
     assert params == (latest_ts,)
+
+
+def test_logs_search_escapes_ilike_meta_characters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executed: list[tuple[str, tuple[Any, ...] | None]] = []
+
+    class _CapturingCursor(_FakeCursor):
+        def __init__(self) -> None:
+            super().__init__(rows=[], all_rows=[])
+
+        def execute(self, *args: object, **kwargs: object) -> None:
+            query = args[0] if args else kwargs.get("query")
+            params = args[1] if len(args) > 1 else kwargs.get("params")
+            sql = str(query)
+            tuple_params: tuple[Any, ...] | None = None
+            if isinstance(params, tuple):
+                tuple_params = params
+            elif isinstance(params, list):
+                tuple_params = tuple(params)
+            executed.append((sql, tuple_params))
+
+    class _CapturingConnection(_FakeConnection):
+        def __init__(self) -> None:
+            self._cursor = _CapturingCursor()
+
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(None),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _CapturingConnection(),
+    )
+
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 12, 1, tzinfo=UTC)
+
+    store.logs(start, end, search=r"100%_done\path")
+
+    assert len(executed) == 1
+    sql, params = executed[0]
+    compact_sql = " ".join(sql.split())
+    assert "message ILIKE %s ESCAPE '\\'" in compact_sql
+    assert "fields::text ILIKE %s ESCAPE '\\'" in compact_sql
+    assert params == (
+        start,
+        end,
+        r"%100\%\_done\\path%",
+        r"%100\%\_done\\path%",
+    )

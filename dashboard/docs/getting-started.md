@@ -36,7 +36,7 @@ docker compose up --build
 
 - `Now` タブが初期表示される
 - `History` タブに tool usage / string 可視化が表示される
-- `Logs` タブで level / logger フィルタが動作する
+- `Logs` タブで level / search フィルタが動作する
 
 ## 運用者向け
 
@@ -66,7 +66,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  C["Logs"] --> C1["level/logger filters"]
+  C["Logs"] --> C1["level/search filters"]
   C --> C2["live tail list"]
   C --> C3["private masking (REDACTED)"]
 ```

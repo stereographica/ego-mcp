@@ -2,6 +2,19 @@
 
 ego-mcp のリリース履歴。
 
+## [0.2.8] - 2026-03-01
+
+### Fixed
+- Dashboard ingestor が全ツールの完了ログから感情データを取り込むように修正
+- Dashboard Activity feed の WebSocket レースコンディションを修正（StrictMode 二重マウント対応）
+
+### Added
+- 感情ラベルから intensity / valence / arousal への自動マッピング（`EMOTION_DEFAULTS`）
+
+### Changed
+- Dashboard Live tail のロガーフィルターをコンテンツ検索に置き換え
+- Dashboard Emotional state に Valence / Arousal のラッセル円環モデル表示を追加
+
 ## [0.2.7] - 2026-02-28
 
 ### Fixed

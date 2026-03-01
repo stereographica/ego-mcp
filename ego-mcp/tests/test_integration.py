@@ -770,6 +770,159 @@ class TestRemember:
         assert saved.emotional_trace.body_state is not None
 
     @pytest.mark.asyncio
+    async def test_remember_uses_excited_defaults_when_numeric_args_are_omitted(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "remember",
+            {"content": "Excited memory for default mapping", "emotion": "excited"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        saved = await memory.get_by_id(memory_id)
+        assert saved is not None
+        assert saved.emotional_trace.intensity == pytest.approx(0.8)
+        assert saved.emotional_trace.valence == pytest.approx(0.7)
+        assert saved.emotional_trace.arousal == pytest.approx(0.8)
+
+    @pytest.mark.asyncio
+    async def test_remember_uses_neutral_defaults_when_numeric_args_are_omitted(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "remember",
+            {"content": "Neutral memory for default mapping", "emotion": "neutral"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        saved = await memory.get_by_id(memory_id)
+        assert saved is not None
+        assert saved.emotional_trace.intensity == pytest.approx(0.3)
+        assert saved.emotional_trace.valence == pytest.approx(0.0)
+        assert saved.emotional_trace.arousal == pytest.approx(0.3)
+
+    @pytest.mark.asyncio
+    async def test_remember_explicit_intensity_overrides_label_defaults(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "remember",
+            {
+                "content": "Excited memory with explicit intensity",
+                "emotion": "excited",
+                "intensity": 0.9,
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        saved = await memory.get_by_id(memory_id)
+        assert saved is not None
+        assert saved.emotional_trace.intensity == pytest.approx(0.9)
+        assert saved.emotional_trace.valence == pytest.approx(0.7)
+        assert saved.emotional_trace.arousal == pytest.approx(0.8)
+
+    @pytest.mark.asyncio
+    async def test_remember_explicit_valence_and_arousal_override_label_defaults(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "remember",
+            {
+                "content": "Excited memory with explicit valence and arousal",
+                "emotion": "excited",
+                "valence": -0.2,
+                "arousal": 0.1,
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        saved = await memory.get_by_id(memory_id)
+        assert saved is not None
+        assert saved.emotional_trace.intensity == pytest.approx(0.8)
+        assert saved.emotional_trace.valence == pytest.approx(-0.2)
+        assert saved.emotional_trace.arousal == pytest.approx(0.1)
+
+    @pytest.mark.asyncio
+    async def test_remember_falls_back_for_unknown_emotion_label(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "remember",
+            {"content": "Unknown emotion mapping fallback", "emotion": "bittersweet"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        saved = await memory.get_by_id(memory_id)
+        assert saved is not None
+        assert saved.emotional_trace.intensity == pytest.approx(0.5)
+        assert saved.emotional_trace.valence == pytest.approx(0.0)
+        assert saved.emotional_trace.arousal == pytest.approx(0.5)
+
+    def test_emotion_defaults_include_common_negative_labels(self) -> None:
+        from ego_mcp._server_surface_memory import EMOTION_DEFAULTS
+
+        expected = {
+            "sad",
+            "anxious",
+            "angry",
+            "frustrated",
+            "lonely",
+            "afraid",
+            "ashamed",
+            "bored",
+            "nostalgic",
+            "surprised",
+        }
+        missing = expected - set(EMOTION_DEFAULTS)
+        assert not missing
+        assert EMOTION_DEFAULTS["grateful"] != EMOTION_DEFAULTS["fulfilled"]
+
+    @pytest.mark.asyncio
     async def test_syncs_workspace_files_for_introspection(
         self,
         config: EgoConfig,

@@ -115,12 +115,12 @@ export async function fetchLogs(): Promise<LogLine[]>
 export async function fetchLogs(
   range: DateRange,
   level: string,
-  logger: string,
+  search: string,
 ): Promise<LogPoint[]>
 export async function fetchLogs(
   range?: DateRange,
   level = 'ALL',
-  logger = '',
+  search = '',
 ): Promise<LogLine[] | LogPoint[]> {
   if (range == null) {
     const now = new Date()
@@ -133,9 +133,9 @@ export async function fetchLogs(
   }
 
   const levelQuery = level === 'ALL' ? '' : `&level=${level}`
-  const loggerQuery = logger ? `&logger=${encodeURIComponent(logger)}` : ''
+  const searchQuery = search ? `&search=${encodeURIComponent(search)}` : ''
   const data = await get<{ items: LogPoint[] }>(
-    `/api/v1/logs?${encodeRange(range)}${levelQuery}${loggerQuery}`,
+    `/api/v1/logs?${encodeRange(range)}${levelQuery}${searchQuery}`,
     {
       items: [],
     },

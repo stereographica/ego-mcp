@@ -17,13 +17,14 @@ __pycache__/
 # IDE / Editor
 .mcp.json
 
-# Working design docs
-design/wip/
-
-# task
-tasks/
+# Working design docs & tasks
+/design/wip/
+/tasks/
 
 # Env
 .env
 .env.*
 !.env.example
+
+# Logs (project root only)
+/logs/
