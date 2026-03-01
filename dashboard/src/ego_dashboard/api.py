@@ -32,7 +32,12 @@ class StoreProtocol(Protocol):
     ) -> list[dict[str, object]]: ...
 
     def logs(
-        self, start: datetime, end: datetime, level: str | None = None, logger: str | None = None
+        self,
+        start: datetime,
+        end: datetime,
+        level: str | None = None,
+        *,
+        search: str | None = None,
     ) -> list[dict[str, object]]: ...
 
     def anomaly_alerts(
@@ -148,9 +153,9 @@ def create_app(
         from_ts: datetime = Query(alias="from"),
         to_ts: datetime = Query(alias="to"),
         level: str | None = None,
-        logger: str | None = None,
+        search: str | None = None,
     ) -> dict[str, object]:
-        return {"items": telemetry.logs(from_ts, to_ts, level, logger)}
+        return {"items": telemetry.logs(from_ts, to_ts, level, search=search)}
 
     @app.get("/api/v1/alerts/anomalies")
     def get_anomalies(
@@ -176,7 +181,7 @@ def create_app(
                 )
                 end = datetime.now(tz=UTC)
                 start = end - timedelta(minutes=5)
-                logs = telemetry.logs(start, end, None, None)
+                logs = telemetry.logs(start, end)
                 for log in logs:
                     log_key = json.dumps(
                         {

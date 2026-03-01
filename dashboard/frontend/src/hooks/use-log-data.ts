@@ -16,7 +16,7 @@ export const useLogData = (
   preset: TimeRangePreset,
   range: DateRange,
   logLevel: string,
-  loggerFilter: string,
+  searchFilter: string,
 ) => {
   const [logs, setLogs] = useState<LogPoint[]>([])
   const rangeRef = useRef(range)
@@ -38,7 +38,7 @@ export const useLogData = (
         from.setMinutes(from.getMinutes() - PRESET_MINUTES[preset])
         currentRange = { from: from.toISOString(), to: to.toISOString() }
       }
-      const data = await fetchLogs(currentRange, logLevel, loggerFilter)
+      const data = await fetchLogs(currentRange, logLevel, searchFilter)
       if (!disposed) {
         setLogs(data)
       }
@@ -49,7 +49,7 @@ export const useLogData = (
       disposed = true
       clearInterval(timer)
     }
-  }, [enabled, preset, logLevel, loggerFilter])
+  }, [enabled, preset, logLevel, searchFilter])
 
   return logs
 }

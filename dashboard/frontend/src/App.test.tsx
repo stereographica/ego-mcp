@@ -58,10 +58,10 @@ describe('App', () => {
     expect(await screen.findByText('Desire parameters')).toBeInTheDocument()
   })
 
-  it('shows logs tab with live tail heading and default logger filter', async () => {
+  it('shows logs tab with live tail heading and default search filter', async () => {
     render(<App />)
     await userEvent.click(screen.getByRole('tab', { name: 'Logs' }))
     expect(await screen.findByText('Live tail')).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('logger')).toHaveValue('ego_mcp.server')
+    expect(screen.getByPlaceholderText('search logs...')).toHaveValue('')
   })
 })

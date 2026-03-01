@@ -11,6 +11,10 @@ from ego_dashboard.constants import DESIRE_METRIC_KEYS
 from ego_dashboard.models import DashboardEvent, LogEvent
 
 
+def _escape_ilike_pattern(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class SqlTelemetryStore:
     def __init__(self, database_url: str, redis_url: str) -> None:
         self._db_url = database_url
@@ -221,54 +225,39 @@ class SqlTelemetryStore:
         return [{"ts": ts, "counts": counts} for ts, counts in grouped.items()]
 
     def logs(
-        self, start: datetime, end: datetime, level: str | None = None, logger: str | None = None
+        self,
+        start: datetime,
+        end: datetime,
+        level: str | None = None,
+        *,
+        search: str | None = None,
     ) -> list[dict[str, object]]:
         with psycopg.connect(self._db_url) as conn:
             with conn.cursor() as cur:
-                if level and logger:
-                    cur.execute(
-                        """
-                        SELECT ts, level, logger, message, private, fields
-                        FROM log_events
-                        WHERE ts >= %s AND ts <= %s AND level = %s AND logger ILIKE %s
-                        ORDER BY ts ASC
-                        LIMIT 300
-                        """,
-                        (start, end, level.upper(), f"%{logger}%"),
+                where_clauses = ["ts >= %s", "ts <= %s"]
+                params: list[object] = [start, end]
+
+                if level:
+                    where_clauses.append("level = %s")
+                    params.append(level.upper())
+                if search:
+                    where_clauses.append(
+                        "(message ILIKE %s ESCAPE '\\' OR fields::text ILIKE %s ESCAPE '\\')"
                     )
-                elif level:
-                    cur.execute(
-                        """
-                        SELECT ts, level, logger, message, private, fields
-                        FROM log_events
-                        WHERE ts >= %s AND ts <= %s AND level = %s
-                        ORDER BY ts ASC
-                        LIMIT 300
-                        """,
-                        (start, end, level.upper()),
-                    )
-                elif logger:
-                    cur.execute(
-                        """
-                        SELECT ts, level, logger, message, private, fields
-                        FROM log_events
-                        WHERE ts >= %s AND ts <= %s AND logger ILIKE %s
-                        ORDER BY ts ASC
-                        LIMIT 300
-                        """,
-                        (start, end, f"%{logger}%"),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        SELECT ts, level, logger, message, private, fields
-                        FROM log_events
-                        WHERE ts >= %s AND ts <= %s
-                        ORDER BY ts ASC
-                        LIMIT 300
-                        """,
-                        (start, end),
-                    )
+                    escaped = _escape_ilike_pattern(search)
+                    needle = f"%{escaped}%"
+                    params.extend([needle, needle])
+
+                cur.execute(
+                    f"""
+                    SELECT ts, level, logger, message, private, fields
+                    FROM log_events
+                    WHERE {" AND ".join(where_clauses)}
+                    ORDER BY ts ASC
+                    LIMIT 300
+                    """,
+                    tuple(params),
+                )
                 rows = cur.fetchall()
         return [
             {

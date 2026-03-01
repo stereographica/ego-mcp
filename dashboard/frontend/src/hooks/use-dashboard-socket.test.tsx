@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { StrictMode } from 'react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 
 import { fetchCurrent, fetchLogs } from '@/api'
 import { useDashboardSocket } from '@/hooks/use-dashboard-socket'
@@ -23,6 +24,38 @@ vi.mock('@/api', () => ({
   ]),
 }))
 
+class MockWebSocket {
+  static instances: MockWebSocket[] = []
+
+  onopen: (() => void) | null = null
+  onmessage: ((evt: MessageEvent) => void) | null = null
+  onclose: (() => void) | null = null
+  onerror: (() => void) | null = null
+
+  constructor(url: string) {
+    void url
+    MockWebSocket.instances.push(this)
+  }
+
+  static reset(): void {
+    MockWebSocket.instances = []
+  }
+
+  emitOpen(): void {
+    this.onopen?.()
+  }
+
+  emitMessage(payload: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent)
+  }
+
+  close(): void {
+    setTimeout(() => {
+      this.onclose?.()
+    }, 0)
+  }
+}
+
 const Probe = () => {
   const { connected, logLines } = useDashboardSocket()
   return (
@@ -36,6 +69,17 @@ const Probe = () => {
 
 describe('useDashboardSocket', () => {
   beforeEach(() => {
+    MockWebSocket.reset()
+    vi.clearAllMocks()
+    vi.useRealTimers()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('updates log lines while falling back to HTTP polling', async () => {
     vi.stubGlobal(
       'WebSocket',
       class {
@@ -44,13 +88,7 @@ describe('useDashboardSocket', () => {
         }
       },
     )
-  })
 
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('updates log lines while falling back to HTTP polling', async () => {
     render(<Probe />)
 
     await waitFor(() => {
@@ -62,7 +100,73 @@ describe('useDashboardSocket', () => {
     expect(screen.getByTestId('connected')).toHaveTextContent('false')
   })
 
-  it('keeps log lines when only level differs', async () => {
+  it('keeps websocket connection during StrictMode remount and ignores stale close', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
+
+    render(
+      <StrictMode>
+        <Probe />
+      </StrictMode>,
+    )
+
+    expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(2)
+
+    const latest = MockWebSocket.instances[MockWebSocket.instances.length - 1]
+    expect(latest).toBeDefined()
+
+    act(() => {
+      latest.emitOpen()
+    })
+    expect(screen.getByTestId('connected')).toHaveTextContent('true')
+
+    await act(async () => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(screen.getByTestId('connected')).toHaveTextContent('true')
+    expect(fetchLogs).not.toHaveBeenCalled()
+  })
+
+  it('falls back to polling and reconnects after websocket close', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
+
+    render(<Probe />)
+
+    expect(MockWebSocket.instances.length).toBe(1)
+    const socket = MockWebSocket.instances[0]
+
+    act(() => {
+      socket.emitOpen()
+    })
+    expect(screen.getByTestId('connected')).toHaveTextContent('true')
+
+    await act(async () => {
+      socket.close()
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(fetchLogs).toHaveBeenCalled()
+    expect(screen.getByTestId('connected')).toHaveTextContent('false')
+
+    const beforeReconnect = MockWebSocket.instances.length
+    await act(async () => {
+      vi.advanceTimersByTime(3_000)
+    })
+
+    expect(MockWebSocket.instances.length).toBeGreaterThan(beforeReconnect)
+  })
+
+  it('keeps distinct log lines when level differs', async () => {
+    vi.stubGlobal(
+      'WebSocket',
+      class {
+        constructor() {
+          throw new Error('ws unavailable')
+        }
+      },
+    )
     vi.mocked(fetchLogs).mockResolvedValueOnce([
       {
         ts: '2026-01-01T12:00:00Z',

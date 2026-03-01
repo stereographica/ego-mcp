@@ -42,6 +42,11 @@ export const useDashboardSocket = (): DashboardSocketState => {
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const disposedRef = useRef(false)
+  const epochRef = useRef(0)
+  const bumpEpoch = useCallback(() => {
+    epochRef.current += 1
+    return epochRef.current
+  }, [])
 
   const startPolling = useCallback(() => {
     if (pollTimerRef.current) return
@@ -69,11 +74,12 @@ export const useDashboardSocket = (): DashboardSocketState => {
     if (disposedRef.current || wsRef.current) return
 
     try {
+      const epoch = bumpEpoch()
       const socket = new WebSocket(WS_URL)
       wsRef.current = socket
 
       socket.onopen = () => {
-        if (disposedRef.current) {
+        if (disposedRef.current || epochRef.current !== epoch) {
           socket.close()
           return
         }
@@ -82,7 +88,7 @@ export const useDashboardSocket = (): DashboardSocketState => {
       }
 
       socket.onmessage = (evt) => {
-        if (disposedRef.current) return
+        if (disposedRef.current || epochRef.current !== epoch) return
         const msg = JSON.parse(evt.data) as {
           type: string
           data?: Record<string, unknown>
@@ -124,6 +130,7 @@ export const useDashboardSocket = (): DashboardSocketState => {
       }
 
       socket.onclose = () => {
+        if (epochRef.current !== epoch) return
         wsRef.current = null
         setConnected(false)
         if (!disposedRef.current) {
@@ -142,7 +149,7 @@ export const useDashboardSocket = (): DashboardSocketState => {
         reconnectTimerRef.current = setTimeout(connect, RECONNECT_INTERVAL)
       }
     }
-  }, [startPolling, stopPolling])
+  }, [bumpEpoch, startPolling, stopPolling])
 
   useEffect(() => {
     disposedRef.current = false
@@ -157,12 +164,13 @@ export const useDashboardSocket = (): DashboardSocketState => {
 
     return () => {
       disposedRef.current = true
+      bumpEpoch()
       stopPolling()
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       wsRef.current?.close()
       wsRef.current = null
     }
-  }, [connect, stopPolling])
+  }, [bumpEpoch, connect, stopPolling])
 
   return { current, logLines, connected }
 }

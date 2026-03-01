@@ -38,17 +38,24 @@ def test_history_endpoints() -> None:
     assert client.get(f"/api/v1/metrics/intensity?{query}&bucket=1m").status_code == 200
     assert client.get(f"/api/v1/metrics/time_phase/string-timeline?{query}").status_code == 200
     assert client.get(f"/api/v1/metrics/time_phase/heatmap?{query}&bucket=1m").status_code == 200
-    assert client.get(f"/api/v1/logs?{query}&level=INFO&logger=app").status_code == 200
+    assert client.get(f"/api/v1/logs?{query}&level=INFO&search=hello").status_code == 200
     assert client.get(f"/api/v1/alerts/anomalies?{query}&bucket=1m").status_code == 200
 
 
-def test_logs_endpoint_logger_filter_returns_partial_matches() -> None:
+def test_logs_endpoint_search_filter_returns_partial_matches() -> None:
     from ego_dashboard.models import LogEvent
 
     store = TelemetryStore()
     base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     store.ingest_log(
-        LogEvent(ts=base, level="INFO", logger="ego_mcp.server", message="hello", private=False)
+        LogEvent(
+            ts=base,
+            level="INFO",
+            logger="ego_mcp.server",
+            message="hello",
+            private=False,
+            fields={"tool_name": "remember"},
+        )
     )
     store.ingest_log(
         LogEvent(ts=base, level="INFO", logger="other.module", message="world", private=False)
@@ -59,14 +66,13 @@ def test_logs_endpoint_logger_filter_returns_partial_matches() -> None:
 
     query = "from=2026-01-01T12:00:00Z&to=2026-01-01T12:02:00Z"
 
-    # Partial logger name matches only ego_mcp.server
-    response = client.get(f"/api/v1/logs?{query}&logger=ego_mcp")
+    response = client.get(f"/api/v1/logs?{query}&search=remember")
     assert response.status_code == 200
     items = response.json()["items"]
     assert len(items) == 1
     assert items[0]["logger"] == "ego_mcp.server"
 
-    # No logger filter returns all logs
+    # No search filter returns all logs
     response = client.get(f"/api/v1/logs?{query}")
     assert response.status_code == 200
     assert len(response.json()["items"]) == 2
