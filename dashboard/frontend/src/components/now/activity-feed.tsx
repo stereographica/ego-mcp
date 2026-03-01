@@ -41,13 +41,16 @@ export const ActivityFeed = ({ logLines, connected }: ActivityFeedProps) => {
             {logLines.map((item, i) => (
               <div
                 key={`${item.ts}-${i}`}
-                className="flex items-start gap-2 text-xs"
+                className="flex min-w-0 items-start gap-2 text-xs"
               >
                 <span className="text-muted-foreground shrink-0 font-mono">
                   {formatTs(item.ts)}
                 </span>
                 {item.tool_name && (
-                  <Badge variant="outline" className="text-[10px]">
+                  <Badge
+                    variant="outline"
+                    className="max-w-[8rem] truncate text-[10px]"
+                  >
                     {item.tool_name}
                   </Badge>
                 )}
@@ -58,7 +61,10 @@ export const ActivityFeed = ({ logLines, connected }: ActivityFeedProps) => {
                   {item.ok ? 'ok' : 'error'}
                 </Badge>
                 {item.level && !item.tool_name && (
-                  <Badge variant="outline" className="text-[10px]">
+                  <Badge
+                    variant="outline"
+                    className="max-w-[8rem] truncate text-[10px]"
+                  >
                     {item.level}
                   </Badge>
                 )}
