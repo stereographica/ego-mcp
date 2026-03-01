@@ -258,6 +258,70 @@ def test_projector_reads_top_level_time_phase_from_ego_mcp_logs() -> None:
     assert event.string_metrics["time_phase"] == "afternoon"
 
 
+def test_projector_reads_structured_relationship_metrics() -> None:
+    projector = EgoMcpLogProjector()
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "consider_them",
+        "emotion_primary": "curious",
+        "emotion_intensity": 0.65,
+        "trust_level": 0.82,
+        "total_interactions": 15,
+        "shared_episodes_count": 3,
+    }
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.numeric_metrics["trust_level"] == 0.82
+    assert event.numeric_metrics["total_interactions"] == 15
+    assert event.numeric_metrics["shared_episodes_count"] == 3
+
+
+def test_projector_parses_relationship_metrics_from_tool_output_fallback() -> None:
+    projector = EgoMcpLogProjector()
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "consider_them",
+        "tool_output": "Master: trust=0.75, interactions=9, shared_episodes=2",
+    }
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.numeric_metrics["trust_level"] == 0.75
+    assert event.numeric_metrics["total_interactions"] == 9
+    assert event.numeric_metrics["shared_episodes_count"] == 2
+
+
+def test_projector_prefers_structured_relationship_metrics_over_tool_output() -> None:
+    projector = EgoMcpLogProjector()
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "wake_up",
+        "trust_level": 0.82,
+        "total_interactions": 15,
+        "shared_episodes_count": 3,
+        "tool_output": "Master: trust=0.10, interactions=1, shared_episodes=0",
+    }
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.numeric_metrics["trust_level"] == 0.82
+    assert event.numeric_metrics["total_interactions"] == 15
+    assert event.numeric_metrics["shared_episodes_count"] == 3
+
+
 def test_ingest_jsonl_line_only_stores_ego_mcp_server_logs() -> None:
     from ego_dashboard.ingestor import ingest_jsonl_line
 

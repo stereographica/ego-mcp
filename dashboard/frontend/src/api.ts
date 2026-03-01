@@ -100,12 +100,35 @@ export const fetchTimeline = async (
   return data.items
 }
 
+export const fetchStringTimeline = async (
+  key: string,
+  range: DateRange,
+): Promise<StringPoint[]> => {
+  const data = await get<{ items: StringPoint[] }>(
+    `/api/v1/metrics/${encodeURIComponent(key)}/string-timeline?${encodeRange(range)}`,
+    { items: [] },
+  )
+  return data.items
+}
+
 export const fetchHeatmap = async (
   range: DateRange,
   bucket: string,
 ): Promise<HeatmapPoint[]> => {
   const data = await get<{ items: HeatmapPoint[] }>(
     `/api/v1/metrics/time_phase/heatmap?${encodeRange(range)}&bucket=${bucket}`,
+    { items: [] },
+  )
+  return data.items
+}
+
+export const fetchStringHeatmap = async (
+  key: string,
+  range: DateRange,
+  bucket: string,
+): Promise<HeatmapPoint[]> => {
+  const data = await get<{ items: HeatmapPoint[] }>(
+    `/api/v1/metrics/${encodeURIComponent(key)}/heatmap?${encodeRange(range)}&bucket=${bucket}`,
     { items: [] },
   )
   return data.items

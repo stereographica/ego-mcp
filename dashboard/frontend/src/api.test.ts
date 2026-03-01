@@ -1,4 +1,4 @@
-import { fetchLogs } from '@/api'
+import { fetchLogs, fetchStringHeatmap, fetchStringTimeline } from '@/api'
 
 describe('api.fetchLogs', () => {
   beforeEach(() => {
@@ -53,5 +53,46 @@ describe('api.fetchLogs', () => {
     expect(url).toContain('level=INFO')
     expect(url).toContain('search=remember')
     expect(url).not.toContain('logger=')
+  })
+})
+
+describe('api string metric fetchers', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('fetches string timeline for an arbitrary key', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [] }),
+    } as Response)
+
+    await fetchStringTimeline('emotion_primary', {
+      from: '2026-01-01T12:00:00Z',
+      to: '2026-01-01T12:10:00Z',
+    })
+    const url = String(vi.mocked(globalThis.fetch).mock.calls[0]?.[0] ?? '')
+
+    expect(url).toContain('/api/v1/metrics/emotion_primary/string-timeline?')
+  })
+
+  it('fetches string heatmap for an arbitrary key', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [] }),
+    } as Response)
+
+    await fetchStringHeatmap(
+      'emotion_primary',
+      {
+        from: '2026-01-01T12:00:00Z',
+        to: '2026-01-01T12:10:00Z',
+      },
+      '5m',
+    )
+    const url = String(vi.mocked(globalThis.fetch).mock.calls[0]?.[0] ?? '')
+
+    expect(url).toContain('/api/v1/metrics/emotion_primary/heatmap?')
+    expect(url).toContain('bucket=5m')
   })
 })

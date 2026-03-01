@@ -1,6 +1,5 @@
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { CircumplexChart } from '@/components/now/circumplex-chart'
 import type { CurrentResponse } from '@/types'
 
 type EmotionStatusProps = {
@@ -24,12 +23,6 @@ export const EmotionStatus = ({ current }: EmotionStatusProps) => {
   const emotionData = current?.latest_emotion ?? current?.latest
   const intensity = emotionData?.emotion_intensity ?? 0
   const emotion = emotionData?.emotion_primary ?? 'n/a'
-  const valence =
-    current?.latest_emotion?.valence ??
-    current?.latest?.numeric_metrics?.valence
-  const arousal =
-    current?.latest_emotion?.arousal ??
-    current?.latest?.numeric_metrics?.arousal
   const age = emotionData?.ts ? relativeAge(emotionData.ts) : null
 
   return (
@@ -38,32 +31,23 @@ export const EmotionStatus = ({ current }: EmotionStatusProps) => {
         <CardTitle className="text-sm">Emotional state</CardTitle>
         {age && <span className="text-muted-foreground text-xs">{age}</span>}
       </CardHeader>
-      <CardContent>
-        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
-          <div className="space-y-4">
-            <div>
-              <p className="text-muted-foreground mb-1 text-xs">emotion</p>
-              <Badge variant="secondary" className="text-sm">
-                {emotion}
-              </Badge>
+      <CardContent className="space-y-4">
+        <div>
+          <p className="text-muted-foreground mb-1 text-xs">emotion</p>
+          <Badge variant="secondary" className="text-sm">
+            {emotion}
+          </Badge>
+        </div>
+        <div>
+          <p className="text-muted-foreground mb-1 text-xs">intensity</p>
+          <div className="flex items-center gap-2">
+            <div className="bg-secondary h-2 flex-1 overflow-hidden rounded-full">
+              <div
+                className="bg-primary h-full rounded-full transition-all"
+                style={{ width: `${intensity * 100}%` }}
+              />
             </div>
-            <div>
-              <p className="text-muted-foreground mb-1 text-xs">intensity</p>
-              <div className="flex items-center gap-2">
-                <div className="bg-secondary h-2 flex-1 overflow-hidden rounded-full">
-                  <div
-                    className="bg-primary h-full rounded-full transition-all"
-                    style={{ width: `${intensity * 100}%` }}
-                  />
-                </div>
-                <span className="text-xs tabular-nums">
-                  {intensity.toFixed(2)}
-                </span>
-              </div>
-            </div>
-          </div>
-          <div className="flex justify-center md:justify-end">
-            <CircumplexChart valence={valence} arousal={arousal} />
+            <span className="text-xs tabular-nums">{intensity.toFixed(2)}</span>
           </div>
         </div>
       </CardContent>

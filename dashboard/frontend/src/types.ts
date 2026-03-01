@@ -13,6 +13,11 @@ export type CurrentResponse = {
     valence?: number
     arousal?: number
   } | null
+  latest_relationship?: {
+    trust_level?: number
+    total_interactions?: number
+    shared_episodes_count?: number
+  } | null
   latest: {
     ts?: string
     emotion_intensity?: number
@@ -39,6 +44,7 @@ export type DateRange = {
 }
 
 export type SeriesPoint = { ts: string; value: number }
+export type IntensityPoint = SeriesPoint & { emotion_primary?: string }
 export type UsagePoint = { ts: string; [key: string]: number | string }
 export type StringPoint = { ts: string; value: string }
 export type HeatmapPoint = { ts: string; counts: Record<string, number> }

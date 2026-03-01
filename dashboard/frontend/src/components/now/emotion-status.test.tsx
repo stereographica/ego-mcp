@@ -36,9 +36,7 @@ describe('EmotionStatus', () => {
 
     expect(screen.getByText('curious')).toBeInTheDocument()
     expect(screen.getByText('0.70')).toBeInTheDocument()
-    expect(screen.getByTestId('circumplex-chart')).toBeInTheDocument()
-    expect(screen.getByText(/v: 0.40/i)).toBeInTheDocument()
-    expect(screen.getByText(/a: 0.80/i)).toBeInTheDocument()
+    expect(screen.queryByTestId('circumplex-chart')).not.toBeInTheDocument()
     expect(screen.getByText(/5m ago/)).toBeInTheDocument()
   })
 
@@ -59,7 +57,6 @@ describe('EmotionStatus', () => {
 
     expect(screen.getByText('calm', { selector: 'span' })).toBeInTheDocument()
     expect(screen.getByText('0.60')).toBeInTheDocument()
-    expect(screen.getByText(/v: 0.20/i)).toBeInTheDocument()
-    expect(screen.getByText(/a: 0.30/i)).toBeInTheDocument()
+    expect(screen.queryByTestId('circumplex-chart')).not.toBeInTheDocument()
   })
 })
