@@ -11,8 +11,11 @@ import pytest
 from mcp.types import TextContent
 
 import ego_mcp.server as server_mod
+from ego_mcp.config import EgoConfig
 from ego_mcp.consolidation import ConsolidationStats, MergeCandidate
 from ego_mcp.desire import DesireEngine
+from ego_mcp.embedding import EgoEmbeddingFunction, EmbeddingProvider
+from ego_mcp.memory import MemoryStore
 from ego_mcp.types import Category, Emotion, EmotionalTrace, Memory
 
 
@@ -273,6 +276,52 @@ class TestImplicitSatisfactionFromServer:
         assert "trust_level" not in extra
         assert "total_interactions" not in extra
         assert "shared_episodes_count" not in extra
+
+    @pytest.mark.asyncio
+    async def test_completion_log_context_returns_latest_emotion(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeEmbeddingProvider:
+            async def embed(self, texts: list[str]) -> list[list[float]]:
+                vectors: list[list[float]] = []
+                for text in texts:
+                    seed = hash(text) % 1000
+                    vec = [((seed + i) % 100) / 100.0 for i in range(64)]
+                    norm = sum(x * x for x in vec) ** 0.5
+                    vectors.append([x / norm for x in vec])
+                return vectors
+
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setenv("EGO_MCP_DATA_DIR", str(tmp_path / "ego-data"))
+        config = EgoConfig.from_env()
+        embedding = EgoEmbeddingFunction(cast(EmbeddingProvider, FakeEmbeddingProvider()))
+        memory = MemoryStore(config, embedding)
+        memory.connect()
+        try:
+            for index in range(5):
+                await memory.save(content=f"older memory {index}", emotion="neutral")
+            await memory.save(
+                content="latest memory with explicit trace",
+                emotion="contentment",
+                intensity=0.7,
+                valence=0.5,
+                arousal=0.2,
+            )
+
+            extra = await server_mod._completion_log_context(
+                "remember",
+                memory,
+                config,
+            )
+        finally:
+            memory.close()
+
+        assert extra["emotion_primary"] == "contentment"
+        assert extra["emotion_intensity"] == 0.7
+        assert extra["valence"] == 0.5
+        assert extra["arousal"] == 0.2
 
 
 class TestWakeUpServerHandler:

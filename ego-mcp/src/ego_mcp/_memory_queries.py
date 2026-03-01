@@ -171,11 +171,12 @@ async def list_recent(
 ) -> list[Memory]:
     """List recent memories sorted by timestamp descending."""
     collection = store._ensure_connected()
-    if collection.count() == 0:
+    total = int(collection.count())
+    if total == 0:
         return []
 
     get_kwargs: dict[str, Any] = {
-        "limit": min(n * 3, collection.count()),
+        "limit": total,
         "include": ["documents", "metadatas"],
     }
     if category_filter:
