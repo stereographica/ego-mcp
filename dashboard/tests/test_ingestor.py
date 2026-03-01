@@ -113,7 +113,7 @@ def test_resolve_source_files_returns_all_matches(tmp_path: Path) -> None:
     assert resolved == [str(first), str(second)]
 
 
-def test_projector_creates_event_from_invocation_and_ignores_non_feel_desires_completion() -> None:
+def test_projector_creates_event_from_invocation() -> None:
     projector = EgoMcpLogProjector()
 
     invocation = {
@@ -129,13 +129,6 @@ def test_projector_creates_event_from_invocation_and_ignores_non_feel_desires_co
             "body_state": {"time_phase": "night"},
         },
     }
-    completion = {
-        "timestamp": "2026-01-01T12:00:02Z",
-        "level": "INFO",
-        "logger": "ego_mcp.server",
-        "message": "Tool execution completed",
-        "tool_name": "remember",
-    }
 
     event = projector.project(invocation)
 
@@ -145,7 +138,58 @@ def test_projector_creates_event_from_invocation_and_ignores_non_feel_desires_co
     assert event.emotion_primary == "curious"
     assert event.emotion_intensity == 0.7
     assert event.string_metrics["time_phase"] == "night"
-    assert projector.project(completion) is None
+
+
+def test_projector_creates_event_from_non_feel_desires_completion() -> None:
+    projector = EgoMcpLogProjector()
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "remember",
+        "emotion_primary": "curious",
+        "emotion_intensity": 0.65,
+        "valence": 0.2,
+        "arousal": 0.7,
+    }
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.event_type == "tool_call_completed"
+    assert event.tool_name == "remember"
+    assert event.ok is True
+    assert event.emotion_primary == "curious"
+    assert event.emotion_intensity == 0.65
+    assert event.numeric_metrics["valence"] == 0.2
+    assert event.numeric_metrics["arousal"] == 0.7
+
+
+def test_projector_creates_event_from_non_feel_desires_failure() -> None:
+    projector = EgoMcpLogProjector()
+    failure = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "ERROR",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution failed",
+        "tool_name": "remember",
+        "emotion_primary": "concerned",
+        "emotion_intensity": 0.4,
+        "valence": -0.2,
+        "arousal": 0.6,
+    }
+
+    event = projector.project(failure)
+
+    assert event is not None
+    assert event.event_type == "tool_call_failed"
+    assert event.tool_name == "remember"
+    assert event.ok is False
+    assert event.emotion_primary == "concerned"
+    assert event.emotion_intensity == 0.4
+    assert event.numeric_metrics["valence"] == -0.2
+    assert event.numeric_metrics["arousal"] == 0.6
 
 
 def test_projector_parses_feel_desires_completion_metrics() -> None:
@@ -212,3 +256,31 @@ def test_projector_reads_top_level_time_phase_from_ego_mcp_logs() -> None:
     assert event is not None
     assert event.tool_name == "wake_up"
     assert event.string_metrics["time_phase"] == "afternoon"
+
+
+def test_ingest_jsonl_line_only_stores_ego_mcp_server_logs() -> None:
+    from ego_dashboard.ingestor import ingest_jsonl_line
+
+    class _CaptureStore:
+        def __init__(self) -> None:
+            self.events: list[object] = []
+            self.logs: list[object] = []
+
+        def ingest(self, event: object) -> None:
+            self.events.append(event)
+
+        def ingest_log(self, event: object) -> None:
+            self.logs.append(event)
+
+    store = _CaptureStore()
+    ingest_jsonl_line(
+        '{"timestamp":"2026-01-01T12:00:00Z","level":"INFO","logger":"other.module","message":"x"}',
+        store,
+    )
+    ingest_jsonl_line(
+        '{"timestamp":"2026-01-01T12:00:00Z","level":"INFO","logger":"ego_mcp.server","message":"y"}',
+        store,
+    )
+
+    assert len(store.events) == 0
+    assert len(store.logs) == 1

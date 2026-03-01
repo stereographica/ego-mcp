@@ -138,7 +138,7 @@ class EgoMcpLogProjector:
             )
             return normalize_event(event_raw)
 
-        if message == "Tool execution completed" and tool_name == "feel_desires":
+        if message == "Tool execution completed":
             event_raw = self._build_event_raw(
                 raw,
                 tool_name,
@@ -146,15 +146,16 @@ class EgoMcpLogProjector:
                 True,
                 "tool_call_completed",
             )
-            parsed_levels = self._parse_feel_desires_levels(raw)
-            if parsed_levels:
-                raw_params = event_raw.get("params")
-                params = dict(raw_params) if isinstance(raw_params, dict) else {}
-                params.update(parsed_levels)
-                event_raw["params"] = params
+            if tool_name == "feel_desires":
+                parsed_levels = self._parse_feel_desires_levels(raw)
+                if parsed_levels:
+                    raw_params = event_raw.get("params")
+                    params = dict(raw_params) if isinstance(raw_params, dict) else {}
+                    params.update(parsed_levels)
+                    event_raw["params"] = params
             return normalize_event(event_raw)
 
-        if message == "Tool execution failed" and tool_name == "feel_desires":
+        if message == "Tool execution failed":
             tool_args = raw.get("tool_args")
             safe_tool_args = tool_args if isinstance(tool_args, dict) else {}
             event_raw = self._build_event_raw(
@@ -164,6 +165,13 @@ class EgoMcpLogProjector:
                 False,
                 "tool_call_failed",
             )
+            if tool_name == "feel_desires":
+                parsed_levels = self._parse_feel_desires_levels(raw)
+                if parsed_levels:
+                    raw_params = event_raw.get("params")
+                    params = dict(raw_params) if isinstance(raw_params, dict) else {}
+                    params.update(parsed_levels)
+                    event_raw["params"] = params
             return normalize_event(event_raw)
 
         return None
@@ -281,6 +289,8 @@ def ingest_jsonl_line(
             log = None
         else:
             log = normalize_log(payload)
+            if log.logger != "ego_mcp.server":
+                return
             event = projector.project(payload) if projector is not None else None
     except (TypeError, ValueError) as exc:
         LOGGER.warning("failed to normalize jsonl line: %s", exc)

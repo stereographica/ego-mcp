@@ -16,7 +16,7 @@
   - string メトリクスの時系列点列
 - `GET /api/v1/metrics/{key}/heatmap?from=...&to=...&bucket=...`
   - string 値ごとの出現頻度
-- `GET /api/v1/logs?from=...&to=...&level=INFO&logger=name`
+- `GET /api/v1/logs?from=...&to=...&level=INFO&search=remember`
   - live tail / 履歴表示用ログ（最大 300 行）
 - `GET /api/v1/alerts/anomalies?from=...&to=...&bucket=...`
   - usage/intensity 急増検知

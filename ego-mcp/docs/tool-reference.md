@@ -187,7 +187,7 @@ If you're sharing a meaningful moment, capture it with remember(shared_with=...)
     },
     "intensity": {
       "type": "number",
-      "default": 0.5
+      "description": "Emotion intensity (0.0-1.0). Auto-derived from emotion label if omitted."
     },
     "importance": {
       "type": "integer",
@@ -199,11 +199,11 @@ If you're sharing a meaningful moment, capture it with remember(shared_with=...)
     },
     "valence": {
       "type": "number",
-      "default": 0.0
+      "description": "Valence on Russell's circumplex model (-1.0 to +1.0). Auto-derived from emotion label if omitted."
     },
     "arousal": {
       "type": "number",
-      "default": 0.5
+      "description": "Arousal on Russell's circumplex model (0.0 to 1.0). Auto-derived from emotion label if omitted."
     },
     "body_state": {
       "type": "object"
@@ -230,7 +230,9 @@ If you're sharing a meaningful moment, capture it with remember(shared_with=...)
 }
 ```
 
-**Available emotions:** `happy`, `sad`, `surprised`, `moved`, `excited`, `nostalgic`, `curious`, `neutral`, `melancholy`, `anxious`, `contentment`, `frustrated`
+**Available emotions:** `happy`, `sad`, `surprised`, `moved`, `excited`, `nostalgic`, `curious`, `neutral`, `melancholy`, `anxious`, `contentment`, `frustrated`, `calm`, `contemplative`, `thoughtful`, `grateful`, `vulnerable`, `content`, `fulfilled`, `touched`, `concerned`, `hopeful`, `peaceful`, `love`, `warm`, `lonely`, `afraid`, `ashamed`, `bored`
+
+> Since v0.2.8, `intensity`, `valence`, `arousal` are automatically derived from the emotion label via `EMOTION_DEFAULTS` when not explicitly specified. For example, `emotion="excited"` defaults to `intensity=0.8, valence=0.7, arousal=0.8`. Explicit values always take priority over the automatic mapping.
 
 **Response example:**
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 
 from ego_dashboard.constants import DESIRE_METRIC_KEYS
@@ -104,13 +105,20 @@ class TelemetryStore:
         start: datetime,
         end: datetime,
         level: str | None = None,
-        logger: str | None = None,
+        *,
+        search: str | None = None,
     ) -> list[dict[str, object]]:
         values = [log for log in self._logs if start <= log.ts <= end]
         if level:
             values = [log for log in values if log.level == level.upper()]
-        if logger:
-            values = [log for log in values if logger.lower() in log.logger.lower()]
+        if search:
+            needle = search.lower()
+            values = [
+                log
+                for log in values
+                if needle in log.message.lower()
+                or any(needle in value.lower() for value in self._field_values(log.fields))
+            ]
         rows: list[dict[str, object]] = []
         for item in values[-300:]:
             row = item.model_dump(mode="json")
@@ -118,6 +126,22 @@ class TelemetryStore:
                 row["message"] = "REDACTED"
             rows.append(row)
         return rows
+
+    @classmethod
+    def _field_values(cls, value: object) -> Iterable[str]:
+        if isinstance(value, str):
+            yield value
+            return
+        if isinstance(value, dict):
+            for nested in value.values():
+                yield from cls._field_values(nested)
+            return
+        if isinstance(value, list):
+            for nested in value:
+                yield from cls._field_values(nested)
+            return
+        if value is not None:
+            yield str(value)
 
     def anomaly_alerts(
         self, start: datetime, end: datetime, bucket: str

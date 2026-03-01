@@ -24,6 +24,37 @@ from ego_mcp.scaffolds import compose_response
 
 logger = logging.getLogger(__name__)
 _REMEMBER_DUPLICATE_PREFIX = "Not saved — very similar memory already exists."
+EMOTION_DEFAULTS: dict[str, tuple[float, float, float]] = {
+    # emotion: (intensity, valence, arousal)
+    "happy": (0.6, 0.6, 0.5),
+    "excited": (0.8, 0.7, 0.8),
+    "calm": (0.4, 0.3, 0.2),
+    "neutral": (0.3, 0.0, 0.3),
+    "curious": (0.6, 0.3, 0.6),
+    "contemplative": (0.5, 0.1, 0.3),
+    "thoughtful": (0.5, 0.1, 0.4),
+    "grateful": (0.6, 0.7, 0.4),
+    "vulnerable": (0.6, -0.3, 0.5),
+    "content": (0.5, 0.5, 0.2),
+    "fulfilled": (0.6, 0.6, 0.2),
+    "touched": (0.7, 0.5, 0.4),
+    "moved": (0.7, 0.5, 0.5),
+    "concerned": (0.5, -0.3, 0.5),
+    "hopeful": (0.6, 0.4, 0.5),
+    "peaceful": (0.4, 0.4, 0.1),
+    "love": (0.8, 0.8, 0.4),
+    "warm": (0.5, 0.5, 0.3),
+    "sad": (0.5, -0.6, 0.2),
+    "anxious": (0.7, -0.6, 0.8),
+    "angry": (0.8, -0.7, 0.9),
+    "frustrated": (0.7, -0.5, 0.7),
+    "lonely": (0.6, -0.6, 0.3),
+    "afraid": (0.8, -0.8, 0.9),
+    "ashamed": (0.6, -0.7, 0.4),
+    "bored": (0.3, -0.3, 0.1),
+    "nostalgic": (0.5, 0.1, 0.3),
+    "surprised": (0.7, 0.1, 0.9),
+}
 _relative_time_override: Callable[[str, datetime | None], str] | None = None
 _get_body_state_override: Callable[[], dict[str, Any]] | None = None
 
@@ -51,6 +82,12 @@ def _call_get_body_state() -> dict[str, Any]:
     return get_body_state()
 
 
+def _float_or_default(value: Any, default: float) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
+
+
 async def _handle_remember(
     config: EgoConfig,
     memory: MemoryStore,
@@ -59,12 +96,25 @@ async def _handle_remember(
     """Save a memory with auto-linking."""
     content = args["content"]
     emotion = args.get("emotion", "neutral")
+    defaults = EMOTION_DEFAULTS.get(emotion, (0.5, 0.0, 0.5))
     secondary = args.get("secondary")
-    intensity = args.get("intensity", 0.5)
+    intensity = (
+        _float_or_default(args.get("intensity"), defaults[0])
+        if "intensity" in args
+        else defaults[0]
+    )
     importance = args.get("importance", 3)
     category = args.get("category", "daily")
-    valence = args.get("valence", 0.0)
-    arousal = args.get("arousal", 0.5)
+    valence = (
+        _float_or_default(args.get("valence"), defaults[1])
+        if "valence" in args
+        else defaults[1]
+    )
+    arousal = (
+        _float_or_default(args.get("arousal"), defaults[2])
+        if "arousal" in args
+        else defaults[2]
+    )
     private = bool(args.get("private", False))
     body_state = args.get("body_state") or _call_get_body_state()
     shared_with_raw = args.get("shared_with")

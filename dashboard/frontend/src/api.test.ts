@@ -36,4 +36,22 @@ describe('api.fetchLogs', () => {
     expect(logs[0]?.tool_name).toBe('remember')
     expect(logs[0]?.ok).toBe(true)
   })
+
+  it('uses search query parameter for filtered log fetch', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [] }),
+    } as Response)
+
+    await fetchLogs(
+      { from: '2026-01-01T12:00:00Z', to: '2026-01-01T12:10:00Z' },
+      'INFO',
+      'remember',
+    )
+    const url = String(vi.mocked(globalThis.fetch).mock.calls[0]?.[0] ?? '')
+
+    expect(url).toContain('level=INFO')
+    expect(url).toContain('search=remember')
+    expect(url).not.toContain('logger=')
+  })
 })
