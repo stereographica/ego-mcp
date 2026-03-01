@@ -102,6 +102,7 @@ def test_current_includes_latest_emotion_and_backfills_latest(
             (0, 0),  # 1m log counts
             (0, 0),  # 24h log counts
             (emotion_ts, "curious", 0.7, "0.2", "0.8"),  # latest emotion row
+            None,  # latest relationship row
             *([None] * len(DESIRE_METRIC_KEYS)),
         ],
     )
@@ -141,6 +142,7 @@ def test_current_latest_emotion_null_when_query_has_no_rows(
             (0, 0),  # 1m log counts
             (0, 0),  # 24h log counts
             None,  # latest emotion row
+            None,  # latest relationship row
             *([None] * len(DESIRE_METRIC_KEYS)),
         ],
     )
@@ -188,6 +190,7 @@ def test_current_latest_emotion_query_is_bounded_by_latest_ts(
                 (0, 0),  # 1m log counts
                 (0, 0),  # 24h log counts
                 None,  # latest emotion row
+                None,  # latest relationship row
                 *([None] * len(DESIRE_METRIC_KEYS)),
             ]
         ),
@@ -204,6 +207,99 @@ def test_current_latest_emotion_query_is_bounded_by_latest_ts(
     assert len(emotion_queries) == 1
     sql, params = emotion_queries[0]
     compact_sql = " ".join(sql.split())
+    assert "WHERE ts <= %s" in compact_sql
+    assert params == (latest_ts,)
+
+
+def test_current_includes_latest_relationship(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest_ts = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    relationship_row = (0.82, 15.0, 3.0)
+    store = _patch_store(
+        monkeypatch,
+        latest_payload={
+            "ts": latest_ts.isoformat(),
+            "tool_name": "consider_them",
+            "private": False,
+        },
+        rows=[
+            (1, 0),  # 1m tool counts
+            (5, 1),  # 24h tool counts
+            (0, 0),  # 1m log counts
+            (0, 0),  # 24h log counts
+            None,  # latest emotion row
+            relationship_row,  # latest relationship row
+            *([None] * len(DESIRE_METRIC_KEYS)),
+        ],
+    )
+
+    current = store.current()
+    latest_relationship = current["latest_relationship"]
+
+    assert isinstance(latest_relationship, dict)
+    assert latest_relationship["trust_level"] == 0.82
+    assert latest_relationship["total_interactions"] == 15.0
+    assert latest_relationship["shared_episodes_count"] == 3.0
+
+
+def test_current_latest_relationship_query_filters_trust_level_metric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest_ts = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    executed: list[tuple[str, tuple[Any, ...] | None]] = []
+
+    class _CapturingCursor(_FakeCursor):
+        def execute(self, *args: object, **kwargs: object) -> None:
+            query = args[0] if args else kwargs.get("query")
+            params = args[1] if len(args) > 1 else kwargs.get("params")
+            sql = str(query)
+            tuple_params = params if isinstance(params, tuple) else None
+            executed.append((sql, tuple_params))
+
+    class _CapturingConnection(_FakeConnection):
+        def __init__(self, rows: list[tuple[Any, ...] | None]) -> None:
+            self._cursor = _CapturingCursor(rows)
+
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(
+            json.dumps(
+                {
+                    "ts": latest_ts.isoformat(),
+                    "tool_name": "wake_up",
+                    "private": False,
+                }
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _CapturingConnection(
+            [
+                (1, 0),  # 1m tool counts
+                (5, 1),  # 24h tool counts
+                (0, 0),  # 1m log counts
+                (0, 0),  # 24h log counts
+                None,  # latest emotion row
+                None,  # latest relationship row
+                *([None] * len(DESIRE_METRIC_KEYS)),
+            ]
+        ),
+    )
+
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+    store.current()
+
+    relationship_queries = [
+        (sql, params)
+        for sql, params in executed
+        if "numeric_metrics ->> 'trust_level'" in sql and "FROM tool_events" in sql
+    ]
+    assert len(relationship_queries) == 1
+    sql, params = relationship_queries[0]
+    compact_sql = " ".join(sql.split())
+    assert "numeric_metrics ? 'trust_level'" in compact_sql
     assert "WHERE ts <= %s" in compact_sql
     assert params == (latest_ts,)
 

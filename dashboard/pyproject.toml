@@ -1,6 +1,6 @@
 [project]
 name = "ego-dashboard"
-version = "0.1.0"
+version = "0.2.0"
 description = "Dashboard backend for ego-mcp telemetry"
 requires-python = ">=3.11"
 dependencies = [
@@ -9,6 +9,7 @@ dependencies = [
   "psycopg[binary]>=3.2.0",
   "redis>=5.2.0",
   "uvicorn>=0.35.0",
+  "websockets>=15.0",
 ]
 
 [dependency-groups]
