@@ -86,15 +86,55 @@ def test_logs_filtering() -> None:
         )
     )
     store.ingest_log(LogEvent(ts=base, level="ERROR", logger="a", message="ng", private=False))
-    logs = store.logs(base, base + timedelta(minutes=1), "ERROR", "a")
+    logs = store.logs(base, base + timedelta(minutes=1), "ERROR")
     assert len(logs) == 1
     assert logs[0]["level"] == "ERROR"
 
-    info_logs = store.logs(base, base + timedelta(minutes=1), "INFO", "a")
+    info_logs = store.logs(base, base + timedelta(minutes=1), "INFO")
     assert info_logs[0]["fields"] == {"tool_name": "remember"}
 
 
-def test_logs_logger_filter_substring_match() -> None:
+def test_logs_search_filter_substring_match_for_message_and_fields() -> None:
+    from ego_dashboard.models import LogEvent
+
+    store = TelemetryStore()
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    end = base + timedelta(minutes=1)
+    store.ingest_log(
+        LogEvent(
+            ts=base,
+            level="INFO",
+            logger="ego_mcp.server",
+            message="Tool invocation remember",
+            private=False,
+        )
+    )
+    store.ingest_log(
+        LogEvent(
+            ts=base,
+            level="INFO",
+            logger="ego_mcp.server",
+            message="other event",
+            private=False,
+            fields={"tool_name": "remember"},
+        )
+    )
+    store.ingest_log(
+        LogEvent(ts=base, level="INFO", logger="ego_mcp.server", message="different", private=False)
+    )
+
+    result = store.logs(base, end, search="remember")
+    assert len(result) == 2
+    assert {row["message"] for row in result} == {"Tool invocation remember", "other event"}
+
+    result = store.logs(base, end, search="REMEMBER")
+    assert len(result) == 2
+
+    result = store.logs(base, end, search="nonexistent")
+    assert len(result) == 0
+
+
+def test_logs_search_none_or_empty_returns_all_rows() -> None:
     from ego_dashboard.models import LogEvent
 
     store = TelemetryStore()
@@ -104,29 +144,11 @@ def test_logs_logger_filter_substring_match() -> None:
         LogEvent(ts=base, level="INFO", logger="ego_mcp.server", message="a", private=False)
     )
     store.ingest_log(
-        LogEvent(ts=base, level="INFO", logger="ego_mcp.tool_handler", message="b", private=False)
-    )
-    store.ingest_log(
-        LogEvent(ts=base, level="INFO", logger="other.module", message="c", private=False)
+        LogEvent(ts=base, level="INFO", logger="ego_mcp.server", message="b", private=False)
     )
 
-    # Partial match: "ego_mcp" matches both ego_mcp.* loggers
-    result = store.logs(base, end, logger="ego_mcp")
-    assert len(result) == 2
-    assert {r["logger"] for r in result} == {"ego_mcp.server", "ego_mcp.tool_handler"}
-
-    # Case-insensitive match
-    result = store.logs(base, end, logger="EGO_MCP")
-    assert len(result) == 2
-
-    # More specific suffix still works
-    result = store.logs(base, end, logger="ego_mcp.server")
-    assert len(result) == 1
-    assert result[0]["logger"] == "ego_mcp.server"
-
-    # No match
-    result = store.logs(base, end, logger="nonexistent")
-    assert len(result) == 0
+    assert len(store.logs(base, end, search=None)) == 2
+    assert len(store.logs(base, end, search="")) == 2
 
 
 def test_current_backfills_latest_emotion_from_recent_telemetry() -> None:

@@ -42,13 +42,13 @@ const isNearBottom = (el: HTMLElement, threshold = 24) =>
 
 export const LogsTab = ({ range, preset, isActive }: LogsTabProps) => {
   const [logLevel, setLogLevel] = useState('ALL')
-  const [loggerFilter, setLoggerFilter] = useState('ego_mcp.server')
+  const [searchFilter, setSearchFilter] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
   const [logFeedPinned, setLogFeedPinned] = useState(true)
   const logViewportRef = useRef<HTMLDivElement | null>(null)
   const { formatTs, clientTimeZone } = useTimestampFormatter()
 
-  const logs = useLogData(isActive, preset, range, logLevel, loggerFilter)
+  const logs = useLogData(isActive, preset, range, logLevel, searchFilter)
 
   useEffect(() => {
     if (!isActive || !autoScroll || !logFeedPinned) return
@@ -91,9 +91,9 @@ export const LogsTab = ({ range, preset, isActive }: LogsTabProps) => {
           </Select>
           <input
             className="rounded-md border border-input bg-secondary px-2 py-1 text-sm"
-            placeholder="logger"
-            value={loggerFilter}
-            onChange={(e) => setLoggerFilter(e.target.value)}
+            placeholder="search logs..."
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
           />
           <label className="flex items-center gap-1.5 text-xs">
             <input
@@ -115,6 +115,9 @@ export const LogsTab = ({ range, preset, isActive }: LogsTabProps) => {
           <div className="space-y-2">
             {logs.map((item, index) => {
               const { ts, level, ...rest } = item
+              const displayPayload = Object.fromEntries(
+                Object.entries(rest).filter(([key]) => key !== 'logger'),
+              )
               return (
                 <div
                   key={`log-${ts}-${String(item.logger)}-${index}`}
@@ -133,7 +136,7 @@ export const LogsTab = ({ range, preset, isActive }: LogsTabProps) => {
                     {formatTs(ts)}
                   </div>
                   <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
-                    {JSON.stringify(rest, null, 2)}
+                    {JSON.stringify(displayPayload, null, 2)}
                   </pre>
                 </div>
               )
