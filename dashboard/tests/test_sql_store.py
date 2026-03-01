@@ -101,7 +101,7 @@ def test_current_includes_latest_emotion_and_backfills_latest(
             (5, 1),  # 24h tool counts
             (0, 0),  # 1m log counts
             (0, 0),  # 24h log counts
-            (emotion_ts, "curious", 0.7, "0.2", "0.8"),  # latest emotion row
+            (emotion_ts, "curious", 0.7, 0.2, 0.8),  # latest emotion row
             None,  # latest relationship row
             *([None] * len(DESIRE_METRIC_KEYS)),
         ],
@@ -208,6 +208,8 @@ def test_current_latest_emotion_query_is_bounded_by_latest_ts(
     sql, params = emotion_queries[0]
     compact_sql = " ".join(sql.split())
     assert "WHERE ts <= %s" in compact_sql
+    assert "(numeric_metrics ->> 'valence')::double precision" in compact_sql
+    assert "(numeric_metrics ->> 'arousal')::double precision" in compact_sql
     assert params == (latest_ts,)
 
 

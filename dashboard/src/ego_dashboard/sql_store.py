@@ -373,8 +373,8 @@ class SqlTelemetryStore:
                       ts,
                       emotion_primary,
                       emotion_intensity,
-                      numeric_metrics ->> 'valence',
-                      numeric_metrics ->> 'arousal'
+                      (numeric_metrics ->> 'valence')::double precision,
+                      (numeric_metrics ->> 'arousal')::double precision
                     FROM tool_events
                     WHERE ts <= %s
                       AND (emotion_primary IS NOT NULL OR emotion_intensity IS NOT NULL)
@@ -437,8 +437,8 @@ class SqlTelemetryStore:
                 valence_raw,
                 arousal_raw,
             ) = latest_emotion_row
-            valence = float(valence_raw) if isinstance(valence_raw, str) else None
-            arousal = float(arousal_raw) if isinstance(arousal_raw, str) else None
+            valence = float(valence_raw) if isinstance(valence_raw, (int, float)) else None
+            arousal = float(arousal_raw) if isinstance(arousal_raw, (int, float)) else None
             latest_emotion = {
                 "ts": emotion_ts.isoformat(),
                 "emotion_primary": str(emotion_primary) if emotion_primary is not None else None,
