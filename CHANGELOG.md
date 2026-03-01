@@ -2,6 +2,28 @@
 
 ego-mcp のリリース履歴。
 
+## [0.2.9] - 2026-03-01
+
+### Added
+- ego-mcp: `_completion_log_context()` に Relationship テレメトリ出力を追加（`consider_them` / `wake_up` 完了時に `trust_level`, `total_interactions`, `shared_episodes_count` をログ extra に付与）
+- Dashboard ingestor に Relationship データパース（構造化フィールド優先 + tool_output 正規表現フォールバック）
+- Dashboard `current()` API に `latest_relationship` フィールド追加（in-memory / SQL 両対応）
+- Dashboard Now タブに `RelationshipStatus` カード（trust バー + interactions + shared episodes）
+- Dashboard Now タブに `CircumplexCard`（Valence-Arousal チャートを独立カードに分離・拡大表示）
+- Dashboard History タブに `EmotionDistributionChart`（emotion 別集計棒グラフ）
+- Dashboard `IntensityChart` ツールチップに emotion ラベルを表示
+- Dashboard フロントエンド API に `fetchStringTimeline` / `fetchStringHeatmap` を追加
+
+### Fixed
+- Dashboard Activity Feed の `scrollIntoView` によるメインフレームスクロール問題を修正（viewport `scrollTop` に変更）
+- Dashboard Activity Feed のモバイル幅崩れを修正（`overflow-hidden` + `flex-wrap`）
+
+### Changed
+- Dashboard Now タブを 2 カラムグリッドにレイアウト再構築（EmotionStatus / RelationshipStatus / DesireRadar / CircumplexCard / ActivityFeed / AnomalyAlerts）
+- Dashboard `EmotionStatus` から `CircumplexChart` を分離
+- Dashboard `websockets` 依存を明示化（既存 WebSocket エンドポイント用）
+- バージョンアップ: ego-mcp 0.2.8→0.2.9, dashboard 0.1.0→0.2.0
+
 ## [0.2.8] - 2026-03-01
 
 ### Fixed
