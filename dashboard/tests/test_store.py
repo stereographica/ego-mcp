@@ -188,6 +188,38 @@ def test_current_returns_null_latest_emotion_when_not_present() -> None:
     assert current["latest_emotion"] is None
 
 
+def test_current_returns_latest_relationship_when_present() -> None:
+    store = TelemetryStore()
+    store.ingest(
+        _event(0, "consider_them", 0.5, "day").model_copy(
+            update={
+                "numeric_metrics": {
+                    "intensity": 0.5,
+                    "trust_level": 0.82,
+                    "total_interactions": 15,
+                    "shared_episodes_count": 3,
+                }
+            }
+        )
+    )
+
+    current = store.current()
+    latest_relationship = cast(dict[str, Any], current["latest_relationship"])
+
+    assert latest_relationship["trust_level"] == 0.82
+    assert latest_relationship["total_interactions"] == 15
+    assert latest_relationship["shared_episodes_count"] == 3
+
+
+def test_current_returns_null_latest_relationship_when_not_present() -> None:
+    store = TelemetryStore()
+    store.ingest(_event(0, "remember", 0.4, "day"))
+
+    current = store.current()
+
+    assert current["latest_relationship"] is None
+
+
 def test_current_prefers_log_derived_counts_and_error_rate() -> None:
     from ego_dashboard.models import LogEvent
 

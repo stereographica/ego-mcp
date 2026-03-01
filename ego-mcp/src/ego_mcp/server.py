@@ -252,9 +252,10 @@ def _tool_log_context() -> dict[str, str]:
     return {}
 
 
-async def _completion_log_context(name: str, memory: MemoryStore) -> dict[str, object]:
+async def _completion_log_context(
+    name: str, memory: MemoryStore, config: EgoConfig
+) -> dict[str, object]:
     """Attach periodic telemetry snapshots for dashboard projection."""
-    del name
 
     try:
         recent = await memory.list_recent(n=1)
@@ -275,6 +276,15 @@ async def _completion_log_context(name: str, memory: MemoryStore) -> dict[str, o
     }
     if trace.body_state and trace.body_state.time_phase:
         extra["time_phase"] = trace.body_state.time_phase
+    if name in {"consider_them", "wake_up"}:
+        try:
+            relationship_store = _relationship_store(config)
+            relationship = relationship_store.get(config.companion_name)
+            extra["trust_level"] = float(relationship.trust_level)
+            extra["total_interactions"] = relationship.total_interactions
+            extra["shared_episodes_count"] = len(relationship.shared_episode_ids)
+        except Exception:
+            logger.debug("Skipped relationship telemetry snapshot", exc_info=True)
     return extra
 
 
@@ -307,7 +317,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
     safe_output = _sanitize_tool_output_for_logging(name, arguments, text)
     output_excerpt, output_truncated = _truncate_for_log(safe_output)
-    completion_context = await _completion_log_context(name, memory)
+    completion_context = await _completion_log_context(name, memory, config)
     logger.info(
         "Tool execution completed",
         extra={

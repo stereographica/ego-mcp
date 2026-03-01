@@ -36,4 +36,35 @@ describe('ActivityFeed', () => {
     )
     expect(toolBadge).toHaveClass('max-w-[8rem]', 'truncate')
   })
+
+  it('applies overflow clipping to the card container', () => {
+    const { container } = render(
+      <ActivityFeed logLines={[]} connected={true} />,
+    )
+
+    expect(container.firstChild).toHaveClass('overflow-hidden')
+  })
+
+  it('does not call scrollIntoView when appending log lines', () => {
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+
+    render(
+      <ActivityFeed
+        connected={true}
+        logLines={[
+          {
+            ts: '2025-01-01T00:00:00.000Z',
+            ok: true,
+            message: 'hello',
+          },
+        ]}
+      />,
+    )
+
+    expect(scrollIntoView).not.toHaveBeenCalled()
+  })
 })

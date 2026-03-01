@@ -303,6 +303,7 @@ class SqlTelemetryStore:
             return {
                 "latest": None,
                 "latest_emotion": None,
+                "latest_relationship": None,
                 "tool_calls_per_min": 0,
                 "error_rate": 0.0,
                 "window_24h": {"tool_calls": 0, "error_rate": 0.0},
@@ -383,6 +384,20 @@ class SqlTelemetryStore:
                     (latest_ts,),
                 )
                 latest_emotion_row = cur.fetchone()
+                cur.execute(
+                    """
+                    SELECT
+                      (numeric_metrics ->> 'trust_level')::double precision,
+                      (numeric_metrics ->> 'total_interactions')::double precision,
+                      (numeric_metrics ->> 'shared_episodes_count')::double precision
+                    FROM tool_events
+                    WHERE ts <= %s AND numeric_metrics ? 'trust_level'
+                    ORDER BY ts DESC
+                    LIMIT 1
+                    """,
+                    (latest_ts,),
+                )
+                latest_relationship_row = cur.fetchone()
                 latest_desires: dict[str, float] = {}
                 for key in DESIRE_METRIC_KEYS:
                     cur.execute(
@@ -437,9 +452,32 @@ class SqlTelemetryStore:
                 latest["emotion_primary"] = str(emotion_primary)
             if latest.get("emotion_intensity") is None and emotion_intensity is not None:
                 latest["emotion_intensity"] = float(emotion_intensity)
+        latest_relationship: dict[str, float | None] | None = None
+        if latest_relationship_row is not None:
+            (
+                trust_level_raw,
+                total_interactions_raw,
+                shared_episodes_count_raw,
+            ) = latest_relationship_row
+            latest_relationship = {
+                "trust_level": (
+                    float(trust_level_raw) if isinstance(trust_level_raw, (int, float)) else None
+                ),
+                "total_interactions": (
+                    float(total_interactions_raw)
+                    if isinstance(total_interactions_raw, (int, float))
+                    else None
+                ),
+                "shared_episodes_count": (
+                    float(shared_episodes_count_raw)
+                    if isinstance(shared_episodes_count_raw, (int, float))
+                    else None
+                ),
+            }
         return {
             "latest": latest,
             "latest_emotion": latest_emotion,
+            "latest_relationship": latest_relationship,
             "tool_calls_per_min": log_calls if log_calls > 0 else total_calls,
             "error_rate": (
                 (log_failures / log_calls)
