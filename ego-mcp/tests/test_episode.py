@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -74,3 +75,39 @@ class TestEpisodeStore:
         _, store = episode_store
         loaded = await store.get_by_id("ep_missing")
         assert loaded is None
+
+    @pytest.mark.asyncio
+    async def test_list_episodes_returns_latest_after_full_fetch(self) -> None:
+        class FakeCollection:
+            def __init__(self) -> None:
+                self._rows = [
+                    (
+                        f"ep_{index:02d}",
+                        f"summary {index}",
+                        {
+                            "memory_ids": "[]",
+                            "start_time": f"2026-01-{index + 1:02d}T00:00:00+00:00",
+                            "end_time": f"2026-01-{index + 1:02d}T00:05:00+00:00",
+                            "importance": 3,
+                        },
+                    )
+                    for index in range(10)
+                ]
+
+            def count(self) -> int:
+                return len(self._rows)
+
+            def get(self, *, limit: int, include: list[str]) -> dict[str, list[object]]:
+                assert include == ["documents", "metadatas"]
+                selected = self._rows[:limit]
+                return {
+                    "ids": [row[0] for row in selected],
+                    "documents": [row[1] for row in selected],
+                    "metadatas": [row[2] for row in selected],
+                }
+
+        store = EpisodeStore(cast(MemoryStore, object()), FakeCollection())
+
+        episodes = await store.list_episodes(limit=2)
+
+        assert [episode.id for episode in episodes] == ["ep_09", "ep_08"]

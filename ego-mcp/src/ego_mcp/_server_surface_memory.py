@@ -53,6 +53,8 @@ EMOTION_DEFAULTS: dict[str, tuple[float, float, float]] = {
     "ashamed": (0.6, -0.7, 0.4),
     "bored": (0.3, -0.3, 0.1),
     "nostalgic": (0.5, 0.1, 0.3),
+    "contentment": (0.5, 0.5, 0.2),
+    "melancholy": (0.5, -0.4, 0.2),
     "surprised": (0.7, 0.1, 0.9),
 }
 _relative_time_override: Callable[[str, datetime | None], str] | None = None
