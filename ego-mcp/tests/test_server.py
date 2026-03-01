@@ -140,12 +140,139 @@ class TestImplicitSatisfactionFromServer:
         extra = await server_mod._completion_log_context(
             "remember",
             cast(Any, FakeMemoryStore()),
+            cast(Any, SimpleNamespace(companion_name="Master")),
         )
 
         assert extra["emotion_primary"] == "curious"
         assert extra["emotion_intensity"] == 0.8
         assert extra["valence"] == 0.2
         assert extra["arousal"] == 0.7
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", ["consider_them", "wake_up"])
+    async def test_completion_log_context_includes_relationship_metrics_for_social_tools(
+        self, tool_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FakeMemoryStore:
+            async def list_recent(self, n: int = 1) -> list[Memory]:
+                assert n == 1
+                return [
+                    Memory(
+                        id="mem_1",
+                        content="latest",
+                        timestamp="2026-02-26T00:00:00+00:00",
+                        emotional_trace=EmotionalTrace(
+                            primary=Emotion.CURIOUS,
+                            intensity=0.8,
+                            valence=0.2,
+                            arousal=0.7,
+                        ),
+                    )
+                ]
+
+        class FakeRelationshipStore:
+            def get(self, person_id: str) -> Any:
+                assert person_id == "Master"
+                return SimpleNamespace(
+                    trust_level=0.82,
+                    total_interactions=15,
+                    shared_episode_ids=["ep1", "ep2", "ep3"],
+                )
+
+        monkeypatch.setattr(
+            server_mod, "_relationship_store", lambda _config: FakeRelationshipStore()
+        )
+
+        extra = await server_mod._completion_log_context(
+            tool_name,
+            cast(Any, FakeMemoryStore()),
+            cast(Any, SimpleNamespace(companion_name="Master")),
+        )
+
+        assert extra["trust_level"] == 0.82
+        assert extra["total_interactions"] == 15
+        assert extra["shared_episodes_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_completion_log_context_skips_relationship_for_other_tools(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FakeMemoryStore:
+            async def list_recent(self, n: int = 1) -> list[Memory]:
+                assert n == 1
+                return [
+                    Memory(
+                        id="mem_1",
+                        content="latest",
+                        timestamp="2026-02-26T00:00:00+00:00",
+                        emotional_trace=EmotionalTrace(
+                            primary=Emotion.CURIOUS,
+                            intensity=0.8,
+                            valence=0.2,
+                            arousal=0.7,
+                        ),
+                    )
+                ]
+
+        relationship_store_called = False
+
+        def _fake_relationship_store(_config: Any) -> Any:
+            nonlocal relationship_store_called
+            relationship_store_called = True
+            return object()
+
+        monkeypatch.setattr(server_mod, "_relationship_store", _fake_relationship_store)
+
+        extra = await server_mod._completion_log_context(
+            "introspect",
+            cast(Any, FakeMemoryStore()),
+            cast(Any, SimpleNamespace(companion_name="Master")),
+        )
+
+        assert "trust_level" not in extra
+        assert "total_interactions" not in extra
+        assert "shared_episodes_count" not in extra
+        assert relationship_store_called is False
+
+    @pytest.mark.asyncio
+    async def test_completion_log_context_ignores_relationship_errors(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FakeMemoryStore:
+            async def list_recent(self, n: int = 1) -> list[Memory]:
+                assert n == 1
+                return [
+                    Memory(
+                        id="mem_1",
+                        content="latest",
+                        timestamp="2026-02-26T00:00:00+00:00",
+                        emotional_trace=EmotionalTrace(
+                            primary=Emotion.CURIOUS,
+                            intensity=0.8,
+                            valence=0.2,
+                            arousal=0.7,
+                        ),
+                    )
+                ]
+
+        def _raising_relationship_store(_config: Any) -> Any:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(server_mod, "_relationship_store", _raising_relationship_store)
+
+        extra = await server_mod._completion_log_context(
+            "consider_them",
+            cast(Any, FakeMemoryStore()),
+            cast(Any, SimpleNamespace(companion_name="Master")),
+        )
+
+        assert extra["emotion_primary"] == "curious"
+        assert extra["emotion_intensity"] == 0.8
+        assert extra["valence"] == 0.2
+        assert extra["arousal"] == 0.7
+        assert "trust_level" not in extra
+        assert "total_interactions" not in extra
+        assert "shared_episodes_count" not in extra
 
 
 class TestWakeUpServerHandler:

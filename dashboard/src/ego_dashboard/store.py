@@ -176,6 +176,7 @@ class TelemetryStore:
             return {
                 "latest": None,
                 "latest_emotion": None,
+                "latest_relationship": None,
                 "tool_calls_per_min": 0,
                 "error_rate": 0.0,
                 "window_24h": {"tool_calls": 0, "error_rate": 0.0},
@@ -222,6 +223,18 @@ class TelemetryStore:
                 "valence": (float(valence_raw) if isinstance(valence_raw, (int, float)) else None),
                 "arousal": (float(arousal_raw) if isinstance(arousal_raw, (int, float)) else None),
             }
+        relationship_source = next(
+            (ev for ev in reversed(self._events) if "trust_level" in ev.numeric_metrics),
+            None,
+        )
+        latest_relationship = None
+        if relationship_source is not None:
+            metrics = relationship_source.numeric_metrics
+            latest_relationship = {
+                "trust_level": metrics.get("trust_level"),
+                "total_interactions": metrics.get("total_interactions"),
+                "shared_episodes_count": metrics.get("shared_episodes_count"),
+            }
         log_window = [log for log in self._logs if log.ts >= window_start]
         log_window_24h = [log for log in self._logs if log.ts >= window_24h_start]
         invocation_count = sum(
@@ -253,6 +266,7 @@ class TelemetryStore:
         return {
             "latest": latest_payload,
             "latest_emotion": latest_emotion,
+            "latest_relationship": latest_relationship,
             "tool_calls_per_min": tool_calls_per_min,
             "error_rate": error_rate,
             "window_24h": {"tool_calls": tool_calls_24h, "error_rate": error_rate_24h},

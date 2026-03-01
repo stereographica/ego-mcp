@@ -16,11 +16,16 @@ export const ActivityFeed = ({ logLines, connected }: ActivityFeedProps) => {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const element = bottomRef.current
+    if (!element) return
+    const viewport = element.closest('[data-radix-scroll-area-viewport]')
+    if (viewport instanceof HTMLElement) {
+      viewport.scrollTop = viewport.scrollHeight
+    }
   }, [logLines])
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-sm">Activity feed</CardTitle>
         <Badge
@@ -41,7 +46,7 @@ export const ActivityFeed = ({ logLines, connected }: ActivityFeedProps) => {
             {logLines.map((item, i) => (
               <div
                 key={`${item.ts}-${i}`}
-                className="flex min-w-0 items-start gap-2 text-xs"
+                className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1 text-xs"
               >
                 <span className="text-muted-foreground shrink-0 font-mono">
                   {formatTs(item.ts)}

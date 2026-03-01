@@ -22,6 +22,11 @@ _DESIRE_METRIC_KEY_SET = frozenset(DESIRE_METRIC_KEYS)
 _FEEL_DESIRES_LEVEL_RE = re.compile(
     r"(?P<name>[a-z_]+)\[(?P<value>[0-9]+(?:\.[0-9]+)?)/(?:high|mid|low)\]"
 )
+_RELATIONSHIP_RE = re.compile(
+    r"trust=(?P<trust>[0-9]+(?:\.[0-9]+)?),\s*"
+    r"interactions=(?P<interactions>[0-9]+),\s*"
+    r"shared_episodes=(?P<shared_episodes>[0-9]+)"
+)
 LOGGER = logging.getLogger(__name__)
 
 
@@ -233,6 +238,27 @@ class EgoMcpLogProjector:
             top_level_time_phase = raw.get("time_phase")
             if isinstance(top_level_time_phase, str):
                 params["time_phase"] = top_level_time_phase
+
+        for rel_key in ("trust_level", "total_interactions", "shared_episodes_count"):
+            raw_value = raw.get(rel_key)
+            if isinstance(raw_value, (int, float)):
+                params[rel_key] = raw_value
+
+        if tool_name in {"consider_them", "wake_up"} and "trust_level" not in params:
+            fallback_text = raw.get("tool_output", "")
+            if not isinstance(fallback_text, str) or not fallback_text:
+                fallback_text = raw.get("message", "")
+            if isinstance(fallback_text, str):
+                relationship_match = _RELATIONSHIP_RE.search(fallback_text)
+                if relationship_match is not None:
+                    try:
+                        params["trust_level"] = float(relationship_match.group("trust"))
+                        params["total_interactions"] = int(relationship_match.group("interactions"))
+                        params["shared_episodes_count"] = int(
+                            relationship_match.group("shared_episodes")
+                        )
+                    except ValueError:
+                        pass
 
         raw_ts = raw.get("ts")
         if not isinstance(raw_ts, str):

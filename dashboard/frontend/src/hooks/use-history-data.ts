@@ -4,6 +4,8 @@ import {
   fetchArousal,
   fetchIntensity,
   fetchMetric,
+  fetchStringHeatmap,
+  fetchStringTimeline,
   fetchTimeline,
   fetchUsage,
   fetchValence,
@@ -11,6 +13,8 @@ import {
 import { DESIRE_METRIC_KEYS, type DesireMetricKey } from '@/constants'
 import type {
   DateRange,
+  HeatmapPoint,
+  IntensityPoint,
   SeriesPoint,
   StringPoint,
   TimeRangePreset,
@@ -39,11 +43,12 @@ export const useHistoryData = (
   range: DateRange,
   preset: TimeRangePreset,
 ) => {
-  const [intensity, setIntensity] = useState<SeriesPoint[]>([])
+  const [intensity, setIntensity] = useState<IntensityPoint[]>([])
   const [usage, setUsage] = useState<UsagePoint[]>([])
   const [timeline, setTimeline] = useState<StringPoint[]>([])
   const [valence, setValence] = useState<SeriesPoint[]>([])
   const [arousal, setArousal] = useState<SeriesPoint[]>([])
+  const [emotionHeatmap, setEmotionHeatmap] = useState<HeatmapPoint[]>([])
   const [desireMetrics, setDesireMetrics] = useState<DesireMetricSeriesMap>(
     makeEmptyDesireMetricSeriesMap,
   )
@@ -55,20 +60,32 @@ export const useHistoryData = (
     const bucket = bucketFor(preset)
 
     const loadHistory = async () => {
-      const [i, u, t, v, a, ...desireSeries] = await Promise.all([
-        fetchIntensity(range, bucket),
-        fetchUsage(range, bucket),
-        fetchTimeline(range),
-        fetchValence(range, bucket),
-        fetchArousal(range, bucket),
-        ...DESIRE_METRIC_KEYS.map((key) => fetchMetric(key, range, bucket)),
-      ])
+      const [i, u, t, v, a, emotionTimeline, heatmap, ...desireSeries] =
+        await Promise.all([
+          fetchIntensity(range, bucket),
+          fetchUsage(range, bucket),
+          fetchTimeline(range),
+          fetchValence(range, bucket),
+          fetchArousal(range, bucket),
+          fetchStringTimeline('emotion_primary', range),
+          fetchStringHeatmap('emotion_primary', range, bucket),
+          ...DESIRE_METRIC_KEYS.map((key) => fetchMetric(key, range, bucket)),
+        ])
       if (disposed) return
-      setIntensity(i)
+      const emotionByTimestamp = new Map(
+        emotionTimeline.map((point) => [point.ts, point.value]),
+      )
+      setIntensity(
+        i.map((point) => ({
+          ...point,
+          emotion_primary: emotionByTimestamp.get(point.ts),
+        })),
+      )
       setUsage(u)
       setTimeline(t)
       setValence(v)
       setArousal(a)
+      setEmotionHeatmap(heatmap)
       setDesireMetrics({
         information_hunger: desireSeries[0] ?? [],
         social_thirst: desireSeries[1] ?? [],
@@ -124,6 +141,7 @@ export const useHistoryData = (
     timeline,
     valence,
     arousal,
+    emotionHeatmap,
     desireMetrics,
     toolSeriesKeys,
     desireChartData,
