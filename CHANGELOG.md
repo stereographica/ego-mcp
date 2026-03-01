@@ -2,6 +2,20 @@
 
 ego-mcp のリリース履歴。
 
+## [0.3.0] - 2026-03-01
+
+### Fixed
+- ego-mcp: `list_recent()` が ChromaDB の `get(limit=N)` の順序不定性により最新記憶を返さないバグを修正（全件取得→ソート→スライスに変更）
+- ego-mcp: `list_episodes()` も同様に全件取得→ソート→スライスに修正
+- ego-mcp: `EMOTION_DEFAULTS` に `"contentment"` / `"melancholy"` のエントリ追加（v0.2.0 での Emotion enum 追加時の漏れ）
+- Dashboard `sql_store.py` の valence/arousal クエリに `::double precision` キャスト追加、Python 側の型チェックを `(int, float)` に統一
+
+### Added
+- Dashboard ログベースマイグレーションスクリプト（`scripts/migrate_emotion_telemetry.py`）— completion テレメトリの壊れた感情データを invocation ログから再構築
+
+### Changed
+- バージョンアップ: ego-mcp 0.2.9→0.3.0
+
 ## [0.2.9] - 2026-03-01
 
 ### Added

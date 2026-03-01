@@ -147,8 +147,12 @@ class EpisodeStore:
 
     async def list_episodes(self, limit: int = 20) -> list[Episode]:
         """List all episodes, newest first."""
+        total = int(self._collection.count())
+        if total == 0 or limit <= 0:
+            return []
+
         results = self._collection.get(
-            limit=limit,
+            limit=total,
             include=["documents", "metadatas"],
         )
         episodes = []
@@ -157,4 +161,4 @@ class EpisodeStore:
         ):
             episodes.append(Episode.from_metadata(eid, doc, meta))
         episodes.sort(key=lambda e: e.start_time, reverse=True)
-        return episodes
+        return episodes[:limit]
