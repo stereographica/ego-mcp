@@ -1,6 +1,14 @@
 # Changelog
 
-ego-mcp のリリース履歴。
+ego-mcp / dashboard のリリース履歴。
+
+## [dashboard 0.2.1] - 2026-03-02
+
+### Added
+- Dashboard History タブに Emotion trend チャートを追加し、`neutral` を中央（0）として上側をポジティブ、下側をネガティブに時系列表示
+
+### Changed
+- バージョンアップ: dashboard 0.2.0→0.2.1, dashboard/frontend 0.1.0→0.2.1
 
 ## [0.3.0] - 2026-03-01
 

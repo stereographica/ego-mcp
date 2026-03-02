@@ -1,5 +1,6 @@
 import { DesireHistoryChart } from '@/components/history/desire-history-chart'
 import { EmotionDistributionChart } from '@/components/history/emotion-distribution-chart'
+import { EmotionTimelineChart } from '@/components/history/emotion-timeline-chart'
 import { IntensityChart } from '@/components/history/intensity-chart'
 import { ToolUsageChart } from '@/components/history/tool-usage-chart'
 import { ValenceArousalChart } from '@/components/history/valence-arousal-chart'
@@ -18,6 +19,7 @@ export const HistoryTab = ({ range, preset }: HistoryTabProps) => {
     timeline,
     valence,
     arousal,
+    emotionTrend,
     emotionHeatmap,
     toolSeriesKeys,
     desireChartData,
@@ -30,6 +32,7 @@ export const HistoryTab = ({ range, preset }: HistoryTabProps) => {
         toolSeriesKeys={toolSeriesKeys}
         timeline={timeline}
       />
+      <EmotionTimelineChart points={emotionTrend} />
       <IntensityChart intensity={intensity} />
       <EmotionDistributionChart heatmapData={emotionHeatmap} />
       <ValenceArousalChart valence={valence} arousal={arousal} />

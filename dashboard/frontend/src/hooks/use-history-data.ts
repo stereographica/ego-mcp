@@ -13,6 +13,7 @@ import {
 import { DESIRE_METRIC_KEYS, type DesireMetricKey } from '@/constants'
 import type {
   DateRange,
+  EmotionTrendPoint,
   HeatmapPoint,
   IntensityPoint,
   SeriesPoint,
@@ -48,6 +49,7 @@ export const useHistoryData = (
   const [timeline, setTimeline] = useState<StringPoint[]>([])
   const [valence, setValence] = useState<SeriesPoint[]>([])
   const [arousal, setArousal] = useState<SeriesPoint[]>([])
+  const [emotionTrend, setEmotionTrend] = useState<EmotionTrendPoint[]>([])
   const [emotionHeatmap, setEmotionHeatmap] = useState<HeatmapPoint[]>([])
   const [desireMetrics, setDesireMetrics] = useState<DesireMetricSeriesMap>(
     makeEmptyDesireMetricSeriesMap,
@@ -75,6 +77,29 @@ export const useHistoryData = (
       const emotionByTimestamp = new Map(
         emotionTimeline.map((point) => [point.ts, point.value]),
       )
+      const valenceSorted = [...v].sort((lhs, rhs) =>
+        lhs.ts.localeCompare(rhs.ts),
+      )
+      const emotionTimelineSorted = [...emotionTimeline].sort((lhs, rhs) =>
+        lhs.ts.localeCompare(rhs.ts),
+      )
+      const nextEmotionTrend: EmotionTrendPoint[] = []
+      let emotionCursor = 0
+      let currentEmotion: string | undefined
+      for (const point of valenceSorted) {
+        while (
+          emotionCursor < emotionTimelineSorted.length &&
+          emotionTimelineSorted[emotionCursor].ts <= point.ts
+        ) {
+          currentEmotion = emotionTimelineSorted[emotionCursor].value
+          emotionCursor += 1
+        }
+        nextEmotionTrend.push({
+          ts: point.ts,
+          value: Math.max(-1, Math.min(1, point.value)),
+          emotion_primary: currentEmotion,
+        })
+      }
       setIntensity(
         i.map((point) => ({
           ...point,
@@ -85,6 +110,7 @@ export const useHistoryData = (
       setTimeline(t)
       setValence(v)
       setArousal(a)
+      setEmotionTrend(nextEmotionTrend)
       setEmotionHeatmap(heatmap)
       setDesireMetrics({
         information_hunger: desireSeries[0] ?? [],
@@ -141,6 +167,7 @@ export const useHistoryData = (
     timeline,
     valence,
     arousal,
+    emotionTrend,
     emotionHeatmap,
     desireMetrics,
     toolSeriesKeys,
