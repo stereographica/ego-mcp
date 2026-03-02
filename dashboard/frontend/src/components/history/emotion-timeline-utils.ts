@@ -11,6 +11,11 @@ export type EmotionAxis = {
   ticks: number[]
 }
 
+type EmotionPointLike = {
+  emotion_primary?: string | null
+  emotion_level?: number | null
+}
+
 const FALLBACK_EMOTION_VALENCE: Record<string, number> = {
   happy: 0.6,
   excited: 0.7,
@@ -45,6 +50,22 @@ const FALLBACK_EMOTION_VALENCE: Record<string, number> = {
 }
 
 export const normalizeEmotion = (value: string) => value.trim().toLowerCase()
+
+export const emotionLabelForPoint = (
+  point: EmotionPointLike | undefined,
+  levelToEmotion: Map<number, string>,
+) => {
+  if (
+    typeof point?.emotion_primary === 'string' &&
+    point.emotion_primary.length > 0
+  ) {
+    return normalizeEmotion(point.emotion_primary)
+  }
+  if (typeof point?.emotion_level === 'number') {
+    return levelToEmotion.get(point.emotion_level) ?? 'unknown'
+  }
+  return 'unknown'
+}
 
 const valenceFor = (emotion: string, observed: number | undefined) => {
   if (Number.isFinite(observed)) return observed as number
