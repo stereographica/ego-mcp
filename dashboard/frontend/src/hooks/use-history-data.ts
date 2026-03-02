@@ -84,20 +84,23 @@ export const useHistoryData = (
         lhs.ts.localeCompare(rhs.ts),
       )
       const nextEmotionTrend: EmotionTrendPoint[] = []
-      let emotionCursor = 0
-      let currentEmotion: string | undefined
-      for (const point of valenceSorted) {
+      let valenceCursor = 0
+      let currentValence = 0
+      for (const point of emotionTimelineSorted) {
         while (
-          emotionCursor < emotionTimelineSorted.length &&
-          emotionTimelineSorted[emotionCursor].ts <= point.ts
+          valenceCursor < valenceSorted.length &&
+          valenceSorted[valenceCursor].ts <= point.ts
         ) {
-          currentEmotion = emotionTimelineSorted[emotionCursor].value
-          emotionCursor += 1
+          currentValence = Math.max(
+            -1,
+            Math.min(1, valenceSorted[valenceCursor].value),
+          )
+          valenceCursor += 1
         }
         nextEmotionTrend.push({
           ts: point.ts,
-          value: Math.max(-1, Math.min(1, point.value)),
-          emotion_primary: currentEmotion,
+          value: currentValence,
+          emotion_primary: point.value,
         })
       }
       setIntensity(
