@@ -5,9 +5,10 @@ ego-mcp / dashboard のリリース履歴。
 ## [dashboard 0.2.1] - 2026-03-02
 
 ### Added
-- Dashboard History タブに Emotion trend チャートを追加し、`neutral` を中央（0）として上側をポジティブ、下側をネガティブに時系列表示
+- Dashboard History タブに Emotion trend チャートを追加し、`neutral` を中央（0）に固定した感情名（`curious`, `happy`, `sad` など）軸で時系列変化を表示
 
 ### Changed
+- Dashboard History タブのパネル順を調整し、`Intensity history` の直後に `Emotion trend` を配置（`Emotion distribution` と隣接）
 - バージョンアップ: dashboard 0.2.0→0.2.1, dashboard/frontend 0.1.0→0.2.1
 
 ## [0.3.0] - 2026-03-01
