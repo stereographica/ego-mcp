@@ -14,26 +14,51 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  buildEmotionAxis,
+  normalizeEmotion,
+} from '@/components/history/emotion-timeline-utils'
 import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
 import type { EmotionTrendPoint } from '@/types'
+import { useMemo } from 'react'
 
 type EmotionTimelineChartProps = {
   points: EmotionTrendPoint[]
 }
 
 const config: ChartConfig = {
-  value: { label: 'emotion polarity', color: 'var(--color-chart-5)' },
-}
-
-const formatPolarityTick = (value: number) => {
-  if (value === 1) return 'positive'
-  if (value === 0) return 'neutral'
-  if (value === -1) return 'negative'
-  return String(value)
+  emotion_level: { label: 'emotion', color: 'var(--color-chart-5)' },
 }
 
 export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
   const { formatTs } = useTimestampFormatter()
+  const { chartData, ticks, levelToEmotion, maxLevel } = useMemo(() => {
+    const axis = buildEmotionAxis(points)
+    const nextData = points.map((point) => {
+      const emotion =
+        typeof point.emotion_primary === 'string'
+          ? normalizeEmotion(point.emotion_primary)
+          : undefined
+      return {
+        ...point,
+        emotion_primary: emotion,
+        emotion_level:
+          typeof emotion === 'string'
+            ? (axis.emotionToLevel.get(emotion) ?? null)
+            : null,
+      }
+    })
+    const maxAbsTick = axis.ticks.reduce(
+      (max, tick) => Math.max(max, Math.abs(tick)),
+      0,
+    )
+    return {
+      chartData: nextData,
+      ticks: axis.ticks,
+      levelToEmotion: axis.levelToEmotion,
+      maxLevel: Math.max(1, maxAbsTick),
+    }
+  }, [points])
 
   const formatTooltipLabel = (
     label: unknown,
@@ -55,13 +80,16 @@ export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
       </CardHeader>
       <CardContent>
         <ChartContainer config={config} className="h-[260px] w-full">
-          <LineChart data={points}>
+          <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="ts" hide />
             <YAxis
-              domain={[-1, 1]}
-              ticks={[-1, 0, 1]}
-              tickFormatter={formatPolarityTick}
+              domain={[-maxLevel, maxLevel]}
+              ticks={ticks}
+              allowDecimals={false}
+              tickFormatter={(tickValue) =>
+                levelToEmotion.get(Number(tickValue)) ?? ''
+              }
             />
             <ReferenceLine y={0} stroke="#ccc" strokeDasharray="4 4" />
             <ChartTooltip
@@ -71,10 +99,9 @@ export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
             />
             <Line
               type="monotone"
-              dataKey="value"
-              stroke="var(--color-value)"
+              dataKey="emotion_level"
+              stroke="var(--color-emotion_level)"
               dot={false}
-              connectNulls
             />
           </LineChart>
         </ChartContainer>
