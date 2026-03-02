@@ -32,8 +32,8 @@ export const HistoryTab = ({ range, preset }: HistoryTabProps) => {
         toolSeriesKeys={toolSeriesKeys}
         timeline={timeline}
       />
-      <EmotionTimelineChart points={emotionTrend} />
       <IntensityChart intensity={intensity} />
+      <EmotionTimelineChart points={emotionTrend} />
       <EmotionDistributionChart heatmapData={emotionHeatmap} />
       <ValenceArousalChart valence={valence} arousal={arousal} />
       <DesireHistoryChart desireChartData={desireChartData} />
