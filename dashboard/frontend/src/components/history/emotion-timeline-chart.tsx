@@ -16,6 +16,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   buildEmotionAxis,
+  emotionLabelForPoint,
   normalizeEmotion,
 } from '@/components/history/emotion-timeline-utils'
 import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
@@ -73,6 +74,24 @@ export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
     return labelText
   }
 
+  const formatTooltipValue = (
+    _value: unknown,
+    _name: unknown,
+    item: {
+      payload?: { emotion_primary?: string; emotion_level?: number | null }
+    },
+  ) => {
+    const emotion = emotionLabelForPoint(item.payload, levelToEmotion)
+    return (
+      <div className="flex w-full items-center justify-between gap-2 leading-none">
+        <span className="text-muted-foreground">emotion</span>
+        <span className="text-foreground font-mono font-medium tabular-nums">
+          {emotion}
+        </span>
+      </div>
+    )
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -94,7 +113,10 @@ export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
             <ReferenceLine y={0} stroke="#ccc" strokeDasharray="4 4" />
             <ChartTooltip
               content={
-                <ChartTooltipContent labelFormatter={formatTooltipLabel} />
+                <ChartTooltipContent
+                  labelFormatter={formatTooltipLabel}
+                  formatter={formatTooltipValue}
+                />
               }
             />
             <Line
