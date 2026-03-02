@@ -33,33 +33,35 @@ const config: ChartConfig = {
 
 export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
   const { formatTs } = useTimestampFormatter()
-  const { chartData, ticks, levelToEmotion, maxLevel } = useMemo(() => {
-    const axis = buildEmotionAxis(points)
-    const nextData = points.map((point) => {
-      const emotion =
-        typeof point.emotion_primary === 'string'
-          ? normalizeEmotion(point.emotion_primary)
-          : undefined
+  const { chartData, ticks, levelToEmotion, maxLevel, chartHeight } =
+    useMemo(() => {
+      const axis = buildEmotionAxis(points)
+      const nextData = points.map((point) => {
+        const emotion =
+          typeof point.emotion_primary === 'string'
+            ? normalizeEmotion(point.emotion_primary)
+            : undefined
+        return {
+          ...point,
+          emotion_primary: emotion,
+          emotion_level:
+            typeof emotion === 'string'
+              ? (axis.emotionToLevel.get(emotion) ?? null)
+              : null,
+        }
+      })
+      const maxAbsTick = axis.ticks.reduce(
+        (max, tick) => Math.max(max, Math.abs(tick)),
+        0,
+      )
       return {
-        ...point,
-        emotion_primary: emotion,
-        emotion_level:
-          typeof emotion === 'string'
-            ? (axis.emotionToLevel.get(emotion) ?? null)
-            : null,
+        chartData: nextData,
+        ticks: axis.ticks,
+        levelToEmotion: axis.levelToEmotion,
+        maxLevel: Math.max(1, maxAbsTick),
+        chartHeight: Math.max(320, axis.ticks.length * 18),
       }
-    })
-    const maxAbsTick = axis.ticks.reduce(
-      (max, tick) => Math.max(max, Math.abs(tick)),
-      0,
-    )
-    return {
-      chartData: nextData,
-      ticks: axis.ticks,
-      levelToEmotion: axis.levelToEmotion,
-      maxLevel: Math.max(1, maxAbsTick),
-    }
-  }, [points])
+    }, [points])
 
   const formatTooltipLabel = (
     label: unknown,
@@ -98,7 +100,11 @@ export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
         <CardTitle className="text-sm">Emotion trend</CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={config} className="h-[260px] w-full">
+        <ChartContainer
+          config={config}
+          className="w-full"
+          style={{ height: `${chartHeight}px` }}
+        >
           <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="ts" hide />
@@ -106,6 +112,7 @@ export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
               domain={[-maxLevel, maxLevel]}
               ticks={ticks}
               allowDecimals={false}
+              interval={0}
               tickFormatter={(tickValue) =>
                 levelToEmotion.get(Number(tickValue)) ?? ''
               }
