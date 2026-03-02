@@ -45,6 +45,7 @@ export type DateRange = {
 
 export type SeriesPoint = { ts: string; value: number }
 export type IntensityPoint = SeriesPoint & { emotion_primary?: string }
+export type EmotionTrendPoint = SeriesPoint & { emotion_primary?: string }
 export type UsagePoint = { ts: string; [key: string]: number | string }
 export type StringPoint = { ts: string; value: string }
 export type HeatmapPoint = { ts: string; counts: Record<string, number> }
