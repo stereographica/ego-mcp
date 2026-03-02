@@ -19,7 +19,7 @@ describe('useHistoryData', () => {
     vi.restoreAllMocks()
   })
 
-  it('merges intensity points with emotion timeline and returns emotion heatmap', async () => {
+  it('builds emotion trend with neutral-centered valence and merged emotion labels', async () => {
     const range = {
       from: '2026-01-01T12:00:00Z',
       to: '2026-01-01T12:10:00Z',
@@ -30,10 +30,16 @@ describe('useHistoryData', () => {
     ])
     vi.mocked(api.fetchUsage).mockResolvedValue([])
     vi.mocked(api.fetchTimeline).mockResolvedValue([])
-    vi.mocked(api.fetchValence).mockResolvedValue([])
+    vi.mocked(api.fetchValence).mockResolvedValue([
+      { ts: '2026-01-01T12:01:00Z', value: 0.4 },
+      { ts: '2026-01-01T12:02:00Z', value: -0.6 },
+      { ts: '2026-01-01T12:03:00Z', value: 1.2 },
+    ])
     vi.mocked(api.fetchArousal).mockResolvedValue([])
     vi.mocked(api.fetchStringTimeline).mockResolvedValue([
+      { ts: '2026-01-01T12:00:30Z', value: 'neutral' },
       { ts: '2026-01-01T12:01:00Z', value: 'curious' },
+      { ts: '2026-01-01T12:02:00Z', value: 'sad' },
     ])
     vi.mocked(api.fetchStringHeatmap).mockResolvedValue([
       { ts: '2026-01-01T12:00:00Z', counts: { curious: 2 } },
@@ -52,6 +58,11 @@ describe('useHistoryData', () => {
     ).toBe('curious')
     expect(result.current.emotionHeatmap).toEqual([
       { ts: '2026-01-01T12:00:00Z', counts: { curious: 2 } },
+    ])
+    expect(result.current.emotionTrend).toEqual([
+      { ts: '2026-01-01T12:01:00Z', value: 0.4, emotion_primary: 'curious' },
+      { ts: '2026-01-01T12:02:00Z', value: -0.6, emotion_primary: 'sad' },
+      { ts: '2026-01-01T12:03:00Z', value: 1, emotion_primary: 'sad' },
     ])
     expect(api.fetchStringTimeline).toHaveBeenCalledWith(
       'emotion_primary',
