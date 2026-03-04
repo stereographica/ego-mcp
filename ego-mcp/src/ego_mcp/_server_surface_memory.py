@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Callable
 
+from ego_mcp import timezone_utils
 from ego_mcp._server_context import (
     _find_related_forgotten_questions,
     _relationship_store,
@@ -313,7 +314,7 @@ async def _handle_recall(
         data = "No related memories found."
     else:
         lines = [f"{len(results)} of ~{total_count} memories (showing top matches):"]
-        now = datetime.now(timezone.utc)
+        now = timezone_utils.now()
         for i, result in enumerate(results, 1):
             lines.append(_format_recall_entry(i, result, now=now))
         data = "\n".join(lines)

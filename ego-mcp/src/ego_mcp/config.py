@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _DEFAULT_MODELS: dict[str, str] = {
     "gemini": "gemini-embedding-001",
@@ -33,6 +34,7 @@ class EgoConfig:
         EGO_MCP_DATA_DIR: Data directory (default: ~/.ego-mcp/data)
         EGO_MCP_COMPANION_NAME: Companion name (default: "Master")
         EGO_MCP_WORKSPACE_DIR: OpenClaw workspace root for Markdown sync (optional)
+        EGO_MCP_TIMEZONE: IANA timezone ID (default: "UTC")
     """
 
     embedding_provider: str
@@ -41,6 +43,7 @@ class EgoConfig:
     data_dir: Path
     companion_name: str
     workspace_dir: Path | None
+    timezone: str
 
     @classmethod
     def from_env(cls) -> EgoConfig:
@@ -73,6 +76,14 @@ class EgoConfig:
         companion_name = os.environ.get("EGO_MCP_COMPANION_NAME", "Master")
         workspace_dir_raw = os.environ.get("EGO_MCP_WORKSPACE_DIR", "").strip()
         workspace_dir = Path(workspace_dir_raw) if workspace_dir_raw else None
+        timezone = os.environ.get("EGO_MCP_TIMEZONE", "UTC")
+        try:
+            ZoneInfo(timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(
+                f"Invalid timezone '{timezone}' in EGO_MCP_TIMEZONE. "
+                "Use an IANA timezone ID (e.g. 'UTC', 'Asia/Tokyo')."
+            ) from exc
 
         return cls(
             embedding_provider=provider,
@@ -81,4 +92,5 @@ class EgoConfig:
             data_dir=data_dir,
             companion_name=companion_name,
             workspace_dir=workspace_dir,
+            timezone=timezone,
         )

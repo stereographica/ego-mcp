@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import math
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
+from ego_mcp import timezone_utils
 from ego_mcp.config import EgoConfig
 from ego_mcp.memory import MemoryStore
 from ego_mcp.relationship import RelationshipStore
@@ -110,7 +111,7 @@ async def _summarize_conversation_tendency(
     if not pool:
         return "no recent conversation memories", "unknown tone", [], []
 
-    now = datetime.now(timezone.utc)
+    now = timezone_utils.now()
     window_start = now - timedelta(days=7)
 
     last_7d = 0
@@ -121,7 +122,7 @@ async def _summarize_conversation_tendency(
         try:
             ts = datetime.fromisoformat(mem.timestamp)
             if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
+                ts = ts.replace(tzinfo=timezone_utils.app_timezone())
             if ts >= window_start:
                 last_7d += 1
         except ValueError:

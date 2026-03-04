@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Sequence
+
+from ego_mcp import timezone_utils
 
 if TYPE_CHECKING:
     from ego_mcp.memory import MemoryStore
@@ -86,7 +88,7 @@ class ConsolidationEngine:
         similarity-based links between them.
         """
         effective_window = window if window is not None else window_hours
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=max(1, effective_window))
+        cutoff = timezone_utils.now() - timedelta(hours=max(1, effective_window))
         recent = await store.list_recent(n=max_replay_events * 2)
         recent = self._collect_replay_targets(recent, cutoff)
 
@@ -186,7 +188,7 @@ class ConsolidationEngine:
         try:
             ts = datetime.fromisoformat(timestamp)
             if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
+                ts = ts.replace(tzinfo=timezone_utils.app_timezone())
             return ts >= cutoff
         except ValueError:
             return False

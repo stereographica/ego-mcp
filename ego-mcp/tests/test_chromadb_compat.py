@@ -24,6 +24,7 @@ def test_init_server_uses_real_chromadb_client(tmp_path: Path) -> None:
         data_dir=tmp_path / "ego-data",
         companion_name="Master",
         workspace_dir=None,
+        timezone="UTC",
     )
 
     server_mod.init_server(config)

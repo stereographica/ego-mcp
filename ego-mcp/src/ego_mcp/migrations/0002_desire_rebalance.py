@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
+
+from ego_mcp import timezone_utils
 
 TARGET_VERSION = "0.2.0"
 
@@ -22,7 +23,7 @@ def up(data_dir: Path) -> None:
     if not isinstance(payload, dict):
         return
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = timezone_utils.now().isoformat()
     for state in payload.values():
         if isinstance(state, dict):
             state["last_satisfied"] = now_iso

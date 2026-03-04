@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Callable
 
+from ego_mcp import timezone_utils
 from ego_mcp._server_context import _relationship_store
 from ego_mcp._server_emotion_formatting import (
     _format_month_emotion_layer,
@@ -186,7 +187,7 @@ async def _handle_emotion_trend(memory: MemoryStore) -> str:
         )
         return compose_response(data, SCAFFOLD_EMOTION_TREND)
 
-    now = datetime.now(timezone.utc)
+    now = timezone_utils.now()
     sections = [_format_recent_emotion_layer(memories, now=now)]
     if total >= 15:
         sections.append(_format_week_emotion_layer(memories, now=now))

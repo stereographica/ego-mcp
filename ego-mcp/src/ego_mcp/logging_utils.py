@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ego_mcp import timezone_utils
+
 TRACE_LEVEL_NUM = 5
 logging.addLevelName(TRACE_LEVEL_NUM, "TRACE")
 
@@ -84,7 +86,7 @@ def _parse_log_level(value: str | None) -> int:
 
 def get_log_path() -> Path:
     log_dir = Path(os.getenv("EGO_MCP_LOG_DIR", "/tmp")).expanduser()
-    date_stamp = datetime.now().strftime("%Y-%m-%d")
+    date_stamp = timezone_utils.now().strftime("%Y-%m-%d")
     return log_dir / f"ego-mcp-{date_stamp}.log"
 
 
