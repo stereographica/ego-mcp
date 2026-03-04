@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from ego_mcp import timezone_utils
 
 # Desire definitions: name → {satisfaction_hours, level (Maslow tier)}
 DESIRES: dict[str, dict[str, Any]] = {
@@ -68,7 +70,7 @@ class DesireEngine:
 
     def _init_default_state(self) -> dict[str, dict[str, Any]]:
         """Create default state for all desires."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = timezone_utils.now().isoformat()
         return {
             name: {
                 "last_satisfied": now,
@@ -88,7 +90,7 @@ class DesireEngine:
         prediction_error: dict[str, float] | None = None,
     ) -> dict[str, float]:
         """Compute current level for all desires with transient modulation."""
-        now = datetime.now(timezone.utc)
+        now = timezone_utils.now()
         levels: dict[str, float] = {}
         context_boosts = context_boosts or {}
         emotional_modulation = emotional_modulation or {}
@@ -104,7 +106,7 @@ class DesireEngine:
                 try:
                     last = datetime.fromisoformat(last_str)
                     if last.tzinfo is None:
-                        last = last.replace(tzinfo=timezone.utc)
+                        last = last.replace(tzinfo=timezone_utils.app_timezone())
                     elapsed = (now - last).total_seconds() / 3600
                 except ValueError:
                     elapsed = config["satisfaction_hours"]  # assume half
@@ -134,7 +136,7 @@ class DesireEngine:
         if name not in DESIRES:
             raise ValueError(f"Unknown desire: {name}")
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = timezone_utils.now().isoformat()
         if name not in self._state:
             self._state[name] = {}
         self._state[name]["last_satisfied"] = now
@@ -164,7 +166,7 @@ class DesireEngine:
 
         if name not in self._state:
             self._state[name] = {
-                "last_satisfied": datetime.now(timezone.utc).isoformat(),
+                "last_satisfied": timezone_utils.now().isoformat(),
                 "satisfaction_quality": 0.5,
                 "boost": 0.0,
             }

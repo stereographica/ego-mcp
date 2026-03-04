@@ -6,10 +6,11 @@ import json
 import math
 import uuid
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ego_mcp import timezone_utils
 from ego_mcp.types import SelfModel
 
 
@@ -31,7 +32,7 @@ def _parse_question_timestamp(timestamp: str) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=timezone_utils.app_timezone())
     return parsed
 
 
@@ -41,9 +42,9 @@ def _age_days_since(timestamp: str, now: datetime | None = None) -> float:
     if parsed is None:
         return 0.0
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = timezone_utils.now()
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=timezone_utils.app_timezone())
     delta = (now - parsed).total_seconds()
     if delta <= 0:
         return 0.0
@@ -73,7 +74,7 @@ class SelfModelStore:
         data = asdict(model)
         data["unresolved_questions"] = []
         data["question_log"] = []
-        data["last_updated"] = datetime.now(timezone.utc).isoformat()
+        data["last_updated"] = timezone_utils.now().isoformat()
         return data
 
     def _load(self) -> None:
@@ -119,7 +120,7 @@ class SelfModelStore:
     def update(self, patch: dict[str, Any]) -> SelfModel:
         for key, value in patch.items():
             self._data[key] = value
-        self._data["last_updated"] = datetime.now(timezone.utc).isoformat()
+        self._data["last_updated"] = timezone_utils.now().isoformat()
         self._save()
         return self.get()
 
@@ -151,7 +152,7 @@ class SelfModelStore:
         question_log = self._data.get("question_log", [])
         if not isinstance(question_log, list):
             question_log = []
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = timezone_utils.now().isoformat()
         question_log.append(
             {
                 "id": question_id,
@@ -168,7 +169,7 @@ class SelfModelStore:
             unresolved = []
         unresolved.append(question_id)
         self._data["unresolved_questions"] = unresolved
-        self._data["last_updated"] = datetime.now(timezone.utc).isoformat()
+        self._data["last_updated"] = timezone_utils.now().isoformat()
 
         self._save()
         return question_id
@@ -187,7 +188,7 @@ class SelfModelStore:
                 if isinstance(item, dict) and item.get("id") == question_id:
                     item["resolved"] = True
                     break
-        self._data["last_updated"] = datetime.now(timezone.utc).isoformat()
+        self._data["last_updated"] = timezone_utils.now().isoformat()
         self._save()
         return True
 
@@ -200,7 +201,7 @@ class SelfModelStore:
         for item in question_log:
             if isinstance(item, dict) and item.get("id") == question_id:
                 item["importance"] = _clamp_question_importance(importance)
-                self._data["last_updated"] = datetime.now(timezone.utc).isoformat()
+                self._data["last_updated"] = timezone_utils.now().isoformat()
                 self._save()
                 return True
         return False
@@ -224,7 +225,7 @@ class SelfModelStore:
 
     def get_unresolved_questions_with_salience(self) -> list[dict[str, Any]]:
         """Return all unresolved questions enriched with salience and age metadata."""
-        now = datetime.now(timezone.utc)
+        now = timezone_utils.now()
 
         unresolved_ids_raw = self._data.get("unresolved_questions", [])
         unresolved_ids = (

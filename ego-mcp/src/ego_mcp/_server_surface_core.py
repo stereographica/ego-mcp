@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
+from ego_mcp import timezone_utils
 from ego_mcp._server_context import (
     _derive_desire_modulation,
     _fading_important_questions,
@@ -317,7 +317,7 @@ async def _handle_consider_them(
         sensitive_topics,
     ) = await _summarize_conversation_tendency(memory, person)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = timezone_utils.now().isoformat()
     if dominant_tone != "unknown tone":
         store.add_interaction(person, now_iso, dominant_tone)
     rel = store.apply_tom_feedback(
