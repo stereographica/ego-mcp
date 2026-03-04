@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Callable
 
+from ego_mcp import timezone_utils
 from ego_mcp.memory import calculate_time_decay, count_emotions_weighted
 from ego_mcp.types import Memory, MemorySearchResult
 
@@ -59,15 +60,15 @@ def _truncate_for_log(text: str, limit: int = 1200) -> tuple[str, bool]:
 def _relative_time(timestamp: str, now: datetime | None = None) -> str:
     """Format an ISO8601 timestamp as compact relative time (e.g. 2d ago)."""
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = timezone_utils.now()
     try:
         dt = datetime.fromisoformat(timestamp)
     except ValueError:
         return "unknown time"
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=timezone_utils.app_timezone())
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=timezone_utils.app_timezone())
 
     seconds = max(0, int((now - dt).total_seconds()))
     if seconds < 60:
@@ -94,7 +95,7 @@ def _format_recall_entry(
 ) -> str:
     """Render a single recall result in the compact two-line format."""
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = timezone_utils.now()
     memory = result.memory
     age = _call_relative_time(memory.timestamp, now=now)
     content = _truncate_for_quote(memory.content, limit=70)
@@ -150,7 +151,7 @@ def _parse_iso_datetime(timestamp: str) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=timezone_utils.app_timezone())
     return parsed
 
 
@@ -159,7 +160,7 @@ def _memories_within_days(
 ) -> list[Memory]:
     """Return memories whose timestamps fall within the last `days` days."""
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = timezone_utils.now()
     window_start = now - timedelta(days=days)
     selected: list[Memory] = []
     for memory in memories:

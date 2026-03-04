@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+
+from ego_mcp import timezone_utils
 
 
 class Emotion(str, Enum):
@@ -99,7 +100,7 @@ class Memory:
     @staticmethod
     def now_iso() -> str:
         """Return current UTC time as ISO 8601 string."""
-        return datetime.now(timezone.utc).isoformat()
+        return timezone_utils.now().isoformat()
 
 
 @dataclass

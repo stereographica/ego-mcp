@@ -21,6 +21,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "EGO_MCP_DATA_DIR",
         "EGO_MCP_COMPANION_NAME",
         "EGO_MCP_WORKSPACE_DIR",
+        "EGO_MCP_TIMEZONE",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -38,6 +39,7 @@ class TestGeminiDefaults:
         assert config.companion_name == "Master"
         assert config.data_dir == Path.home() / ".ego-mcp" / "data"
         assert config.workspace_dir is None
+        assert config.timezone == "UTC"
 
 
 class TestOpenAIExplicit:
@@ -117,3 +119,18 @@ class TestCustomSettings:
         config = EgoConfig.from_env()
 
         assert config.workspace_dir == Path("/tmp/openclaw-workspace")
+
+
+    def test_custom_timezone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setenv("EGO_MCP_TIMEZONE", "Asia/Tokyo")
+        config = EgoConfig.from_env()
+
+        assert config.timezone == "Asia/Tokyo"
+
+    def test_invalid_timezone_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setenv("EGO_MCP_TIMEZONE", "Invalid/Timezone")
+
+        with pytest.raises(ValueError, match="Invalid timezone"):
+            EgoConfig.from_env()

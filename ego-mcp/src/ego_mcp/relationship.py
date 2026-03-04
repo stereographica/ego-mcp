@@ -5,10 +5,10 @@ from __future__ import annotations
 import dataclasses
 import json
 from dataclasses import asdict
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ego_mcp import timezone_utils
 from ego_mcp.types import RelationshipModel
 
 _UPDATABLE_FIELDS = frozenset(
@@ -140,7 +140,7 @@ class RelationshipStore:
     ) -> RelationshipModel:
         """Update model fields inferred from recent ToM analysis."""
         raw = self._get_raw(person_id)
-        now = datetime.now(timezone.utc).isoformat()
+        now = timezone_utils.now().isoformat()
 
         if dominant_tone and dominant_tone != "unknown tone":
             trajectory = raw.get("recent_mood_trajectory", [])
