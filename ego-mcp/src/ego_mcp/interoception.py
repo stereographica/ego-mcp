@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
+from ego_mcp import timezone_utils
+
 try:
     import psutil  # type: ignore[import-untyped]
 except Exception:  # pragma: no cover
@@ -14,7 +16,7 @@ except Exception:  # pragma: no cover
 def time_phase(now: datetime | None = None) -> str:
     """Classify current time into coarse cognitive phases."""
     if now is None:
-        now = datetime.now()
+        now = timezone_utils.now()
     hour = now.hour
     if 0 <= hour <= 4:
         return "late_night"
@@ -62,7 +64,7 @@ def get_body_state() -> dict[str, str]:
     uptime_hours = "0.0"
     if psutil is not None:
         try:
-            uptime_seconds = datetime.now().timestamp() - float(psutil.boot_time())
+            uptime_seconds = timezone_utils.now().timestamp() - float(psutil.boot_time())
             uptime_hours = f"{max(0.0, uptime_seconds / 3600):.1f}"
         except Exception:
             uptime_hours = "0.0"

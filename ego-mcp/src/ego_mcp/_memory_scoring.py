@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime
 
+from ego_mcp import timezone_utils
 from ego_mcp.types import Memory
 
 EMOTION_BOOST_MAP: dict[str, float] = {
@@ -30,12 +31,12 @@ def calculate_time_decay(
 ) -> float:
     """Exponential time decay. Returns 0.0 (forgotten) to 1.0 (fresh)."""
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = timezone_utils.now()
 
     try:
         memory_time = datetime.fromisoformat(timestamp)
         if memory_time.tzinfo is None:
-            memory_time = memory_time.replace(tzinfo=timezone.utc)
+            memory_time = memory_time.replace(tzinfo=timezone_utils.app_timezone())
     except ValueError:
         return 1.0
 

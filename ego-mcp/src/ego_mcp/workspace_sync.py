@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
+from ego_mcp import timezone_utils
 from ego_mcp.types import Category, Memory
 
 
@@ -134,7 +135,7 @@ def _timestamp_parts(timestamp: str) -> tuple[str, str]:
     try:
         parsed = datetime.fromisoformat(timestamp)
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.replace(tzinfo=timezone_utils.app_timezone())
     except ValueError:
-        parsed = datetime.now(timezone.utc)
+        parsed = timezone_utils.now()
     return parsed.strftime("%Y-%m-%d"), parsed.strftime("%H:%M")
