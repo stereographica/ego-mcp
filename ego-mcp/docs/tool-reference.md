@@ -29,7 +29,7 @@
 Last introspection (2h ago):
 "Master was struggling with OpenClaw config. Want to help but will wait until asked."
 
-Desires: curiosity[high] social_thirst[mid]
+Something catches your attention. You need to know something.
 Master: last interaction 2h ago. Seemed busy.
 
 ---
@@ -58,7 +58,8 @@ If something is hard to say yet, you can keep it with remember(private=true).
 **Response example:**
 
 ```
-curiosity[0.8/high] social_thirst[0.6/mid] cognitive_coherence[0.7/high] expression[0.3/low]
+You need to know something. You want to reach out.
+Something else stirs, but you can't name it.
 
 ---
 What is your strongest urge? Should you act on it now?
@@ -68,6 +69,7 @@ Something feels unresolved. You can't quite name it, but there's a nagging feeli
 Consider running introspect to see if anything surfaces.
 ```
 
+> Desire output uses experiential blend language (e.g., "You need to know something"). Numeric values are still sent to Dashboard telemetry.
 > The "nagging feeling" scaffold appears when fading high-importance questions boost `cognitive_coherence`.
 
 ---
@@ -95,7 +97,7 @@ Recent memories:
 - [yesterday] Discussed OpenClaw config with master (emotion: focused)
 - [2d ago] Watched sunset together (emotion: moved)
 
-Desires: curiosity[high] social_thirst[mid]
+Something catches your attention. You want to reach out.
 
 Unresolved questions:
 - [q_abc123] What's the ideal way to express concern? (importance: 5)
@@ -224,6 +226,11 @@ If you're sharing a meaningful moment, capture it with remember(shared_with=...)
       "type": "array",
       "items": { "type": "string" },
       "description": "Existing memory IDs to bundle into the episode alongside this new memory."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Freeform tags for this memory (used in Notion reinforcement/weakening)."
     }
   },
   "required": ["content"]
@@ -232,7 +239,7 @@ If you're sharing a meaningful moment, capture it with remember(shared_with=...)
 
 **Available emotions:** `happy`, `sad`, `surprised`, `moved`, `excited`, `nostalgic`, `curious`, `neutral`, `melancholy`, `anxious`, `contentment`, `frustrated`, `calm`, `contemplative`, `thoughtful`, `grateful`, `vulnerable`, `content`, `fulfilled`, `touched`, `concerned`, `hopeful`, `peaceful`, `love`, `warm`, `lonely`, `afraid`, `ashamed`, `bored`
 
-> Since v0.2.8, `intensity`, `valence`, `arousal` are automatically derived from the emotion label via `EMOTION_DEFAULTS` when not explicitly specified. For example, `emotion="excited"` defaults to `intensity=0.8, valence=0.7, arousal=0.8`. Explicit values always take priority over the automatic mapping.
+> `intensity`, `valence`, `arousal` are automatically derived from the emotion label via `EMOTION_DEFAULTS` when not explicitly specified. For example, `emotion="excited"` defaults to `intensity=0.8, valence=0.7, arousal=0.8`. Explicit values always take priority over the automatic mapping.
 
 **Response example:**
 
@@ -266,6 +273,11 @@ If your understanding has deepened, try expressing what changed specifically.
 
 > When a new memory is very similar (similarity >= 0.95) to an existing one, it is not saved. The response shows the existing memory and prompts the agent to reconsider.
 
+> **Remember behavior:**
+> - **Tags parameter**: Freeform tags can be attached to memories. Tags are used in Notion reinforcement/weakening (matching tag overlap triggers confidence updates).
+> - **Episodic resurfacing**: When saving, dormant (decay < 0.3) memories with high semantic similarity may resurface in the response, incrementing their access_count (making them harder to forget).
+> - **Scaffold additions**: Prompts for causal linking (`link_memories`) and post-hoc desire satisfaction (`satisfy_desire`) are included.
+>
 > Saved memories are automatically logged to `memory/YYYY-MM-DD.md` when workspace sync is enabled.
 > If `category=introspection`, `memory/inner-monologue-latest.md` is also updated.
 > `MEMORY.md` is not auto-written; curate it manually.
@@ -350,11 +362,13 @@ Do any of these connections surprise you? Is there a pattern forming?
 ```
 3 of ~50 memories (showing top matches):
 1. [2d ago] Discussed heartbeat config
-   emotion: curious | importance: 4 | score: 0.87
+   emotion: curious | importance: 4 | score: 0.87 | decay: 0.92
 2. [4d ago] Watched sunset together
-   emotion: moved(0.9) | importance: 5 | score: 0.82
-3. [1w ago] Felt lonely during quiet evening
-   emotion: sad | undercurrent: anxious | importance: 3 | score: 0.71 | private
+   emotion: moved(0.9) | importance: 5 | score: 0.82 | decay: 0.85
+3. curious introspection — heartbeat, config (~2 weeks ago) decay: 0.35
+
+--- notions ---
+"config & heartbeat (curious)" curious confidence: 0.6
 
 ---
 How do these memories connect to the current moment?
@@ -364,6 +378,14 @@ Need narrative detail? Use get_episode.
 If you found a new relation, use link_memories.
 ```
 
+> **Recall behavior:**
+> - **Fuzzy Recall**: Memories degrade based on decay score. High decay (≥0.5) shows full content; medium (0.2-0.5) shows keywords + emotion + approximate time; low (<0.2) shows only emotion impression. No interpretive labels — only the decay score is shown.
+> - **Spreading Activation**: Linked memories (1-hop) are added to the candidate pool, weighted by link confidence. Disabled when emotion/category filters are applied.
+> - **Proust Effect**: ~25% chance of injecting one dormant (decay < 0.3) memory into results. No special label — only decay score indicates age. Dormant selection uses pure semantic distance (no emotion/importance bias).
+> - **Notions**: Related abstract concepts (generated from memory clusters during consolidation) are shown in a separate `--- notions ---` section with label, emotion, and confidence.
+> - `access_count` is incremented for each recalled memory (strengthens retention over time).
+>
+> Additional notes:
 > - Timestamps are shown as relative time (`2d ago`, `1w ago`)
 > - `intensity >= 0.7` triggers a numeric display: `moved(0.9)`
 > - `undercurrent` shows the first secondary emotion
@@ -458,6 +480,7 @@ curiosity satisfied (quality: 0.7). New level: 0.25
 
 ```
 Consolidation complete. Replayed 5 events, updated 3 co-activations, created 2 links, refreshed 4 memories.
+Pruned 1 weak link(s). Created 1 notion(s).
 ```
 
 **Response example (with near-duplicate detection):**
@@ -473,7 +496,12 @@ Review each pair with recall. If one is redundant, use forget to remove it.
 If both have value, consider which perspective to keep.
 ```
 
-> When near-duplicate memory pairs (similarity >= 0.90) are found within the consolidation window, they are reported as merge candidates for manual review.
+> **Consolidation behavior:**
+> - **Extended link strategies**: Beyond temporal adjacency, now creates links for emotional similarity (same emotion, intensity diff < 0.2), thematic similarity (2+ shared tags), and cross-category patterns (different categories, semantic distance < 0.25).
+> - **Low-confidence link pruning**: Links with confidence < 0.1 are automatically removed.
+> - **Cluster detection**: Identifies dense memory clusters (3+ mutually-linked memories) using Bron-Kerbosch algorithm (with iteration limits).
+> - **Notion generation**: Automatically creates abstract `Notion` concepts from detected clusters using structural data (emotion mode, valence mean, shared tags). No LLM summarization.
+> - Near-duplicate pairs (similarity >= 0.90) are reported as merge candidates for manual review.
 
 ---
 

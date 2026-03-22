@@ -5,7 +5,9 @@ import type {
   HeatmapPoint,
   LogLine,
   LogPoint,
+  MemoryNetworkResponse,
   SeriesPoint,
+  Notion,
   StringPoint,
   UsagePoint,
 } from './types'
@@ -58,9 +60,28 @@ export const fetchCurrent = async (): Promise<CurrentResponse> =>
     error_rate: 0,
     window_24h: { tool_calls: 0, error_rate: 0 },
     latest_desires: {},
+    latest_emergent_desires: {},
     latest_emotion: null,
     latest: { emotion_primary: 'n/a', emotion_intensity: 0 },
   })
+
+export const fetchMemoryNetwork = async (): Promise<MemoryNetworkResponse> =>
+  get('/api/v1/memory/network', { nodes: [], edges: [] })
+
+export const fetchNotions = async (): Promise<{ items: Notion[] }> =>
+  get('/api/v1/notions', { items: [] })
+
+export const fetchNotionHistory = async (
+  notionId: string,
+  range: DateRange,
+  bucket = '1h',
+): Promise<SeriesPoint[]> => {
+  const data = await get<{ items: SeriesPoint[] }>(
+    `/api/v1/notions/${encodeURIComponent(notionId)}/history?${encodeRange(range)}&bucket=${bucket}`,
+    { items: [] },
+  )
+  return data.items
+}
 
 export const fetchMetric = async (
   key: string,

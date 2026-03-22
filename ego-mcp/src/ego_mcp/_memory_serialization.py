@@ -16,6 +16,37 @@ from ego_mcp.types import (
 )
 
 
+def memory_to_chromadb(memory: Memory) -> dict[str, Any]:
+    """Serialize Memory metadata for ChromaDB persistence."""
+    body_state = memory.emotional_trace.body_state
+    return {
+        "emotion": memory.emotional_trace.primary.value,
+        "secondary": ",".join(emotion.value for emotion in memory.emotional_trace.secondary),
+        "intensity": float(memory.emotional_trace.intensity),
+        "importance": int(memory.importance),
+        "category": memory.category.value,
+        "timestamp": memory.timestamp,
+        "valence": float(memory.emotional_trace.valence),
+        "arousal": float(memory.emotional_trace.arousal),
+        "body_state": (
+            json.dumps(
+                {
+                    "time_phase": body_state.time_phase,
+                    "system_load": body_state.system_load,
+                    "uptime_hours": body_state.uptime_hours,
+                }
+            )
+            if body_state is not None
+            else ""
+        ),
+        "tags": ",".join(memory.tags),
+        "linked_ids": links_to_json(memory.linked_ids),
+        "is_private": bool(memory.is_private),
+        "access_count": int(memory.access_count),
+        "last_accessed": memory.last_accessed,
+    }
+
+
 def memory_from_chromadb(
     memory_id: str, content: str, metadata: dict[str, Any]
 ) -> Memory:
@@ -95,6 +126,8 @@ def memory_from_chromadb(
         tags=metadata.get("tags", "").split(",") if metadata.get("tags") else [],
         linked_ids=linked_ids,
         is_private=is_private,
+        access_count=int(metadata.get("access_count", 0)),
+        last_accessed=str(metadata.get("last_accessed", "")),
     )
 
 

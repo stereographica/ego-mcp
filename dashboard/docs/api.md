@@ -20,6 +20,14 @@
   - live tail / 履歴表示用ログ（最大 300 行）
 - `GET /api/v1/alerts/anomalies?from=...&to=...&bucket=...`
   - usage/intensity 急増検知
+- `GET /api/v1/memory/network`
+  - 記憶ネットワークグラフ（ノード: 記憶 + Notion、エッジ: リンク + notion_source）
+  - レスポンス: `{ nodes: [{id, label, category, decay, access_count, is_notion}], edges: [{source, target, link_type, confidence}] }`
+  - ego-mcp の ChromaDB + notions.json を直接読み取り（`DASHBOARD_EGO_MCP_DATA_DIR` 環境変数で指定）
+- `GET /api/v1/notions`
+  - Notion（観念）一覧: label, emotion_tone, confidence, source_count, created, last_reinforced
+- `GET /api/v1/notions/{notion_id}/history?from=...&to=...&bucket=15m`
+  - Notion 個別の confidence 推移（テレメトリイベントから集計）
 
 ### WebSocket（現在フォーカス）
 

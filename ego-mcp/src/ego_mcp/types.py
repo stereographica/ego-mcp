@@ -96,6 +96,8 @@ class Memory:
     linked_ids: list[MemoryLink] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     is_private: bool = False
+    access_count: int = 0
+    last_accessed: str = ""
 
     @staticmethod
     def now_iso() -> str:
@@ -110,6 +112,9 @@ class MemorySearchResult:
     memory: Memory = field(default_factory=Memory)
     distance: float = 0.0
     score: float = 0.0
+    decay: float = 1.0
+    hopfield_score: float | None = None
+    is_proust: bool = False
 
 
 @dataclass
@@ -120,6 +125,23 @@ class DesireState:
     level: float = 0.0
     last_satisfied: str = ""
     satisfaction_quality: float = 0.5
+    is_emergent: bool = False
+    created: str = ""
+
+
+@dataclass
+class Notion:
+    """Abstracted concept distilled from memory clusters."""
+
+    id: str = ""
+    label: str = ""
+    emotion_tone: Emotion = Emotion.NEUTRAL
+    valence: float = 0.0
+    confidence: float = 0.5
+    source_memory_ids: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    created: str = ""
+    last_reinforced: str = ""
 
 
 @dataclass

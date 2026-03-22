@@ -2,6 +2,47 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [0.4.0] - 2026-03-22
+
+### Added
+
+#### A. 記憶基盤の強化
+- **Spreading Activation** — recall 時に上位結果の linked_ids を 1-hop 辿り、リンク先記憶も候補に追加。confidence による重み付け。フィルタ付き recall では無効化
+- **Confidence の実効化** — 高 confidence リンクで繋がった記憶群の半減期を最大 1.5x 延長。低 confidence (< 0.1) リンクは consolidate 時に自動消滅
+- **Consolidate リンク戦略拡張** — 感情的類似（同 emotion, intensity 差 < 0.2）、テーマ的類似（共通タグ 2+）、クロスカテゴリ（異カテゴリ, semantic distance < 0.25）のリンク自動作成
+- **因果リンクの促進** — remember スキャフォールドに `link_memories` による因果リンク（CAUSED_BY/LEADS_TO）の促しを追加
+- **Memory access_count / last_accessed** — recall で返された記憶の access_count をインクリメント。繰り返し想起された記憶は半減期が動的に延長（最大 +60 日）
+- **Fuzzy Recall（うろ覚え）** — decay スコアに応じた 3 段階の鮮明度劣化。解釈的ラベルは付与せず decay 数値のみ表示
+- **エピソード記憶の再浮上** — remember 時に dormant エピソード記憶との semantic distance を計算し、類似度が高ければ結果に含める（access_count もインクリメント）
+- **プルースト効果（不随意想起）** — recall 時に確率的（25%）に dormant 記憶を 1 件混入。Hopfield ネットワークで候補選定。特別なラベルなし、decay スコアのみ。importance/emotion バイアスなし
+- **Notion（観念）データ型** — エピソード記憶から抽出された抽象知識。consolidate 時のリンククラスタ検出（Bron-Kerbosch）→ 構造データから機械的に生成（LLM 要約なし）
+- **Notion 強化・弱化** — remember 時にタグマッチする Notion の confidence を valence 方向に応じて増減。閾値 (0.2) 以下で dormant 化
+- **recall 時の Notion 参照** — 関連 Notion を `--- notions ---` セクションで表示（label + emotion_tone + confidence のみ）
+- `remember` ツールに `tags` パラメータを追加
+
+#### B. 欲求システムの深化
+- **欲求ブレンド（不透明化）** — feel_desires / wake_up / introspect の出力を数値ラベル形式から体感記述に変更。Dashboard テレメトリには引き続き数値を送信
+- **動的欲求生成** — Notion (confidence ≥ 0.7) から emergent desire を自動生成。emotion_tone + valence → 抽象的な欲求方向テンプレート。72 時間未充足で自然消滅、充足後 7 日で除去
+- **不合理な衝動（プルースト連動）** — dormant 記憶浮上時に emotion_tone に応じた一時的欲求ブースト（最大 +0.2, 1 回消費, 72h クールダウン）
+- **事後的欲求接続** — remember スキャフォールドに satisfy_desire への事後的気づきの促しを追加
+
+#### C. Dashboard 拡張
+- **Memory Network パネル** — `GET /api/v1/memory/network` + SVG グラフ可視化（ノード: 記憶 + Notion、エッジ: リンク + notion_source）
+- **Notion パネル** — `GET /api/v1/notions`, `GET /api/v1/notions/{id}/history` + テーブル表示（confidence バー, emotion badge）
+- **Consolidation テレメトリ** — replay_events, new_links, link_types, pruned_links, notions_created をテレメトリに追加
+- **忘却・再浮上テレメトリ** — fuzzy_recall_count, resurfaced_memory_id, proust_triggered/memory_id/memory_decay をテレメトリに追加
+- **欲求拡張表示** — NOW タブ: 欲求レーダーに動的欲求（別色）+ 衝動ブーストのハイライト。HISTORY タブ: 動的欲求の推移 + 衝動ブーストマーカー
+- **Proust マーカー** — 感情タイムラインにプルースト効果発生をマーカー + バッジで重畳表示
+- Ingestor に Notion / impulse / emergent desire メトリクスのプロジェクション追加
+
+### Changed
+- `requires-python` を `">=3.14"` に更新
+- CI の Python バージョンを 3.14 に更新
+- バージョンアップ: ego-mcp 0.3.0→0.4.0
+
+### Design
+- `design/wip/v0.4.0-design.md` — v0.4.0 全体設計書
+
 ## [dashboard 0.2.1] - 2026-03-02
 
 ### Added

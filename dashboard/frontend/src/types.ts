@@ -6,6 +6,7 @@ export type CurrentResponse = {
     error_rate: number
   }
   latest_desires?: Record<string, number>
+  latest_emergent_desires?: Record<string, number>
   latest_emotion?: {
     ts: string
     emotion_primary?: string
@@ -49,6 +50,46 @@ export type EmotionTrendPoint = SeriesPoint & { emotion_primary?: string }
 export type UsagePoint = { ts: string; [key: string]: number | string }
 export type StringPoint = { ts: string; value: string }
 export type HeatmapPoint = { ts: string; counts: Record<string, number> }
+export type HistoryMarkerKind = 'proust' | 'impulse' | 'emergent'
+export type HistoryMarker = {
+  ts: string
+  kind: HistoryMarkerKind
+  label: string
+  detail?: string
+  value?: number
+  confidence?: number
+  memory_id?: string
+  desire_key?: string
+}
+export type MemoryNetworkNode = {
+  id: string
+  label?: string
+  category: string
+  is_notion: boolean
+  confidence?: number
+  access_count?: number
+  decay?: number
+}
+export type MemoryNetworkEdge = {
+  source: string
+  target: string
+  link_type: string
+  confidence?: number
+}
+export type MemoryNetworkResponse = {
+  nodes: MemoryNetworkNode[]
+  edges: MemoryNetworkEdge[]
+}
+export type Notion = {
+  id: string
+  label: string
+  emotion_tone: string
+  confidence: number
+  source_count: number
+  source_memory_ids: string[]
+  created: string
+  last_reinforced: string
+}
 export type LogPoint = {
   ts: string
   level: string
