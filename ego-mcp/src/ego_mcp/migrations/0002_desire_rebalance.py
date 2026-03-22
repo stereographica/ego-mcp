@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from ego_mcp import timezone_utils
 
-TARGET_VERSION = "0.2.0"
+TARGET_VERSION = "0.4.0"
 
 
 def up(data_dir: Path) -> None:

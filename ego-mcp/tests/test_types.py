@@ -12,6 +12,7 @@ from ego_mcp.types import (
     Memory,
     MemoryLink,
     MemorySearchResult,
+    Notion,
     RelationshipModel,
     SelfModel,
 )
@@ -79,16 +80,34 @@ class TestDataclassDefaults:
         assert m.linked_ids == []
         assert m.tags == []
         assert m.is_private is False
+        assert m.access_count == 0
+        assert m.last_accessed == ""
 
     def test_memory_search_result(self) -> None:
         msr = MemorySearchResult()
         assert msr.distance == 0.0
         assert msr.score == 0.0
+        assert msr.decay == 1.0
+        assert msr.hopfield_score is None
+        assert msr.is_proust is False
 
     def test_desire_state(self) -> None:
         ds = DesireState()
         assert ds.level == 0.0
         assert ds.satisfaction_quality == 0.5
+        assert ds.is_emergent is False
+        assert ds.created == ""
+
+    def test_notion(self) -> None:
+        notion = Notion()
+        assert notion.label == ""
+        assert notion.emotion_tone == Emotion.NEUTRAL
+        assert notion.valence == 0.0
+        assert notion.confidence == 0.5
+        assert notion.source_memory_ids == []
+        assert notion.tags == []
+        assert notion.created == ""
+        assert notion.last_reinforced == ""
 
     def test_relationship_model(self) -> None:
         rm = RelationshipModel()

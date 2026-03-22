@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from ego_mcp.desire import DESIRES, DesireEngine, _calculate_sigmoid_level
+from ego_mcp.types import Emotion, Notion
 
 
 class TestSigmoidCalculation:
@@ -287,3 +288,70 @@ class TestImplicitSatisfaction:
 
         assert mapped_qualities
         assert all(0.0 < quality < explicit_default_quality for quality in mapped_qualities)
+
+
+class TestEmergentDesires:
+    @pytest.fixture
+    def engine(self, tmp_path: Path) -> DesireEngine:
+        return DesireEngine(tmp_path / "desires.json")
+
+    def test_generate_emergent_desires_from_high_confidence_notion(
+        self, engine: DesireEngine
+    ) -> None:
+        notions = [
+            Notion(
+                label="friction",
+                emotion_tone=Emotion.SAD,
+                valence=-0.6,
+                confidence=0.8,
+            )
+        ]
+
+        created = engine.generate_emergent_desires(notions)
+
+        assert created == ["You want to be with someone."]
+        assert engine._state[created[0]]["is_emergent"] is True
+        assert engine._state[created[0]]["created"] != ""
+        assert engine.compute_levels()[created[0]] >= 0.0
+
+    def test_expire_emergent_desires_removes_stale_entries(
+        self, engine: DesireEngine
+    ) -> None:
+        stale_name = "You want to feel safe."
+        engine._state[stale_name] = {
+            "last_satisfied": "",
+            "satisfaction_quality": 0.5,
+            "boost": 0.0,
+            "is_emergent": True,
+            "created": (
+                datetime.now(timezone.utc) - timedelta(hours=80)
+            ).isoformat(),
+            "satisfaction_hours": 24.0,
+        }
+
+        expired = engine.expire_emergent_desires()
+
+        assert expired == [stale_name]
+        assert stale_name not in engine._state
+
+    def test_expire_emergent_desires_removes_stale_satisfied_entries(
+        self, engine: DesireEngine
+    ) -> None:
+        stale_name = "You want to stay in this."
+        engine._state[stale_name] = {
+            "last_satisfied": (
+                datetime.now(timezone.utc) - timedelta(days=8)
+            ).isoformat(),
+            "satisfaction_quality": 0.8,
+            "boost": 0.0,
+            "is_emergent": True,
+            "created": (
+                datetime.now(timezone.utc) - timedelta(days=10)
+            ).isoformat(),
+            "satisfaction_hours": 24.0,
+        }
+
+        expired = engine.expire_emergent_desires()
+
+        assert expired == [stale_name]
+        assert stale_name not in engine._state

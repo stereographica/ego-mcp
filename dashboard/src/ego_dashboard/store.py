@@ -43,6 +43,27 @@ class TelemetryStore:
                 break
         return latest
 
+    def _latest_desire_metrics(self) -> dict[str, float]:
+        excluded = {
+            "intensity",
+            "valence",
+            "arousal",
+            "impulse_boost_amount",
+        }
+        source = next(
+            (event for event in reversed(self._events) if event.tool_name == "feel_desires"),
+            None,
+        )
+        if source is None:
+            return {}
+        desire_metrics: dict[str, float] = {}
+        for key, value in source.numeric_metrics.items():
+            if key in excluded:
+                continue
+            if key in DESIRE_METRIC_KEYS or "want" in key.lower():
+                desire_metrics[key] = float(value)
+        return desire_metrics
+
     def _bucket_events(
         self, events: list[DashboardEvent], start: datetime, end: datetime, bucket: str
     ) -> list[tuple[datetime, list[DashboardEvent]]]:
@@ -181,6 +202,7 @@ class TelemetryStore:
                 "error_rate": 0.0,
                 "window_24h": {"tool_calls": 0, "error_rate": 0.0},
                 "latest_desires": {},
+                "latest_emergent_desires": {},
             }
 
         latest = self._events[-1]
@@ -263,6 +285,13 @@ class TelemetryStore:
             if invocation_count_24h > 0
             else (len(errors_24h) / len(recent_24h) if recent_24h else 0.0)
         )
+        desire_metrics = self._latest_desire_metrics()
+        latest_fixed_desires = {
+            key: value for key, value in desire_metrics.items() if key in DESIRE_METRIC_KEYS
+        }
+        latest_emergent_desires = {
+            key: value for key, value in desire_metrics.items() if key not in DESIRE_METRIC_KEYS
+        }
         return {
             "latest": latest_payload,
             "latest_emotion": latest_emotion,
@@ -270,5 +299,34 @@ class TelemetryStore:
             "tool_calls_per_min": tool_calls_per_min,
             "error_rate": error_rate,
             "window_24h": {"tool_calls": tool_calls_24h, "error_rate": error_rate_24h},
-            "latest_desires": self._latest_numeric_metrics(DESIRE_METRIC_KEYS),
+            "latest_desires": latest_fixed_desires,
+            "latest_emergent_desires": latest_emergent_desires,
         }
+
+    def notion_history(
+        self, notion_id: str, start: datetime, end: datetime, bucket: str
+    ) -> list[dict[str, object]]:
+        events = [
+            event
+            for event in self._filtered(start, end)
+            if "notion_confidence" in event.numeric_metrics
+            and any(
+                notion_id in event.string_metrics.get(key, "").split(",")
+                for key in (
+                    "notion_created",
+                    "notion_reinforced",
+                    "notion_weakened",
+                    "notion_dormant",
+                )
+            )
+        ]
+        rows: list[dict[str, object]] = []
+        for at, grouped in self._bucket_events(events, start, end, bucket):
+            values = [
+                ev.numeric_metrics["notion_confidence"]
+                for ev in grouped
+                if "notion_confidence" in ev.numeric_metrics
+            ]
+            if values:
+                rows.append({"ts": at.isoformat(), "value": sum(values) / len(values)})
+        return rows

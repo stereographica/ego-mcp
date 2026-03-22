@@ -182,6 +182,52 @@ class SqlTelemetryStore:
             {"ts": ts.isoformat(), "value": float(value)} for ts, value in rows if value is not None
         ]
 
+    def notion_history(
+        self, notion_id: str, start: datetime, end: datetime, bucket: str
+    ) -> list[dict[str, object]]:
+        bucket_size = _bucket_to_sql(bucket)
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT time_bucket(%s::interval, ts) AS b,
+                           avg((numeric_metrics ->> 'notion_confidence')::double precision)
+                    FROM tool_events
+                    WHERE ts >= %s
+                      AND ts <= %s
+                      AND numeric_metrics ? 'notion_confidence'
+                      AND (
+                        %s = ANY(string_to_array(
+                          COALESCE(string_metrics ->> 'notion_created', ''), ','
+                        )) OR
+                        %s = ANY(string_to_array(
+                          COALESCE(string_metrics ->> 'notion_reinforced', ''), ','
+                        )) OR
+                        %s = ANY(string_to_array(
+                          COALESCE(string_metrics ->> 'notion_weakened', ''), ','
+                        )) OR
+                        %s = ANY(string_to_array(
+                          COALESCE(string_metrics ->> 'notion_dormant', ''), ','
+                        ))
+                      )
+                    GROUP BY b
+                    ORDER BY b ASC
+                    """,
+                    (
+                        bucket_size,
+                        start,
+                        end,
+                        notion_id,
+                        notion_id,
+                        notion_id,
+                        notion_id,
+                    ),
+                )
+                rows = cur.fetchall()
+        return [
+            {"ts": ts.isoformat(), "value": float(value)} for ts, value in rows if value is not None
+        ]
+
     def string_timeline(self, key: str, start: datetime, end: datetime) -> list[dict[str, str]]:
         with psycopg.connect(self._db_url) as conn:
             with conn.cursor() as cur:
@@ -308,6 +354,7 @@ class SqlTelemetryStore:
                 "error_rate": 0.0,
                 "window_24h": {"tool_calls": 0, "error_rate": 0.0},
                 "latest_desires": {},
+                "latest_emergent_desires": {},
             }
         if isinstance(latest, dict) and latest.get("private") is True:
             latest["message"] = "REDACTED"
@@ -398,24 +445,29 @@ class SqlTelemetryStore:
                     (latest_ts,),
                 )
                 latest_relationship_row = cur.fetchone()
+                cur.execute(
+                    """
+                    SELECT numeric_metrics
+                    FROM tool_events
+                    WHERE ts <= %s AND tool_name = 'feel_desires'
+                    ORDER BY ts DESC
+                    LIMIT 1
+                    """,
+                    (latest_ts,),
+                )
+                latest_desire_row = cur.fetchone()
                 latest_desires: dict[str, float] = {}
-                for key in DESIRE_METRIC_KEYS:
-                    cur.execute(
-                        """
-                        SELECT (numeric_metrics ->> %s)::double precision
-                        FROM tool_events
-                        WHERE ts <= %s AND numeric_metrics ? %s
-                        ORDER BY ts DESC
-                        LIMIT 1
-                        """,
-                        (key, latest_ts, key),
-                    )
-                    desire_row = cur.fetchone()
-                    if desire_row is None:
-                        continue
-                    desire_value = desire_row[0]
-                    if desire_value is not None:
-                        latest_desires[key] = float(desire_value)
+                if latest_desire_row is not None and isinstance(latest_desire_row[0], dict):
+                    excluded = {"intensity", "valence", "arousal", "impulse_boost_amount"}
+                    for key, value in latest_desire_row[0].items():
+                        if key in excluded:
+                            continue
+                        if (
+                            isinstance(key, str)
+                            and (key in DESIRE_METRIC_KEYS or "want" in key.lower())
+                            and isinstance(value, (int, float))
+                        ):
+                            latest_desires[key] = float(value)
         calls, errors = row if row is not None else (0, 0)
         total_calls = int(calls or 0)
         total_errors = int(errors or 0)
@@ -474,6 +526,12 @@ class SqlTelemetryStore:
                     else None
                 ),
             }
+        latest_fixed_desires = {
+            key: value for key, value in latest_desires.items() if key in DESIRE_METRIC_KEYS
+        }
+        latest_emergent_desires = {
+            key: value for key, value in latest_desires.items() if key not in DESIRE_METRIC_KEYS
+        }
         return {
             "latest": latest,
             "latest_emotion": latest_emotion,
@@ -492,7 +550,8 @@ class SqlTelemetryStore:
                     else ((total_errors_24h / total_calls_24h) if total_calls_24h else 0.0)
                 ),
             },
-            "latest_desires": latest_desires,
+            "latest_desires": latest_fixed_desires,
+            "latest_emergent_desires": latest_emergent_desires,
         }
 
 

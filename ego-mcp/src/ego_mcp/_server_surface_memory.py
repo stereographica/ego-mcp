@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from ego_mcp import timezone_utils
+from ego_mcp._memory_queries import find_resurfacing_memories
 from ego_mcp._server_context import (
     _find_related_forgotten_questions,
     _relationship_store,
@@ -17,11 +18,17 @@ from ego_mcp._server_emotion_formatting import (
     _relative_time,
     _truncate_for_quote,
 )
-from ego_mcp._server_runtime import get_episodes, get_workspace_sync
+from ego_mcp._server_runtime import (
+    get_episodes,
+    get_notion_store,
+    get_workspace_sync,
+    update_tool_metadata,
+)
 from ego_mcp.config import EgoConfig
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
-from ego_mcp.scaffolds import compose_response
+from ego_mcp.notion import update_notion_from_memory
+from ego_mcp.scaffolds import SCAFFOLD_REMEMBER, compose_response
 
 logger = logging.getLogger(__name__)
 _REMEMBER_DUPLICATE_PREFIX = "Not saved — very similar memory already exists."
@@ -60,6 +67,7 @@ EMOTION_DEFAULTS: dict[str, tuple[float, float, float]] = {
 }
 _relative_time_override: Callable[[str, datetime | None], str] | None = None
 _get_body_state_override: Callable[[], dict[str, Any]] | None = None
+_last_tool_context: dict[str, dict[str, object]] = {}
 
 
 def configure_overrides(
@@ -85,10 +93,37 @@ def _call_get_body_state() -> dict[str, Any]:
     return get_body_state()
 
 
+def _set_tool_context(name: str, context: dict[str, object]) -> None:
+    _last_tool_context[name] = dict(context)
+
+
+def pop_tool_context(name: str) -> dict[str, object]:
+    return _last_tool_context.pop(name, {})
+
+
 def _float_or_default(value: Any, default: float) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     return default
+
+
+def _normalize_tags(raw_tags: Any) -> list[str]:
+    if isinstance(raw_tags, str):
+        candidates = [raw_tags]
+    elif isinstance(raw_tags, list):
+        candidates = [item for item in raw_tags if isinstance(item, str)]
+    else:
+        return []
+
+    tags: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        tag = candidate.strip()
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        tags.append(tag)
+    return tags
 
 
 async def _handle_remember(
@@ -97,6 +132,7 @@ async def _handle_remember(
     args: dict[str, Any],
 ) -> str:
     """Save a memory with auto-linking."""
+    _set_tool_context("remember", {})
     content = args["content"]
     emotion = args.get("emotion", "neutral")
     defaults = EMOTION_DEFAULTS.get(emotion, (0.5, 0.0, 0.5))
@@ -120,6 +156,7 @@ async def _handle_remember(
     )
     private = bool(args.get("private", False))
     body_state = args.get("body_state") or _call_get_body_state()
+    tags = _normalize_tags(args.get("tags"))
     shared_with_raw = args.get("shared_with")
     related_memories_raw = args.get("related_memories")
 
@@ -133,6 +170,7 @@ async def _handle_remember(
         valence=valence,
         arousal=arousal,
         body_state=body_state,
+        tags=tags,
         private=private,
     )
     if mem is None and duplicate_of is not None:
@@ -156,6 +194,8 @@ async def _handle_remember(
         raise RuntimeError(
             "save_with_auto_link returned no memory without duplicate metadata"
         )
+
+    notion_updates = update_notion_from_memory(get_notion_store(), mem)
     sync = get_workspace_sync()
     sync_note = ""
     if sync is not None and not mem.is_private:
@@ -168,8 +208,13 @@ async def _handle_remember(
         except OSError as exc:
             logger.warning("Workspace sync failed: %s", exc)
 
+    resurfaced = await find_resurfacing_memories(
+        memory,
+        mem.content,
+        exclude_ids={mem.id},
+    )
     top_links = sorted(linked_results, key=lambda r: r.distance)[:3]
-    if top_links:
+    if top_links or resurfaced:
         link_lines = ["Most related:"]
         for linked_result in top_links:
             age = _call_relative_time(linked_result.memory.timestamp)
@@ -177,6 +222,12 @@ async def _handle_remember(
             similarity = max(0.0, min(1.0, 1.0 - linked_result.distance))
             link_lines.append(
                 f"- [{age}] {snippet} (similarity: {similarity:.2f})"
+            )
+        for resurfaced_result in resurfaced:
+            age = _call_relative_time(resurfaced_result.memory.timestamp)
+            snippet = _truncate_for_quote(resurfaced_result.memory.content, limit=70)
+            link_lines.append(
+                f"- [{age}] {snippet} (decay: {resurfaced_result.decay:.2f})"
             )
         link_section = "\n".join(link_lines)
     else:
@@ -247,14 +298,33 @@ async def _handle_remember(
         scaffold = (
             "You recorded a shared experience. Does this change how you understand "
             "your relationship with them?\n"
-            "Do any of these connections surprise you? Is there a pattern forming?"
+            f"{SCAFFOLD_REMEMBER}"
         )
     else:
-        scaffold = (
-            "Do any of these connections surprise you? Is there a pattern forming?\n"
-            "If this experience involved someone, you can use shared_with to record "
-            "it as a shared episode."
+        scaffold = SCAFFOLD_REMEMBER
+    remember_context: dict[str, object] = {}
+    if resurfaced:
+        remember_context["resurfaced_memory_id"] = ",".join(
+            result.memory.id for result in resurfaced
         )
+    if notion_updates:
+        by_state: dict[str, list[str]] = {}
+        notion_confidences: list[float] = []
+        notion_store = get_notion_store()
+        for notion_id, state in notion_updates:
+            by_state.setdefault(state, []).append(notion_id)
+            notion = notion_store.get_by_id(notion_id)
+            if notion is not None:
+                notion_confidences.append(notion.confidence)
+        if "reinforced" in by_state:
+            remember_context["notion_reinforced"] = ",".join(by_state["reinforced"])
+        if "weakened" in by_state:
+            remember_context["notion_weakened"] = ",".join(by_state["weakened"])
+        if "dormant" in by_state:
+            remember_context["notion_dormant"] = ",".join(by_state["dormant"])
+        if notion_confidences:
+            remember_context["notion_confidence"] = max(notion_confidences)
+    _set_tool_context("remember", remember_context)
     return compose_response(data, scaffold)
 
 
@@ -263,6 +333,7 @@ async def _handle_recall(
 ) -> str:
     """Recall memories by context."""
     del config
+    _set_tool_context("recall", {})
     context = args["context"]
     raw_n_results = args.get("n_results", 3)
     try:
@@ -289,25 +360,16 @@ async def _handle_recall(
         if value
     ]
 
-    has_filters = bool(emotion_filter or category_filter or date_from or date_to)
-    if has_filters:
-        results = await memory.search(
-            context,
-            n_results=n_results,
-            emotion_filter=emotion_filter,
-            category_filter=category_filter,
-            date_from=date_from,
-            date_to=date_to,
-            valence_range=valence_range,
-            arousal_range=arousal_range,
-        )
-    else:
-        results = await memory.recall(
-            context,
-            n_results=n_results,
-            valence_range=valence_range,
-            arousal_range=arousal_range,
-        )
+    results = await memory.recall(
+        context,
+        n_results=n_results,
+        emotion_filter=emotion_filter,
+        category_filter=category_filter,
+        date_from=date_from,
+        date_to=date_to,
+        valence_range=valence_range,
+        arousal_range=arousal_range,
+    )
 
     total_count = memory.collection_count()
     if not results:
@@ -316,8 +378,47 @@ async def _handle_recall(
         lines = [f"{len(results)} of ~{total_count} memories (showing top matches):"]
         now = timezone_utils.now()
         for i, result in enumerate(results, 1):
-            lines.append(_format_recall_entry(i, result, now=now))
+            lines.extend(_format_recall_entry(i, result, now=now).splitlines())
+
+        notion_tags = sorted(
+            {
+                tag
+                for result in results
+                for tag in result.memory.tags
+                if isinstance(tag, str) and tag.strip()
+            }
+        )
+        related_notions = get_notion_store().search_by_tags(notion_tags, min_match=1)
+        if related_notions:
+            lines.append("--- notions ---")
+            for notion in related_notions[:5]:
+                lines.append(
+                    f'"{notion.label}" {notion.emotion_tone.value} '
+                    f"confidence: {notion.confidence:.1f}"
+                )
         data = "\n".join(lines)
 
     scaffold = _recall_scaffold(len(results), total_count, filters_used)
+    proust_result = next((result for result in results if result.is_proust), None)
+    _set_tool_context(
+        "recall",
+        {
+            "fuzzy_recall_count": sum(1 for result in results if result.decay < 0.5),
+            "proust_triggered": proust_result is not None,
+            **(
+                {
+                    "proust_memory_id": proust_result.memory.id,
+                    "proust_memory_decay": proust_result.decay,
+                }
+                if proust_result is not None
+                else {}
+            ),
+        },
+    )
+    update_tool_metadata(
+        fuzzy_recall_count=sum(1 for result in results if result.decay < 0.5),
+        proust_triggered=proust_result is not None,
+        proust_memory_id=(proust_result.memory.id if proust_result is not None else None),
+        proust_memory_decay=(proust_result.decay if proust_result is not None else None),
+    )
     return compose_response(data, scaffold)

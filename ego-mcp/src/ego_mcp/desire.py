@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ego_mcp import timezone_utils
+from ego_mcp.types import Emotion, Notion
 
 # Desire definitions: name → {satisfaction_hours, level (Maslow tier)}
 DESIRES: dict[str, dict[str, Any]] = {
@@ -35,6 +36,27 @@ IMPLICIT_SATISFACTION_MAP: dict[str, list[tuple[str, float]]] = {
     "update_relationship": [("social_thirst", 0.2)],
 }
 REMEMBER_INTROSPECTION_IMPLICIT_SATISFACTION = ("cognitive_coherence", 0.4)
+EMERGENT_EXPIRY_HOURS = 72.0
+EMERGENT_SATISFACTION_HOURS = 24.0
+EMERGENT_SATISFIED_TTL_HOURS = 24.0 * 7
+
+
+def _emergent_template_for_notion(notion: Notion) -> str | None:
+    emotion = notion.emotion_tone
+    valence = notion.valence
+    if emotion in {Emotion.MELANCHOLY, Emotion.SAD} and valence < 0:
+        return "You want to be with someone."
+    if emotion == Emotion.FRUSTRATED and valence < 0:
+        return "You want to get away from something."
+    if emotion == Emotion.ANXIOUS and valence < 0:
+        return "You want to feel safe."
+    if emotion in {Emotion.EXCITED, Emotion.CURIOUS} and valence > 0:
+        return "You want to grasp something."
+    if emotion in {Emotion.HAPPY, Emotion.CONTENTMENT} and valence > 0:
+        return "You want to stay in this."
+    if emotion == Emotion.NOSTALGIC:
+        return "You want to go back to something."
+    return None
 
 
 def _calculate_sigmoid_level(
@@ -76,9 +98,82 @@ class DesireEngine:
                 "last_satisfied": now,
                 "satisfaction_quality": 0.5,
                 "boost": 0.0,
+                "is_emergent": False,
+                "created": "",
             }
             for name in DESIRES
         }
+
+    def _is_known_desire(self, name: str) -> bool:
+        if name in DESIRES:
+            return True
+        return bool(self._state.get(name, {}).get("is_emergent", False))
+
+    def _desire_names(self) -> list[str]:
+        names = list(DESIRES.keys())
+        for name, state in self._state.items():
+            if state.get("is_emergent", False):
+                names.append(name)
+        return names
+
+    def expire_emergent_desires(self) -> list[str]:
+        now = timezone_utils.now()
+        expired: list[str] = []
+        for name, state in list(self._state.items()):
+            if not state.get("is_emergent", False):
+                continue
+            created_str = str(state.get("created", ""))
+            if not created_str:
+                continue
+            try:
+                created = datetime.fromisoformat(created_str)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone_utils.app_timezone())
+            except ValueError:
+                continue
+            last_satisfied = str(state.get("last_satisfied", ""))
+            if last_satisfied:
+                try:
+                    satisfied_at = datetime.fromisoformat(last_satisfied)
+                    if satisfied_at.tzinfo is None:
+                        satisfied_at = satisfied_at.replace(
+                            tzinfo=timezone_utils.app_timezone()
+                        )
+                except ValueError:
+                    satisfied_at = created
+                age_hours = (now - satisfied_at).total_seconds() / 3600
+                if age_hours < EMERGENT_SATISFIED_TTL_HOURS:
+                    continue
+            else:
+                age_hours = (now - created).total_seconds() / 3600
+                if age_hours < EMERGENT_EXPIRY_HOURS:
+                    continue
+            expired.append(name)
+            del self._state[name]
+        if expired:
+            self.save_state()
+        return expired
+
+    def generate_emergent_desires(self, notions: list[Notion]) -> list[str]:
+        created: list[str] = []
+        for notion in notions:
+            if notion.confidence < 0.7:
+                continue
+            label = _emergent_template_for_notion(notion)
+            if label is None or self._is_known_desire(label):
+                continue
+            self._state[label] = {
+                "last_satisfied": "",
+                "satisfaction_quality": 0.5,
+                "boost": 0.0,
+                "is_emergent": True,
+                "created": timezone_utils.now().isoformat(),
+                "satisfaction_hours": EMERGENT_SATISFACTION_HOURS,
+            }
+            created.append(label)
+        if created:
+            self.save_state()
+        return created
 
     def compute_levels(self) -> dict[str, float]:
         return self.compute_levels_with_modulation()
@@ -90,14 +185,26 @@ class DesireEngine:
         prediction_error: dict[str, float] | None = None,
     ) -> dict[str, float]:
         """Compute current level for all desires with transient modulation."""
+        self.expire_emergent_desires()
         now = timezone_utils.now()
         levels: dict[str, float] = {}
         context_boosts = context_boosts or {}
         emotional_modulation = emotional_modulation or {}
         prediction_error = prediction_error or {}
 
-        for name, config in DESIRES.items():
+        for name in self._desire_names():
             desire_state = self._state.get(name, {})
+            config = DESIRES.get(
+                name,
+                {
+                    "satisfaction_hours": float(
+                        desire_state.get(
+                            "satisfaction_hours", EMERGENT_SATISFACTION_HOURS
+                        )
+                    ),
+                    "level": 1,
+                },
+            )
             last_str = desire_state.get("last_satisfied", "")
             quality = desire_state.get("satisfaction_quality", 0.5)
             boost = desire_state.get("boost", 0.0)
@@ -133,7 +240,7 @@ class DesireEngine:
 
     def satisfy(self, name: str, quality: float = 0.7) -> float:
         """Mark a desire as satisfied. Returns new level."""
-        if name not in DESIRES:
+        if not self._is_known_desire(name):
             raise ValueError(f"Unknown desire: {name}")
 
         now = timezone_utils.now().isoformat()
@@ -161,7 +268,7 @@ class DesireEngine:
 
     def boost(self, name: str, amount: float) -> float:
         """Temporarily boost a desire level. Returns new level."""
-        if name not in DESIRES:
+        if not self._is_known_desire(name):
             raise ValueError(f"Unknown desire: {name}")
 
         if name not in self._state:
@@ -169,6 +276,8 @@ class DesireEngine:
                 "last_satisfied": timezone_utils.now().isoformat(),
                 "satisfaction_quality": 0.5,
                 "boost": 0.0,
+                "is_emergent": False,
+                "created": "",
             }
         current_boost = self._state[name].get("boost", 0.0)
         self._state[name]["boost"] = min(1.0, current_boost + amount)
@@ -206,7 +315,20 @@ class DesireEngine:
         if self._state_path.exists():
             try:
                 with open(self._state_path, encoding="utf-8") as f:
-                    self._state = json.load(f)
+                    parsed = json.load(f)
+                if isinstance(parsed, dict):
+                    defaults = self._init_default_state()
+                    merged = dict(defaults)
+                    for name, raw in parsed.items():
+                        if not isinstance(raw, dict):
+                            continue
+                        if name in defaults:
+                            merged[name] = {**defaults[name], **raw}
+                        else:
+                            merged[name] = raw
+                    self._state = merged
+                else:
+                    self._state = self._init_default_state()
                 return
             except (json.JSONDecodeError, IOError):
                 pass

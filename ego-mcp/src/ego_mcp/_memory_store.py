@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from pathlib import Path
 from typing import Any
 
 from ego_mcp import _memory_queries
-from ego_mcp._memory_serialization import links_to_json
+from ego_mcp._memory_serialization import links_to_json, memory_to_chromadb
 from ego_mcp.chromadb_compat import load_chromadb
 from ego_mcp.config import EgoConfig
 from ego_mcp.embedding import EgoEmbeddingFunction
@@ -38,6 +37,7 @@ class MemoryStore:
         self._client: Any = None
         self._collection: Any = None
         self._hopfield = ModernHopfieldNetwork(beta=4.0, n_iters=3)
+        self._last_recall_metadata: dict[str, object] = {}
 
     def connect(self) -> None:
         """Initialize ChromaDB connection."""
@@ -85,6 +85,10 @@ class MemoryStore:
         """Embed texts using the configured embedding function."""
         return self._embedding_fn(texts)
 
+    @property
+    def last_recall_metadata(self) -> dict[str, object]:
+        return dict(self._last_recall_metadata)
+
     def collection_count(self) -> int:
         """Return number of stored memories."""
         return int(self._ensure_connected().count())
@@ -107,27 +111,6 @@ class MemoryStore:
         collection = self._ensure_connected()
         memory_id = f"mem_{uuid.uuid4().hex[:12]}"
         timestamp = Memory.now_iso()
-
-        metadata: dict[str, Any] = {
-            "emotion": emotion,
-            "secondary": ",".join(secondary) if secondary else "",
-            "intensity": intensity,
-            "importance": importance,
-            "category": category,
-            "timestamp": timestamp,
-            "valence": valence,
-            "arousal": arousal,
-            "body_state": json.dumps(body_state) if body_state else "",
-            "tags": ",".join(tags) if tags else "",
-            "linked_ids": "[]",
-            "is_private": bool(private),
-        }
-
-        collection.add(
-            ids=[memory_id],
-            documents=[content],
-            metadatas=[metadata],
-        )
 
         try:
             primary_emotion = Emotion(emotion)
@@ -158,7 +141,7 @@ class MemoryStore:
             except (TypeError, ValueError):
                 state_obj = None
 
-        return Memory(
+        memory = Memory(
             id=memory_id,
             content=content,
             timestamp=timestamp,
@@ -174,7 +157,15 @@ class MemoryStore:
             category=cat,
             tags=tags or [],
             is_private=bool(private),
+            access_count=0,
+            last_accessed="",
         )
+        collection.add(
+            ids=[memory_id],
+            documents=[content],
+            metadatas=[memory_to_chromadb(memory)],
+        )
+        return memory
 
     async def save_with_auto_link(
         self,
@@ -375,16 +366,26 @@ class MemoryStore:
         self,
         context: str,
         n_results: int = 3,
+        emotion_filter: str | None = None,
+        category_filter: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
         valence_range: list[float] | None = None,
         arousal_range: list[float] | None = None,
+        proust_probability: float = _memory_queries.PROUST_PROBABILITY,
     ) -> list[MemorySearchResult]:
         """Recall memories using semantic search + Hopfield hybrid."""
         return await _memory_queries.recall(
             self,
             context=context,
             n_results=n_results,
+            emotion_filter=emotion_filter,
+            category_filter=category_filter,
+            date_from=date_from,
+            date_to=date_to,
             valence_range=valence_range,
             arousal_range=arousal_range,
+            proust_probability=proust_probability,
         )
 
     async def list_recent(
