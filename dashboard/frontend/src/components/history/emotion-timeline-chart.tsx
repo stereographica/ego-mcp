@@ -13,6 +13,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from '@/components/ui/chart'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   buildEmotionAxis,
@@ -20,18 +21,22 @@ import {
   normalizeEmotion,
 } from '@/components/history/emotion-timeline-utils'
 import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
-import type { EmotionTrendPoint } from '@/types'
+import type { EmotionTrendPoint, HistoryMarker } from '@/types'
 import { useMemo } from 'react'
 
 type EmotionTimelineChartProps = {
   points: EmotionTrendPoint[]
+  markers?: HistoryMarker[]
 }
 
 const config: ChartConfig = {
   emotion_level: { label: 'emotion', color: 'var(--color-chart-5)' },
 }
 
-export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
+export const EmotionTimelineChart = ({
+  points,
+  markers = [],
+}: EmotionTimelineChartProps) => {
   const { formatTs } = useTimestampFormatter()
   const { chartData, ticks, levelToEmotion, maxLevel, chartHeight } =
     useMemo(() => {
@@ -62,6 +67,10 @@ export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
         chartHeight: Math.max(320, axis.ticks.length * 18),
       }
     }, [points])
+  const proustMarkers = useMemo(
+    () => markers.filter((marker) => marker.kind === 'proust'),
+    [markers],
+  )
 
   const formatTooltipLabel = (
     label: unknown,
@@ -100,6 +109,18 @@ export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
         <CardTitle className="text-sm">Emotion trend</CardTitle>
       </CardHeader>
       <CardContent>
+        {proustMarkers.length > 0 ? (
+          <div className="mb-2 flex flex-wrap gap-2 text-xs">
+            {proustMarkers.map((marker) => (
+              <Badge
+                key={`${marker.ts}-${marker.memory_id ?? marker.detail ?? ''}`}
+                variant="outline"
+              >
+                Proust {marker.detail ?? marker.memory_id ?? ''}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
         <ChartContainer
           config={config}
           className="w-full"
@@ -118,6 +139,21 @@ export const EmotionTimelineChart = ({ points }: EmotionTimelineChartProps) => {
               }
             />
             <ReferenceLine y={0} stroke="#ccc" strokeDasharray="4 4" />
+            {proustMarkers.map((marker) => (
+              <ReferenceLine
+                key={`${marker.kind}-${marker.ts}-${marker.memory_id ?? marker.detail ?? ''}`}
+                x={marker.ts}
+                stroke="var(--color-chart-3)"
+                strokeDasharray="3 3"
+                ifOverflow="extendDomain"
+                label={{
+                  value: marker.detail ? `Proust: ${marker.detail}` : 'Proust',
+                  position: 'top',
+                  fill: 'var(--color-muted-foreground)',
+                  fontSize: 10,
+                }}
+              />
+            ))}
             <ChartTooltip
               content={
                 <ChartTooltipContent

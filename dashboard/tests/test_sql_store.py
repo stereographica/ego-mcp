@@ -356,3 +356,120 @@ def test_logs_search_escapes_ilike_meta_characters(
         r"%100\%\_done\\path%",
         r"%100\%\_done\\path%",
     )
+
+
+def test_current_splits_fixed_and_emergent_desires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest_ts = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store = _patch_store(
+        monkeypatch,
+        latest_payload={
+            "ts": latest_ts.isoformat(),
+            "tool_name": "feel_desires",
+            "private": False,
+        },
+        rows=[
+            (1, 0),
+            (5, 0),
+            (0, 0),
+            (0, 0),
+            None,
+            None,
+            (
+                {
+                    "curiosity": 0.8,
+                    "You want to feel safe.": 0.55,
+                    "impulse_boost_amount": 0.15,
+                },
+            ),
+        ],
+    )
+
+    current = store.current()
+
+    assert current["latest_desires"] == {"curiosity": 0.8}
+    assert current["latest_emergent_desires"] == {"You want to feel safe.": 0.55}
+
+
+def test_notion_history_returns_bucketed_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(None),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _FakeConnection(
+            rows=[],
+            all_rows=[(datetime(2026, 1, 1, 12, 0, tzinfo=UTC), 0.7)],
+        ),
+    )
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+
+    rows = store.notion_history(
+        "notion_1",
+        datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 12, 30, tzinfo=UTC),
+        "15m",
+    )
+
+    assert rows == [{"ts": "2026-01-01T12:00:00+00:00", "value": 0.7}]
+
+
+def test_notion_history_uses_exact_matching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executed: list[tuple[str, tuple[Any, ...] | None]] = []
+
+    class _CapturingCursor(_FakeCursor):
+        def execute(self, *args: object, **kwargs: object) -> None:
+            query = args[0] if args else kwargs.get("query")
+            params = args[1] if len(args) > 1 else kwargs.get("params")
+            sql = str(query)
+            tuple_params: tuple[Any, ...] | None = None
+            if isinstance(params, tuple):
+                tuple_params = params
+            elif isinstance(params, list):
+                tuple_params = tuple(params)
+            executed.append((sql, tuple_params))
+
+    class _CapturingConnection(_FakeConnection):
+        def __init__(self) -> None:
+            self._cursor = _CapturingCursor(
+                rows=[],
+                all_rows=[(datetime(2026, 1, 1, 12, 0, tzinfo=UTC), 0.7)],
+            )
+
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(None),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _CapturingConnection(),
+    )
+
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+    store.notion_history(
+        "notion_1",
+        datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 12, 30, tzinfo=UTC),
+        "15m",
+    )
+
+    assert len(executed) == 1
+    sql, params = executed[0]
+    compact_sql = " ".join(sql.split())
+    assert "ILIKE" not in compact_sql
+    assert "string_to_array(" in compact_sql
+    assert params == (
+        "15 minute",
+        datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 12, 30, tzinfo=UTC),
+        "notion_1",
+        "notion_1",
+        "notion_1",
+        "notion_1",
+    )

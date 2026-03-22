@@ -28,6 +28,8 @@ def calculate_time_decay(
     timestamp: str,
     now: datetime | None = None,
     half_life_days: float = 30.0,
+    link_confidence_max: float = 0.0,
+    access_count: int = 0,
 ) -> float:
     """Exponential time decay. Returns 0.0 (forgotten) to 1.0 (fresh)."""
     if now is None:
@@ -45,7 +47,11 @@ def calculate_time_decay(
         return 1.0
 
     age_days = age_seconds / 86400
-    decay = math.pow(2, -age_days / half_life_days)
+    access_bonus = min(max(access_count, 0) * 5, 60)
+    effective_half_life = (half_life_days + access_bonus) * (
+        1.0 + max(0.0, min(1.0, link_confidence_max)) * 0.5
+    )
+    decay = math.pow(2, -age_days / max(effective_half_life, 1e-6))
     return max(0.0, min(1.0, decay))
 
 

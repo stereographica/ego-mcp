@@ -1,4 +1,11 @@
-import { fetchLogs, fetchStringHeatmap, fetchStringTimeline } from '@/api'
+import {
+  fetchLogs,
+  fetchMemoryNetwork,
+  fetchNotionHistory,
+  fetchNotions,
+  fetchStringHeatmap,
+  fetchStringTimeline,
+} from '@/api'
 
 describe('api.fetchLogs', () => {
   beforeEach(() => {
@@ -94,5 +101,51 @@ describe('api string metric fetchers', () => {
 
     expect(url).toContain('/api/v1/metrics/emotion_primary/heatmap?')
     expect(url).toContain('bucket=5m')
+  })
+})
+
+describe('api history extensions', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('fetches the memory network panel payload', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ nodes: [], edges: [] }),
+    } as Response)
+
+    await fetchMemoryNetwork()
+    const url = String(vi.mocked(globalThis.fetch).mock.calls[0]?.[0] ?? '')
+
+    expect(url).toContain('/api/v1/memory/network')
+  })
+
+  it('fetches notions and notion history', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [] }),
+    } as Response)
+
+    await fetchNotions()
+    const notionsUrl = String(
+      vi.mocked(globalThis.fetch).mock.calls[0]?.[0] ?? '',
+    )
+    await fetchNotionHistory(
+      'notion-1',
+      {
+        from: '2026-01-01T12:00:00Z',
+        to: '2026-01-01T12:10:00Z',
+      },
+      '1h',
+    )
+
+    const notionHistoryUrl = String(
+      vi.mocked(globalThis.fetch).mock.calls[1]?.[0] ?? '',
+    )
+
+    expect(notionsUrl).toContain('/api/v1/notions')
+    expect(notionHistoryUrl).toContain('/api/v1/notions/notion-1/history?')
+    expect(notionHistoryUrl).toContain('bucket=1h')
   })
 })

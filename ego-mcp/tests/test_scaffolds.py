@@ -12,6 +12,7 @@ from ego_mcp.scaffolds import (
     SCAFFOLD_EMOTION_TREND,
     SCAFFOLD_FEEL_DESIRES,
     SCAFFOLD_INTROSPECT,
+    SCAFFOLD_REMEMBER,
     SCAFFOLD_WAKE_UP,
     compose_response,
     render,
@@ -22,6 +23,7 @@ ALL_SCAFFOLDS = [
     SCAFFOLD_WAKE_UP,
     SCAFFOLD_FEEL_DESIRES,
     SCAFFOLD_INTROSPECT,
+    SCAFFOLD_REMEMBER,
     SCAFFOLD_CONSIDER_THEM,
     SCAFFOLD_AM_I_GENUINE,
     SCAFFOLD_EMOTION_TREND,
@@ -67,6 +69,15 @@ class TestScaffoldConstants:
 
     def test_consider_them_mentions_predictability(self) -> None:
         assert "predictability" in SCAFFOLD_CONSIDER_THEM
+
+    def test_remember_mentions_causal_link_prompt(self) -> None:
+        assert "link_memories" in SCAFFOLD_REMEMBER
+        lowered = SCAFFOLD_REMEMBER.lower()
+        assert "caused" in lowered or "led to" in lowered
+
+    def test_remember_mentions_post_hoc_satisfy_desire_prompt(self) -> None:
+        assert "satisfy" in SCAFFOLD_REMEMBER
+        assert "Did this action" in SCAFFOLD_REMEMBER
 
 
 class TestRender:

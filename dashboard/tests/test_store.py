@@ -313,3 +313,85 @@ def test_current_exposes_24h_window_and_latest_desires() -> None:
     assert latest_desires["information_hunger"] == 0.8
     assert latest_desires["social_thirst"] == 0.3
     assert latest_desires["cognitive_coherence"] == 0.6
+
+
+def test_current_separates_emergent_desires_from_fixed_keys() -> None:
+    store = TelemetryStore()
+    store.ingest(
+        DashboardEvent(
+            ts=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+            event_type="tool_call_completed",
+            tool_name="feel_desires",
+            ok=True,
+            duration_ms=10,
+            emotion_primary="curious",
+            emotion_intensity=0.5,
+            numeric_metrics={
+                "curiosity": 0.8,
+                "You want to feel safe.": 0.55,
+                "impulse_boost_amount": 0.15,
+            },
+            string_metrics={"emergent_desire_created": "You want to feel safe."},
+            params={},
+            private=False,
+            message="opaque desire text",
+        )
+    )
+
+    current = store.current()
+
+    assert current["latest_desires"] == {"curiosity": 0.8}
+    assert current["latest_emergent_desires"] == {"You want to feel safe.": 0.55}
+
+
+def test_notion_history_aggregates_matching_events() -> None:
+    store = TelemetryStore()
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store.ingest(
+        DashboardEvent(
+            ts=start,
+            event_type="tool_call_completed",
+            tool_name="consolidate",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={"notion_confidence": 0.6},
+            string_metrics={"notion_created": "notion_1"},
+            params={},
+            private=False,
+        )
+    )
+    store.ingest(
+        DashboardEvent(
+            ts=start + timedelta(minutes=5),
+            event_type="tool_call_completed",
+            tool_name="remember",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={"notion_confidence": 0.8},
+            string_metrics={"notion_reinforced": "notion_1"},
+            params={},
+            private=False,
+        )
+    )
+    store.ingest(
+        DashboardEvent(
+            ts=start + timedelta(minutes=5),
+            event_type="tool_call_completed",
+            tool_name="remember",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={"notion_confidence": 0.1},
+            string_metrics={"notion_reinforced": "notion_other"},
+            params={},
+            private=False,
+        )
+    )
+
+    history = store.notion_history(
+        "notion_1",
+        start,
+        start + timedelta(minutes=20),
+        bucket="15m",
+    )
+
+    assert history == [{"ts": start.isoformat(), "value": 0.7}]

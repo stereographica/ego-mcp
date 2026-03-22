@@ -23,7 +23,9 @@ from ego_mcp.consolidation import (
 from ego_mcp.desire import DesireEngine
 from ego_mcp.embedding import EgoEmbeddingFunction, EmbeddingProvider
 from ego_mcp.episode import EpisodeStore
+from ego_mcp.impulse import ImpulseManager
 from ego_mcp.memory import MemoryStore
+from ego_mcp.notion import NotionStore
 from ego_mcp.self_model import SelfModelStore
 from ego_mcp.types import Emotion, EmotionalTrace, Memory, MemorySearchResult
 from ego_mcp.workspace_sync import WorkspaceMemorySync
@@ -106,6 +108,8 @@ def bind_server_state(
     monkeypatch.setattr(server_mod, "_desire", desire)
     monkeypatch.setattr(server_mod, "_episodes", episodes)
     monkeypatch.setattr(server_mod, "_consolidation", consolidation)
+    monkeypatch.setattr(server_mod, "_notions", NotionStore(config.data_dir / "notions.json"))
+    monkeypatch.setattr(server_mod, "_impulse", ImpulseManager())
     monkeypatch.setattr(
         server_mod,
         "_workspace_sync",
@@ -180,6 +184,7 @@ class TestMcpBoundary:
         tools = await server_mod.list_tools()
         remember_tool = next(tool for tool in tools if tool.name == "remember")
         props = remember_tool.inputSchema["properties"]
+        assert "tags" in props
         assert "shared_with" in props
         assert "related_memories" in props
 
@@ -258,6 +263,9 @@ class TestWakeUp:
             "wake_up", {}, config, memory, desire, episodes, consolidation
         )
         assert "No introspection yet" in result
+        assert "[high]" not in result
+        assert "[mid]" not in result
+        assert "[low]" not in result
 
     @pytest.mark.asyncio
     async def test_reflects_relationship_summary(
@@ -333,7 +341,7 @@ class TestFeelDesires:
             "feel_desires", {}, config, memory, desire, episodes, consolidation
         )
         assert "---" in result
-        assert any(tag in result for tag in ["high", "mid", "low"])
+        assert "Nothing in particular pulls at you." in result
 
     @pytest.mark.asyncio
     async def test_applies_interoception_adjustments(
@@ -366,9 +374,9 @@ class TestFeelDesires:
         result = await _call(
             "feel_desires", {}, config, memory, desire, episodes, consolidation
         )
-        assert "curiosity[0.9/high]" in result
-        assert "social_thirst[0.4/low]" in result
-        assert "cognitive_coherence[0.5/mid]" in result
+        assert "You need to know something." in result
+        assert "Something doesn't quite fit." in result
+        assert "Nothing in particular pulls at you." not in result
 
     @pytest.mark.asyncio
     async def test_adds_nagging_scaffold_when_fading_question_exists(
@@ -608,6 +616,9 @@ class TestIntrospect:
         )
         assert "Self model:" in result
         assert "Master: trust=" in result
+        assert "[high]" not in result
+        assert "[mid]" not in result
+        assert "[low]" not in result
 
 
 class TestConsiderThem:
@@ -818,6 +829,33 @@ class TestRemember:
         assert saved.emotional_trace.intensity == pytest.approx(0.3)
         assert saved.emotional_trace.valence == pytest.approx(0.0)
         assert saved.emotional_trace.arousal == pytest.approx(0.3)
+
+    @pytest.mark.asyncio
+    async def test_remember_persists_explicit_tags(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "remember",
+            {
+                "content": "Tagged memory for notion reinforcement",
+                "tags": ["pattern", "signal", "signal"],
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+
+        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        saved = await memory.get_by_id(memory_id)
+        assert saved is not None
+        assert saved.tags == ["pattern", "signal"]
 
     @pytest.mark.asyncio
     async def test_remember_explicit_intensity_overrides_label_defaults(
@@ -1550,11 +1588,17 @@ class TestRecall:
     ) -> None:
         captured: dict[str, Any] = {}
 
+        async def fake_recall(context: str, **kwargs: Any) -> list[Any]:
+            captured["query"] = context
+            captured.update(kwargs)
+            return []
+
         async def fake_search(query: str, **kwargs: Any) -> list[Any]:
             captured["query"] = query
             captured.update(kwargs)
             return []
 
+        monkeypatch.setattr(memory, "recall", fake_recall)
         monkeypatch.setattr(memory, "search", fake_search)
         result = await _call(
             "recall",
@@ -1643,8 +1687,8 @@ class TestRecall:
         lowered = result.lower()
         assert " of ~" in result
         assert "[2d ago]" in result
-        assert "emotion: moved(0.9)" in lowered
-        assert "undercurrent: anxious" in lowered
+        assert "emotion: moved" in lowered
+        assert "category: daily" in lowered
         assert "importance: 4" in lowered
         assert "score:" in lowered
         assert "private" in lowered
@@ -2412,7 +2456,7 @@ class TestHeartbeatFlow:
             "feel_desires", {}, config, memory, desire, episodes, consolidation
         )
         assert "---" in feel
-        assert any(tag in feel for tag in ["high", "mid", "low"])
+        assert "Nothing in particular pulls at you." in feel
 
         intro = await _call(
             "introspect", {}, config, memory, desire, episodes, consolidation

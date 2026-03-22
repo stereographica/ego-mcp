@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Callable
@@ -15,18 +16,24 @@ from ego_mcp._server_emotion_formatting import (
     _relative_time,
     _truncate_for_quote,
 )
-from ego_mcp._server_runtime import get_workspace_sync
+from ego_mcp._server_runtime import (
+    get_notion_store,
+    get_workspace_sync,
+    update_tool_metadata,
+)
 from ego_mcp._server_tools import _FIELD_ALIASES
 from ego_mcp.config import EgoConfig
 from ego_mcp.consolidation import ConsolidationEngine
 from ego_mcp.desire import DesireEngine
 from ego_mcp.episode import EpisodeStore
 from ego_mcp.memory import MemoryStore
+from ego_mcp.notion import generate_notion_from_cluster
 from ego_mcp.scaffolds import SCAFFOLD_EMOTION_TREND, compose_response
 from ego_mcp.self_model import SelfModelStore
 
 logger = logging.getLogger(__name__)
 _relative_time_override: Callable[[str, datetime | None], str] | None = None
+_last_tool_context: dict[str, dict[str, object]] = {}
 
 
 def configure_overrides(
@@ -44,6 +51,14 @@ def _call_relative_time(timestamp: str, now: datetime | None = None) -> str:
     return _relative_time(timestamp, now=now)
 
 
+def _set_tool_context(name: str, context: dict[str, object]) -> None:
+    _last_tool_context[name] = dict(context)
+
+
+def pop_tool_context(name: str) -> dict[str, object]:
+    return _last_tool_context.pop(name, {})
+
+
 def _handle_satisfy_desire(desire: DesireEngine, args: dict[str, Any]) -> str:
     """Satisfy a desire."""
     name = args["name"]
@@ -57,6 +72,58 @@ async def _handle_consolidate(
 ) -> str:
     """Run memory consolidation."""
     stats = await consolidation.run(memory)
+    created_notion_ids: list[str] = []
+    created_notion_confidences: list[float] = []
+    try:
+        notion_store = get_notion_store()
+    except Exception:
+        notion_store = None
+    if notion_store is not None:
+        existing_clusters = {
+            tuple(sorted(notion.source_memory_ids)) for notion in notion_store.list_all()
+        }
+        for cluster in stats.detected_clusters:
+            normalized_cluster = tuple(sorted(cluster))
+            if normalized_cluster in existing_clusters:
+                continue
+            cluster_memories = [
+                loaded
+                for memory_id in normalized_cluster
+                for loaded in [await memory.get_by_id(memory_id)]
+                if loaded is not None
+            ]
+            if len(cluster_memories) < 3:
+                continue
+            notion = generate_notion_from_cluster(cluster_memories)
+            notion_store.save(notion)
+            created_notion_ids.append(notion.id)
+            created_notion_confidences.append(notion.confidence)
+            existing_clusters.add(normalized_cluster)
+    update_tool_metadata(
+        consolidation_replay_events=stats.replay_events,
+        consolidation_new_links=stats.link_updates,
+        consolidation_coactivation_updates=stats.coactivation_updates,
+        consolidation_pruned_links=stats.pruned_links,
+        consolidation_link_types=json.dumps(
+            {
+                "replay": max(
+                    0,
+                    stats.link_updates
+                    - stats.emotion_links
+                    - stats.theme_links
+                    - stats.cross_category_links,
+                ),
+                "emotion": stats.emotion_links,
+                "theme": stats.theme_links,
+                "cross_category": stats.cross_category_links,
+            },
+            sort_keys=True,
+        ),
+        notion_created=",".join(created_notion_ids) if created_notion_ids else None,
+        notion_confidence=max(created_notion_confidences)
+        if created_notion_confidences
+        else None,
+    )
     base = (
         f"Consolidation complete. "
         f"Replayed {stats.replay_events} events, "
@@ -64,6 +131,8 @@ async def _handle_consolidate(
         f"created {stats.link_updates} links, "
         f"refreshed {stats.refreshed_memories} memories."
     )
+    if created_notion_ids:
+        base += f" Created {len(created_notion_ids)} notion(s)."
     if not stats.merge_candidates:
         return base
 

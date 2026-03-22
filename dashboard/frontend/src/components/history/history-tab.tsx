@@ -2,6 +2,8 @@ import { DesireHistoryChart } from '@/components/history/desire-history-chart'
 import { EmotionDistributionChart } from '@/components/history/emotion-distribution-chart'
 import { EmotionTimelineChart } from '@/components/history/emotion-timeline-chart'
 import { IntensityChart } from '@/components/history/intensity-chart'
+import { MemoryNetworkPanel } from '@/components/history/memory-network-panel'
+import { NotionPanel } from '@/components/history/notion-panel'
 import { ToolUsageChart } from '@/components/history/tool-usage-chart'
 import { ValenceArousalChart } from '@/components/history/valence-arousal-chart'
 import { useHistoryData } from '@/hooks/use-history-data'
@@ -21,7 +23,11 @@ export const HistoryTab = ({ range, preset }: HistoryTabProps) => {
     arousal,
     emotionTrend,
     emotionHeatmap,
+    historyMarkers,
+    memoryNetwork,
+    notions,
     toolSeriesKeys,
+    desireKeys,
     desireChartData,
   } = useHistoryData('history', range, preset)
 
@@ -33,10 +39,18 @@ export const HistoryTab = ({ range, preset }: HistoryTabProps) => {
         timeline={timeline}
       />
       <IntensityChart intensity={intensity} />
-      <EmotionTimelineChart points={emotionTrend} />
+      <EmotionTimelineChart points={emotionTrend} markers={historyMarkers} />
       <EmotionDistributionChart heatmapData={emotionHeatmap} />
       <ValenceArousalChart valence={valence} arousal={arousal} />
-      <DesireHistoryChart desireChartData={desireChartData} />
+      <div className="grid gap-4 xl:grid-cols-2">
+        <MemoryNetworkPanel network={memoryNetwork} />
+        <NotionPanel notions={notions} />
+      </div>
+      <DesireHistoryChart
+        desireChartData={desireChartData}
+        desireKeys={desireKeys}
+        markers={historyMarkers}
+      />
     </div>
   )
 }
