@@ -84,6 +84,24 @@ class TestScoringFunctions:
         result = calculate_time_decay(old.isoformat(), now)
         assert result < 0.01
 
+    def test_time_decay_rewards_access_count(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(days=60)
+        baseline = calculate_time_decay(old.isoformat(), now, access_count=0)
+        reinforced = calculate_time_decay(old.isoformat(), now, access_count=8)
+        assert reinforced > baseline
+
+    def test_time_decay_rewards_link_confidence(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(days=60)
+        baseline = calculate_time_decay(old.isoformat(), now, link_confidence_max=0.0)
+        linked = calculate_time_decay(old.isoformat(), now, link_confidence_max=1.0)
+        assert linked > baseline
+
     def test_emotion_boost(self) -> None:
         assert calculate_emotion_boost("excited") == 0.4
         assert calculate_emotion_boost("frustrated") == 0.28
@@ -140,6 +158,8 @@ class TestMemorySave:
         assert mem.content == "Hello world"
         assert mem.emotional_trace.primary.value == "happy"
         assert mem.importance == 4
+        assert mem.access_count == 0
+        assert mem.last_accessed == ""
 
     @pytest.mark.asyncio
     async def test_save_then_search(self, store: MemoryStore) -> None:
@@ -171,6 +191,8 @@ class TestMemorySave:
         assert [e.value for e in loaded.emotional_trace.secondary] == ["sad", "happy"]
         assert loaded.emotional_trace.body_state is not None
         assert loaded.emotional_trace.body_state.time_phase == "evening"
+        assert loaded.access_count == 0
+        assert loaded.last_accessed == ""
 
     @pytest.mark.asyncio
     async def test_save_private_roundtrip(self, store: MemoryStore) -> None:

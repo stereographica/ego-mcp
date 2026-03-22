@@ -14,9 +14,15 @@ from ego_mcp._server_context import (
     _summarize_conversation_tendency,
 )
 from ego_mcp._server_emotion_formatting import _truncate_for_quote
-from ego_mcp._server_runtime import get_workspace_sync
+from ego_mcp._server_runtime import (
+    get_impulse_manager,
+    get_notion_store,
+    get_workspace_sync,
+    update_tool_metadata,
+)
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
+from ego_mcp.desire_blend import blend_desires
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
 from ego_mcp.scaffolds import (
@@ -115,7 +121,7 @@ async def _handle_wake_up(
         else:
             intro_line = "No introspection yet."
 
-    desire_summary = desire.format_summary()
+    desire_summary = blend_desires(desire.compute_levels_with_modulation())
     relationship_line = await _call_relationship_snapshot(
         config, memory, config.companion_name
     )
@@ -130,6 +136,8 @@ async def _handle_feel_desires(
     config: EgoConfig, memory: MemoryStore, desire: DesireEngine
 ) -> str:
     """Check desire levels with scaffold."""
+    created_emergent = desire.generate_emergent_desires(get_notion_store().list_all())
+    expired_emergent = desire.expire_emergent_desires()
     self_store = SelfModelStore(config.data_dir / "self_model.json")
     fading_questions = _fading_important_questions(memory, store=self_store)
     (
@@ -144,6 +152,10 @@ async def _handle_feel_desires(
         emotional_modulation=emotional_modulation,
         prediction_error=prediction_error,
     )
+    impulse_event = get_impulse_manager().consume_event()
+    impulse_boosts = get_impulse_manager().consume_boosts()
+    for name, amount in impulse_boosts.items():
+        levels[name] = round(min(1.0, max(0.0, levels.get(name, 0.0) + amount)), 3)
     body_state = _call_get_body_state()
     phase = body_state.get("time_phase", "unknown")
     load = body_state.get("system_load", "unknown")
@@ -162,18 +174,13 @@ async def _handle_feel_desires(
             for name, level in levels.items()
         }
 
-    sorted_desires = sorted(levels.items(), key=lambda x: -x[1])
-
-    def tag(level: float) -> str:
-        if level >= 0.7:
-            return "high"
-        elif level >= 0.4:
-            return "mid"
-        else:
-            return "low"
-
-    lines = [f"{name}[{level:.1f}/{tag(level)}]" for name, level in sorted_desires]
-    data = " ".join(lines)
+    data = blend_desires(levels)
+    update_tool_metadata(
+        desire_levels=levels,
+        emergent_desire_created=",".join(created_emergent) if created_emergent else None,
+        emergent_desire_expired=",".join(expired_emergent) if expired_emergent else None,
+        **(impulse_event or {"impulse_boost_triggered": False}),
+    )
 
     scaffold = render(SCAFFOLD_FEEL_DESIRES, config.companion_name)
     if levels.get("cognitive_coherence", 0.0) >= 0.6 and fading_questions:
@@ -201,7 +208,6 @@ async def _handle_introspect(
     else:
         memory_section = "No memories yet."
 
-    desire_summary = desire.format_summary()
     self_store = SelfModelStore(config.data_dir / "self_model.json")
     fading_questions = _fading_important_questions(memory, store=self_store)
     (
@@ -218,6 +224,7 @@ async def _handle_introspect(
         emotional_modulation=introspect_emotional_modulation,
         prediction_error=introspect_prediction_error,
     )
+    desire_summary = blend_desires(introspect_levels)
     coherence_level = float(introspect_levels.get("cognitive_coherence", 0.0))
     self_model = self_store.get()
     goals = (

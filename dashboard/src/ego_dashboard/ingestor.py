@@ -44,10 +44,12 @@ def normalize_event(raw: dict[str, object]) -> DashboardEvent:
 
     if isinstance(params, dict):
         for key, value in params.items():
-            if isinstance(value, (int, float)):
+            if isinstance(value, bool):
+                safe_params[key] = value
+            elif isinstance(value, (int, float)):
                 numeric_metrics[key] = float(value)
                 safe_params[key] = value
-            elif isinstance(value, str) and key in ALLOWED_STRING_PARAMS:
+            elif isinstance(value, str) and (key in ALLOWED_STRING_PARAMS or "_" in key):
                 string_metrics[key] = value
                 safe_params[key] = value
 
@@ -182,13 +184,26 @@ class EgoMcpLogProjector:
         return None
 
     def _parse_feel_desires_levels(self, raw: Mapping[str, object]) -> dict[str, float]:
+        levels: dict[str, float] = {}
+        for key, value in raw.items():
+            if (
+                not isinstance(key, str)
+                or not isinstance(value, (int, float))
+                or isinstance(value, bool)
+            ):
+                continue
+            if key in _DESIRE_METRIC_KEY_SET or "want" in key.lower():
+                levels[key] = float(value)
+
+        if levels:
+            return levels
+
         tool_output = raw.get("tool_output")
         if not isinstance(tool_output, str) or not tool_output:
             return {}
 
         # ego-mcp renders `data + "\n\n---\n" + scaffold`; desire levels are on the first line.
         first_section = tool_output.split("\n\n---\n", 1)[0]
-        levels: dict[str, float] = {}
         for match in _FEEL_DESIRES_LEVEL_RE.finditer(first_section):
             name = match.group("name")
             if name not in _DESIRE_METRIC_KEY_SET:
@@ -243,6 +258,30 @@ class EgoMcpLogProjector:
             raw_value = raw.get(rel_key)
             if isinstance(raw_value, (int, float)):
                 params[rel_key] = raw_value
+
+        for key, value in raw.items():
+            if key in {
+                "tool_name",
+                "message",
+                "logger",
+                "level",
+                "timestamp",
+                "ts",
+                "tool_output",
+                "tool_output_chars",
+                "tool_output_truncated",
+                "emotion_primary",
+                "emotion_intensity",
+                "valence",
+                "arousal",
+            }:
+                continue
+            if isinstance(value, bool):
+                params[key] = value
+            elif isinstance(value, (int, float)):
+                params[key] = value
+            elif isinstance(value, str) and (key in ALLOWED_STRING_PARAMS or "_" in key):
+                params[key] = value
 
         if tool_name in {"consider_them", "wake_up"} and "trust_level" not in params:
             fallback_text = raw.get("tool_output", "")

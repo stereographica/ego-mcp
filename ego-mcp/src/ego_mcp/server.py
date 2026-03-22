@@ -11,15 +11,22 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 import ego_mcp._server_handlers as _handlers
+from ego_mcp._server_backend_handlers import (
+    pop_tool_context as pop_backend_tool_context,
+)
+from ego_mcp._server_runtime import get_tool_metadata, reset_tool_metadata
+from ego_mcp._server_surface_memory import pop_tool_context as pop_memory_tool_context
 from ego_mcp._server_tools import BACKEND_TOOLS, SURFACE_TOOLS
 from ego_mcp.config import EgoConfig
 from ego_mcp.consolidation import ConsolidationEngine
 from ego_mcp.desire import DesireEngine
 from ego_mcp.embedding import EgoEmbeddingFunction, create_embedding_provider
 from ego_mcp.episode import EpisodeStore
+from ego_mcp.impulse import ImpulseManager
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore, calculate_time_decay
 from ego_mcp.migrations import run_migrations
+from ego_mcp.notion import NotionStore
 from ego_mcp.types import Memory
 from ego_mcp.workspace_sync import WorkspaceMemorySync
 
@@ -34,6 +41,8 @@ _desire: DesireEngine | None = None
 _episodes: EpisodeStore | None = None
 _consolidation: ConsolidationEngine | None = None
 _workspace_sync: WorkspaceMemorySync | None = None
+_notions: NotionStore | None = None
+_impulse: ImpulseManager | None = None
 
 # --- Re-exported handler/helper symbols for compatibility with tests ---
 _REMEMBER_DUPLICATE_PREFIX = _handlers._REMEMBER_DUPLICATE_PREFIX
@@ -104,7 +113,19 @@ def _get_workspace_sync() -> WorkspaceMemorySync | None:
 _handlers.configure_runtime_accessors(
     workspace_sync_getter=_get_workspace_sync,
     episodes_getter=_get_episodes,
+    notion_store_getter=lambda: _get_notion_store(),
+    impulse_manager_getter=lambda: _get_impulse_manager(),
 )
+
+
+def _get_notion_store() -> NotionStore:
+    assert _notions is not None, "Server not initialized"
+    return _notions
+
+
+def _get_impulse_manager() -> ImpulseManager:
+    assert _impulse is not None, "Server not initialized"
+    return _impulse
 
 
 async def _handle_wake_up(
@@ -253,27 +274,44 @@ def _tool_log_context() -> dict[str, str]:
 
 
 async def _completion_log_context(
-    name: str, memory: MemoryStore, config: EgoConfig
+    name: str,
+    memory: MemoryStore,
+    config: EgoConfig,
+    desire: DesireEngine | None = None,
 ) -> dict[str, object]:
     """Attach periodic telemetry snapshots for dashboard projection."""
+    extra: dict[str, object] = {}
+    if name in {"remember", "recall"}:
+        extra.update(pop_memory_tool_context(name))
+    if name == "consolidate":
+        extra.update(pop_backend_tool_context(name))
+    tool_metadata = get_tool_metadata()
+    extra.update(tool_metadata)
+    desire_levels = tool_metadata.get("desire_levels")
+    if name == "feel_desires" and isinstance(desire_levels, dict):
+        for key, value in desire_levels.items():
+            if isinstance(key, str) and isinstance(value, (int, float)):
+                extra[key] = float(value)
 
     try:
         recent = await memory.list_recent(n=1)
     except Exception:
         logger.debug("Skipped completion telemetry snapshot", exc_info=True)
-        return {}
+        return extra
 
     if not recent:
-        return {}
+        return extra
 
     latest: Memory = recent[0]
     trace = latest.emotional_trace
-    extra: dict[str, object] = {
+    extra.update(
+        {
         "emotion_primary": trace.primary.value,
         "emotion_intensity": float(trace.intensity),
         "valence": float(trace.valence),
         "arousal": float(trace.arousal),
-    }
+        }
+    )
     if trace.body_state and trace.body_state.time_phase:
         extra["time_phase"] = trace.body_state.time_phase
     if name in {"consider_them", "wake_up"}:
@@ -285,12 +323,16 @@ async def _completion_log_context(
             extra["shared_episodes_count"] = len(relationship.shared_episode_ids)
         except Exception:
             logger.debug("Skipped relationship telemetry snapshot", exc_info=True)
+    if name == "feel_desires" and desire is not None and "desire_levels" not in tool_metadata:
+        for key, value in desire.compute_levels().items():
+            extra[key] = float(value)
     return extra
 
 
 @server.call_tool()  # type: ignore[untyped-decorator]
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Dispatch tool calls."""
+    reset_tool_metadata()
     safe_args = _sanitize_tool_args_for_logging(name, arguments)
     log_context = _tool_log_context()
     logger.info(
@@ -317,7 +359,14 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
     safe_output = _sanitize_tool_output_for_logging(name, arguments, text)
     output_excerpt, output_truncated = _truncate_for_log(safe_output)
-    completion_context = await _completion_log_context(name, memory, config)
+    tool_metadata = get_tool_metadata()
+    if name == "recall" and bool(tool_metadata.get("proust_triggered")):
+        memory_id = tool_metadata.get("proust_memory_id")
+        if isinstance(memory_id, str) and memory_id:
+            proust_memory = await memory.get_by_id(memory_id)
+            if proust_memory is not None:
+                _get_impulse_manager().register_proust_event(proust_memory)
+    completion_context = await _completion_log_context(name, memory, config, desire)
     logger.info(
         "Tool execution completed",
         extra={
@@ -403,7 +452,7 @@ async def _dispatch(
 
 def init_server(config: EgoConfig | None = None) -> None:
     """Initialize all dependencies. Called from main() or tests."""
-    global _config, _memory, _desire, _episodes, _consolidation, _workspace_sync
+    global _config, _memory, _desire, _episodes, _consolidation, _workspace_sync, _notions, _impulse
 
     if config is None:
         config = EgoConfig.from_env()
@@ -433,10 +482,14 @@ def init_server(config: EgoConfig | None = None) -> None:
 
     _consolidation = ConsolidationEngine()
     _workspace_sync = WorkspaceMemorySync.from_optional_path(config.workspace_dir)
+    _notions = NotionStore(config.data_dir / "notions.json")
+    _impulse = ImpulseManager()
 
     _handlers.configure_runtime_accessors(
         workspace_sync_getter=_get_workspace_sync,
         episodes_getter=_get_episodes,
+        notion_store_getter=_get_notion_store,
+        impulse_manager_getter=_get_impulse_manager,
     )
 
 

@@ -46,7 +46,7 @@ SURFACE_TOOLS: list[Tool] = [
     ),
     Tool(
         name="remember",
-        description="Save a memory with emotion and importance.",
+        description="Save a memory.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -59,6 +59,10 @@ SURFACE_TOOLS: list[Tool] = [
                 "valence": {"type": "number", "default": 0.0},
                 "arousal": {"type": "number", "default": 0.5},
                 "body_state": {"type": "object"},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
                 "shared_with": {
                     "oneOf": [
                         {"type": "string"},

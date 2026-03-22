@@ -239,6 +239,60 @@ def test_projector_parses_feel_desires_completion_metrics() -> None:
     assert event.numeric_metrics["curiosity"] == 0.7
 
 
+def test_projector_preserves_forgetting_and_notion_metrics() -> None:
+    projector = EgoMcpLogProjector()
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "remember",
+        "emotion_primary": "curious",
+        "emotion_intensity": 0.65,
+        "fuzzy_recall_count": 2,
+        "resurfaced_memory_id": "mem_old",
+        "notion_reinforced": "notion_1",
+        "notion_confidence": 0.7,
+    }
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.numeric_metrics["fuzzy_recall_count"] == 2
+    assert event.numeric_metrics["notion_confidence"] == 0.7
+    assert event.string_metrics["resurfaced_memory_id"] == "mem_old"
+    assert event.string_metrics["notion_reinforced"] == "notion_1"
+
+
+def test_projector_parses_top_level_dynamic_desires_and_impulse_metrics() -> None:
+    projector = EgoMcpLogProjector()
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "feel_desires",
+        "emotion_primary": "curious",
+        "emotion_intensity": 0.65,
+        "curiosity": 0.8,
+        "You want to feel safe.": 0.55,
+        "emergent_desire_created": "You want to feel safe.",
+        "impulse_boost_triggered": True,
+        "impulse_boosted_desire": "curiosity",
+        "impulse_boost_amount": 0.15,
+    }
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.numeric_metrics["curiosity"] == 0.8
+    assert event.numeric_metrics["You want to feel safe."] == 0.55
+    assert event.numeric_metrics["impulse_boost_amount"] == 0.15
+    assert event.string_metrics["emergent_desire_created"] == "You want to feel safe."
+    assert event.string_metrics["impulse_boosted_desire"] == "curiosity"
+    assert event.params["impulse_boost_triggered"] is True
+
+
 def test_projector_reads_top_level_time_phase_from_ego_mcp_logs() -> None:
     projector = EgoMcpLogProjector()
     invocation = {

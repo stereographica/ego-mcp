@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Callable
 
 from ego_mcp import timezone_utils
+from ego_mcp._memory_formatting import format_memory_by_decay
 from ego_mcp.memory import calculate_time_decay, count_emotions_weighted
 from ego_mcp.types import Memory, MemorySearchResult
 
@@ -32,13 +33,27 @@ def _call_relative_time(timestamp: str, now: datetime | None = None) -> str:
 
 
 def _call_calculate_time_decay(
-    timestamp: str, now: datetime | None = None, half_life_days: float = 30.0
+    timestamp: str,
+    now: datetime | None = None,
+    half_life_days: float = 30.0,
+    link_confidence_max: float = 0.0,
+    access_count: int = 0,
 ) -> float:
     if _calculate_time_decay_override is not None:
         return _calculate_time_decay_override(
-            timestamp, now=now, half_life_days=half_life_days
+            timestamp,
+            now=now,
+            half_life_days=half_life_days,
+            link_confidence_max=link_confidence_max,
+            access_count=access_count,
         )
-    return calculate_time_decay(timestamp, now=now, half_life_days=half_life_days)
+    return calculate_time_decay(
+        timestamp,
+        now=now,
+        half_life_days=half_life_days,
+        link_confidence_max=link_confidence_max,
+        access_count=access_count,
+    )
 
 
 def _truncate_for_quote(text: str, limit: int = 220) -> str:
@@ -93,26 +108,24 @@ def _format_recall_entry(
     result: MemorySearchResult,
     now: datetime | None = None,
 ) -> str:
-    """Render a single recall result in the compact two-line format."""
+    """Render a single recall result using the shared decay-aware formatter."""
     if now is None:
         now = timezone_utils.now()
     memory = result.memory
     age = _call_relative_time(memory.timestamp, now=now)
-    content = _truncate_for_quote(memory.content, limit=70)
+    formatted = format_memory_by_decay(memory, result.decay, now=now).splitlines()
+    if not formatted:
+        formatted = [_truncate_for_quote(memory.content, limit=70)]
 
-    emotion_label = memory.emotional_trace.primary.value
-    if memory.emotional_trace.intensity >= 0.7:
-        emotion_label = f"{emotion_label}({memory.emotional_trace.intensity:.1f})"
-
-    details = [f"emotion: {emotion_label}"]
-    if memory.emotional_trace.secondary:
-        details.append(f"undercurrent: {memory.emotional_trace.secondary[0].value}")
-    details.append(f"importance: {memory.importance}")
-    details.append(f"score: {result.score:.2f}")
-    if memory.is_private:
-        details.append("private")
-
-    return f"{index}. [{age}] {content}\n   {' | '.join(details)}"
+    lines = [f"{index}. [{age}] {formatted[0]}"]
+    for detail_line in formatted[1:]:
+        lines.append(f"   {detail_line.strip()}")
+    formatted_text = "\n".join(formatted)
+    if "decay:" in formatted_text:
+        lines.append(f"   score: {result.score:.2f}")
+    else:
+        lines.append(f"   score: {result.score:.2f} | decay: {result.decay:.2f}")
+    return "\n".join(lines)
 
 
 def _recall_scaffold(n_shown: int, total_count: int, filters_used: list[str]) -> str:

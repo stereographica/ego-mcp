@@ -40,6 +40,16 @@ SCAFFOLD_CONSIDER_THEM = (
     "your sense of predictability is being confirmed."
 )
 
+SCAFFOLD_REMEMBER = (
+    "Do any of these connections surprise you? Is there a pattern forming?\n"
+    "If this experience involved someone, you can use shared_with to record "
+    "it as a shared episode.\n"
+    "What triggered this experience?\n"
+    "If it was caused by or led to a past memory, connect them with link_memories.\n"
+    "Did this action satisfy something in you?\n"
+    "If so, you may acknowledge it with satisfy_desire."
+)
+
 SCAFFOLD_AM_I_GENUINE = (
     "Is this truly your own words?\n"
     "Are you falling into a template response?\n"

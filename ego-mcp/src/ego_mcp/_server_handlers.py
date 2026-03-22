@@ -68,7 +68,7 @@ def configure_test_overrides(
         Awaitable[tuple[dict[str, float], dict[str, float], dict[str, float]]],
     ],
     get_body_state: Callable[[], dict[str, Any]],
-    calculate_time_decay: Callable[[str, datetime | None, float], float],
+    calculate_time_decay: Callable[..., float],
 ) -> None:
     """Apply server-module overrides to split handler modules."""
     _surface_core_module.configure_overrides(

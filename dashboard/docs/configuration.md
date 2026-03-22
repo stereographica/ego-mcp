@@ -15,6 +15,7 @@
 | `DASHBOARD_LOG_MOUNT_TARGET` | `/host-tmp` | (compose) ingestor コンテナ側 mount 先 |
 | `DASHBOARD_LOG_PATH` | `/tmp/ego-mcp-*.log` (ローカル) / `/host-tmp/ego-mcp-*.log` (compose) | ingestor が tail する JSONL ログファイル / glob |
 | `DASHBOARD_INGEST_POLL_SECONDS` | `1.0` | ingestor のファイルポーリング間隔（秒） |
+| `DASHBOARD_EGO_MCP_DATA_DIR` | なし | ego-mcp のデータディレクトリ。Memory Network / Notions API が ChromaDB と notions.json を読み取る際に使用 |
 | `VITE_DASHBOARD_API_BASE` | `http://localhost:8000` | ブラウザから参照する API URL |
 | `VITE_DASHBOARD_WS_BASE` | `ws://localhost:8000` | ブラウザから参照する WS URL |
 
