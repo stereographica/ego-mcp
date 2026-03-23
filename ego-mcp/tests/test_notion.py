@@ -56,6 +56,30 @@ def test_generate_notion_from_cluster_uses_shared_tags_and_emotion() -> None:
     assert notion.tags == ["pattern", "signal"]
 
 
+def test_generate_notion_from_cluster_falls_back_to_content_when_tags_missing() -> None:
+    memories = [
+        _memory(
+            memory_id="mem_a",
+            content="A recurring thought about continuity. emotion traces might carry weight.",
+            emotion=Emotion.CURIOUS,
+            valence=0.4,
+            tags=[],
+        ),
+        _memory(
+            memory_id="mem_b",
+            content="A recurring thought about continuity.\nMore detail follows here.",
+            emotion=Emotion.CURIOUS,
+            valence=0.2,
+            tags=[],
+        ),
+    ]
+
+    notion = generate_notion_from_cluster(memories)
+
+    assert notion.label == "A recurring thought about continuity (curious)"
+    assert notion.tags == []
+
+
 def test_notion_store_reinforces_and_weakens_by_tag_overlap(tmp_path: Path) -> None:
     store = NotionStore(tmp_path / "notions.json")
     reinforcing = Notion(
