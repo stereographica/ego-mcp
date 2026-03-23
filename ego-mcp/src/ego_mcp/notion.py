@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections import Counter
 from dataclasses import asdict
@@ -11,6 +12,11 @@ from typing import Any
 
 from ego_mcp import timezone_utils
 from ego_mcp.types import Emotion, Memory, Notion
+
+_PLACEHOLDER_NOTION_LABEL = re.compile(r"^untitled\s*\([^)]+\)$", re.IGNORECASE)
+_TITLE_SEPARATOR = re.compile(r"[.!?。！？\n]+")
+_WHITESPACE = re.compile(r"\s+")
+_MAX_CONTENT_LABEL_LENGTH = 48
 
 
 def _now_iso() -> str:
@@ -34,6 +40,75 @@ def _parse_emotion(value: Any) -> Emotion:
         except ValueError:
             return Emotion.NEUTRAL
     return Emotion.NEUTRAL
+
+
+def is_placeholder_notion_label(label: str) -> bool:
+    """Return whether the given notion label still uses the placeholder form."""
+    normalized = _WHITESPACE.sub(" ", label).strip()
+    return not normalized or _PLACEHOLDER_NOTION_LABEL.fullmatch(normalized) is not None
+
+
+def derive_notion_tags(memories: list[Memory]) -> list[str]:
+    """Build notion tags from shared tags first, then frequent tags."""
+    tag_sets = [set(memory.tags) for memory in memories if memory.tags]
+    shared_tags = set.intersection(*tag_sets) if tag_sets else set()
+    if shared_tags:
+        return sorted(shared_tags)
+
+    tag_counter = Counter(tag for memory in memories for tag in memory.tags)
+    return [tag for tag, _count in tag_counter.most_common(2)]
+
+
+def _content_label_candidate(content: str) -> str:
+    normalized = _WHITESPACE.sub(" ", content).strip()
+    if not normalized:
+        return ""
+
+    head = _TITLE_SEPARATOR.split(normalized, maxsplit=1)[0].strip()
+    candidate = head or normalized
+    candidate = candidate.strip(" -_.,;:!?/\\|()[]{}\"'`")
+    if not candidate:
+        return ""
+    if len(candidate) <= _MAX_CONTENT_LABEL_LENGTH:
+        return candidate
+
+    clipped = candidate[: _MAX_CONTENT_LABEL_LENGTH - 3].rstrip(" -_.,;:!?/\\|")
+    return f"{clipped}..."
+
+
+def _derive_content_label(memories: list[Memory]) -> str:
+    candidates: Counter[str] = Counter()
+    first_seen: dict[str, int] = {}
+    for index, memory in enumerate(memories):
+        candidate = _content_label_candidate(memory.content)
+        if not candidate:
+            continue
+        candidates[candidate] += 1
+        first_seen.setdefault(candidate, index)
+
+    if not candidates:
+        return "untitled"
+
+    return min(
+        candidates,
+        key=lambda candidate: (
+            -candidates[candidate],
+            first_seen[candidate],
+            candidate,
+        ),
+    )
+
+
+def derive_notion_label(
+    emotion_tone: Emotion,
+    memories: list[Memory],
+    *,
+    notion_tags: list[str] | None = None,
+) -> str:
+    """Build a notion label from tags or, when absent, source memory content."""
+    tags = [tag for tag in (notion_tags or []) if tag.strip()]
+    label_core = " & ".join(tags[:3]) if tags else _derive_content_label(memories)
+    return f"{label_core} ({emotion_tone.value})"
 
 
 class NotionStore:
@@ -152,19 +227,10 @@ def generate_notion_from_cluster(memories: list[Memory]) -> Notion:
     emotion_counter = Counter(memory.emotional_trace.primary for memory in memories)
     emotion_tone = emotion_counter.most_common(1)[0][0]
     valence = sum(memory.emotional_trace.valence for memory in memories) / len(memories)
-
-    tag_sets = [set(memory.tags) for memory in memories if memory.tags]
-    shared_tags = set.intersection(*tag_sets) if tag_sets else set()
-    if shared_tags:
-        tags = sorted(shared_tags)
-    else:
-        tag_counter = Counter(tag for memory in memories for tag in memory.tags)
-        tags = [tag for tag, _ in tag_counter.most_common(2)]
-
-    label_tags = tags[:3] if tags else ["untitled"]
+    tags = derive_notion_tags(memories)
     created = _now_iso()
     return Notion(
-        label=f'{" & ".join(label_tags)} ({emotion_tone.value})',
+        label=derive_notion_label(emotion_tone, memories, notion_tags=tags),
         emotion_tone=emotion_tone,
         valence=valence,
         confidence=min(0.3 + len(memories) * 0.1, 0.9),
