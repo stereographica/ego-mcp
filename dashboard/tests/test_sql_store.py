@@ -306,6 +306,74 @@ def test_current_latest_relationship_query_filters_trust_level_metric(
     assert params == (latest_ts,)
 
 
+def test_desire_metric_keys_reads_dynamic_keys_from_feel_desires_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(None),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _FakeConnection(
+            rows=[],
+            all_rows=[
+                (
+                    {
+                        "curiosity": 0.7,
+                        "You want to feel safe.": 0.4,
+                        "impulse_boost_amount": 0.2,
+                    },
+                )
+            ],
+        ),
+    )
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+
+    keys = store.desire_metric_keys(
+        datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 12, 10, tzinfo=UTC),
+    )
+
+    assert keys == ["You want to feel safe.", "curiosity"]
+
+
+def test_notion_history_prefers_per_notion_confidence_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(None),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _FakeConnection(
+            rows=[],
+            all_rows=[
+                (
+                    datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+                    '{"notion_1": 0.8, "notion_2": 0.95}',
+                    None,
+                    "notion_1,notion_2",
+                    None,
+                    None,
+                    0.95,
+                )
+            ],
+        ),
+    )
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+
+    history = store.notion_history(
+        "notion_1",
+        datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 12, 30, tzinfo=UTC),
+        "15m",
+    )
+
+    assert history == [{"ts": "2026-01-01T12:00:00+00:00", "value": 0.8}]
+
+
 def test_logs_search_escapes_ilike_meta_characters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -403,7 +471,17 @@ def test_notion_history_returns_bucketed_rows(
         "ego_dashboard.sql_store.psycopg.connect",
         lambda *_args, **_kwargs: _FakeConnection(
             rows=[],
-            all_rows=[(datetime(2026, 1, 1, 12, 0, tzinfo=UTC), 0.7)],
+            all_rows=[
+                (
+                    datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+                    None,
+                    None,
+                    "notion_1",
+                    None,
+                    None,
+                    0.7,
+                )
+            ],
         ),
     )
     store = SqlTelemetryStore("postgresql://unused", "redis://unused")
@@ -439,7 +517,17 @@ def test_notion_history_uses_exact_matching(
         def __init__(self) -> None:
             self._cursor = _CapturingCursor(
                 rows=[],
-                all_rows=[(datetime(2026, 1, 1, 12, 0, tzinfo=UTC), 0.7)],
+                all_rows=[
+                    (
+                        datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+                        None,
+                        None,
+                        "notion_1",
+                        None,
+                        None,
+                        0.7,
+                    )
+                ],
             )
 
     monkeypatch.setattr(
@@ -463,13 +551,9 @@ def test_notion_history_uses_exact_matching(
     sql, params = executed[0]
     compact_sql = " ".join(sql.split())
     assert "ILIKE" not in compact_sql
-    assert "string_to_array(" in compact_sql
+    assert "string_metrics ->> 'notion_confidences'" in compact_sql
+    assert "string_metrics ->> 'notion_reinforced'" in compact_sql
     assert params == (
-        "15 minute",
         datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
         datetime(2026, 1, 1, 12, 30, tzinfo=UTC),
-        "notion_1",
-        "notion_1",
-        "notion_1",
-        "notion_1",
     )

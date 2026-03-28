@@ -74,10 +74,18 @@ export const fetchNotions = async (): Promise<{ items: Notion[] }> =>
 export const fetchNotionHistory = async (
   notionId: string,
   range: DateRange,
-  bucket = '1h',
+  bucket = '15m',
 ): Promise<SeriesPoint[]> => {
   const data = await get<{ items: SeriesPoint[] }>(
     `/api/v1/notions/${encodeURIComponent(notionId)}/history?${encodeRange(range)}&bucket=${bucket}`,
+    { items: [] },
+  )
+  return data.items
+}
+
+export const fetchDesireKeys = async (range: DateRange): Promise<string[]> => {
+  const data = await get<{ items: string[] }>(
+    `/api/v1/desires/keys?${encodeRange(range)}`,
     { items: [] },
   )
   return data.items

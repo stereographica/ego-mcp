@@ -151,6 +151,60 @@ def test_logs_search_none_or_empty_returns_all_rows() -> None:
     assert len(store.logs(base, end, search="")) == 2
 
 
+def test_desire_metric_keys_include_dynamic_history_only_keys() -> None:
+    store = TelemetryStore()
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    end = start + timedelta(minutes=10)
+    store.ingest(
+        DashboardEvent(
+            ts=start,
+            event_type="tool_call_completed",
+            tool_name="feel_desires",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={
+                "curiosity": 0.7,
+                "You want to feel safe.": 0.4,
+                "impulse_boost_amount": 0.2,
+            },
+            string_metrics={},
+            params={},
+            private=False,
+        )
+    )
+
+    assert store.desire_metric_keys(start, end) == [
+        "You want to feel safe.",
+        "curiosity",
+    ]
+
+
+def test_notion_history_prefers_per_notion_confidence_mapping() -> None:
+    store = TelemetryStore()
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    end = start + timedelta(minutes=30)
+    store.ingest(
+        DashboardEvent(
+            ts=start,
+            event_type="tool_call_completed",
+            tool_name="remember",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={"notion_confidence": 0.95},
+            string_metrics={
+                "notion_reinforced": "notion_1,notion_2",
+                "notion_confidences": '{"notion_1": 0.8, "notion_2": 0.95}',
+            },
+            params={},
+            private=False,
+        )
+    )
+
+    history = store.notion_history("notion_1", start, end, bucket="15m")
+
+    assert history == [{"ts": "2026-01-01T12:00:00+00:00", "value": 0.8}]
+
+
 def test_current_backfills_latest_emotion_from_recent_telemetry() -> None:
     store = TelemetryStore()
     store.ingest(

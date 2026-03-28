@@ -41,6 +41,7 @@ def test_history_endpoints() -> None:
     assert client.get(f"/api/v1/metrics/intensity?{query}&bucket=1m").status_code == 200
     assert client.get(f"/api/v1/metrics/time_phase/string-timeline?{query}").status_code == 200
     assert client.get(f"/api/v1/metrics/time_phase/heatmap?{query}&bucket=1m").status_code == 200
+    assert client.get(f"/api/v1/desires/keys?{query}").status_code == 200
     assert client.get(f"/api/v1/logs?{query}&level=INFO&search=hello").status_code == 200
     assert client.get(f"/api/v1/alerts/anomalies?{query}&bucket=1m").status_code == 200
 
@@ -241,6 +242,7 @@ def test_load_memory_network_uses_existing_collection_in_batches(
             if offset == 0:
                 return {
                     "ids": ["mem_1"],
+                    "documents": ["Memory one with a readable summary"],
                     "metadatas": [
                         {
                             "category": "daily",
@@ -261,16 +263,18 @@ def test_load_memory_network_uses_existing_collection_in_batches(
             if offset == 1:
                 return {
                     "ids": ["mem_2"],
+                    "documents": ["Private note that should stay hidden"],
                     "metadatas": [
                         {
                             "category": "daily",
                             "timestamp": "2026-01-01T12:00:00+00:00",
                             "access_count": 5,
                             "linked_ids": "[]",
+                            "is_private": True,
                         }
                     ],
                 }
-            return {"ids": [], "metadatas": []}
+            return {"ids": [], "documents": [], "metadatas": []}
 
     class _FakePersistentClient:
         def __init__(self, path: str) -> None:
@@ -296,12 +300,14 @@ def test_load_memory_network_uses_existing_collection_in_batches(
     edges = cast(list[dict[str, object]], result["edges"])
 
     assert collection_calls == [
-        {"limit": 1, "offset": 0, "include": ("metadatas",)},
-        {"limit": 1, "offset": 1, "include": ("metadatas",)},
-        {"limit": 1, "offset": 2, "include": ("metadatas",)},
+        {"limit": 1, "offset": 0, "include": ("documents", "metadatas")},
+        {"limit": 1, "offset": 1, "include": ("documents", "metadatas")},
+        {"limit": 1, "offset": 2, "include": ("documents", "metadatas")},
     ]
     assert nodes[0]["id"] == "mem_1"
+    assert nodes[0]["label"] == "Memory one with a readable summary"
     assert nodes[1]["access_count"] == 5
+    assert nodes[1]["label"] == "REDACTED"
     assert nodes[0]["decay"] == pytest.approx(2.52)
     assert edges == [
         {
@@ -378,7 +384,10 @@ def test_notion_history_endpoint_returns_bucketed_items() -> None:
             ok=True,
             duration_ms=10,
             numeric_metrics={"notion_confidence": 0.6},
-            string_metrics={"notion_created": "notion_1"},
+            string_metrics={
+                "notion_created": "notion_1",
+                "notion_confidences": json.dumps({"notion_1": 0.6}),
+            },
             params={},
             private=False,
         )
@@ -390,8 +399,11 @@ def test_notion_history_endpoint_returns_bucketed_items() -> None:
             tool_name="remember",
             ok=True,
             duration_ms=10,
-            numeric_metrics={"notion_confidence": 0.8},
-            string_metrics={"notion_reinforced": "notion_1"},
+            numeric_metrics={"notion_confidence": 0.95},
+            string_metrics={
+                "notion_reinforced": "notion_1,notion_2",
+                "notion_confidences": json.dumps({"notion_1": 0.8, "notion_2": 0.95}),
+            },
             params={},
             private=False,
         )

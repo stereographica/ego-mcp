@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import {
   fetchArousal,
-  fetchCurrent,
+  fetchDesireKeys,
   fetchIntensity,
   fetchLogs,
   fetchMemoryNetwork,
@@ -16,7 +16,6 @@ import {
 } from '@/api'
 import { DESIRE_METRIC_KEYS } from '@/constants'
 import type {
-  CurrentResponse,
   DateRange,
   EmotionTrendPoint,
   HeatmapPoint,
@@ -38,9 +37,27 @@ const makeEmptyDesireMetricSeriesMap = (): DesireMetricSeriesMap =>
     string,
     SeriesPoint[]
   >
+const FIXED_DESIRE_KEY_SET = new Set<string>(DESIRE_METRIC_KEYS)
 
 const bucketFor = (preset: TimeRangePreset) =>
   preset === '15m' || preset === '1h' ? '1m' : '5m'
+
+const rangeFor = (range: DateRange, preset: TimeRangePreset): DateRange => {
+  if (preset === 'custom') {
+    return range
+  }
+  const to = new Date()
+  const from = new Date(to)
+  const minutesByPreset: Record<Exclude<TimeRangePreset, 'custom'>, number> = {
+    '15m': 15,
+    '1h': 60,
+    '6h': 360,
+    '24h': 1440,
+    '7d': 10080,
+  }
+  from.setMinutes(from.getMinutes() - minutesByPreset[preset])
+  return { from: from.toISOString(), to: to.toISOString() }
+}
 
 const isNumeric = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)
@@ -127,27 +144,6 @@ const buildMarkers = (logs: LogPoint[]): HistoryMarker[] => {
   return markers.sort((lhs, rhs) => lhs.ts.localeCompare(rhs.ts))
 }
 
-const discoverDesireKeys = (current: CurrentResponse | null) => {
-  const fixedKeys = new Set<string>(DESIRE_METRIC_KEYS)
-  const dynamicKeys = new Set<string>()
-  for (const source of [
-    current?.latest_desires,
-    current?.latest_emergent_desires,
-  ]) {
-    if (!source) continue
-    for (const [key, value] of Object.entries(source)) {
-      if (!isNumeric(value)) continue
-      if (!fixedKeys.has(key)) {
-        dynamicKeys.add(key)
-      }
-    }
-  }
-  return {
-    fixedKeys: [...DESIRE_METRIC_KEYS],
-    dynamicKeys: [...dynamicKeys].sort(),
-  }
-}
-
 export const useHistoryData = (
   activeTab: string,
   range: DateRange,
@@ -180,24 +176,29 @@ export const useHistoryData = (
     const bucket = bucketFor(preset)
 
     const loadHistory = async () => {
-      const current = await fetchCurrent()
+      const effectiveRange = rangeFor(range, preset)
+      const discoveredDesireKeys = await fetchDesireKeys(effectiveRange)
       if (disposed) return
 
-      const { fixedKeys, dynamicKeys } = discoverDesireKeys(current)
-      const nextDesireKeys = [...fixedKeys, ...dynamicKeys]
+      const nextDesireKeys = [
+        ...DESIRE_METRIC_KEYS,
+        ...discoveredDesireKeys.filter((key) => !FIXED_DESIRE_KEY_SET.has(key)),
+      ]
       setDesireKeys(nextDesireKeys)
 
       const [i, u, t, v, a, emotionTimeline, heatmap, logs, ...desireSeries] =
         await Promise.all([
-          fetchIntensity(range, bucket),
-          fetchUsage(range, bucket),
-          fetchTimeline(range),
-          fetchValence(range, bucket),
-          fetchArousal(range, bucket),
-          fetchStringTimeline('emotion_primary', range),
-          fetchStringHeatmap('emotion_primary', range, bucket),
-          fetchLogs(range, 'ALL', ''),
-          ...nextDesireKeys.map((key) => fetchMetric(key, range, bucket)),
+          fetchIntensity(effectiveRange, bucket),
+          fetchUsage(effectiveRange, bucket),
+          fetchTimeline(effectiveRange),
+          fetchValence(effectiveRange, bucket),
+          fetchArousal(effectiveRange, bucket),
+          fetchStringTimeline('emotion_primary', effectiveRange),
+          fetchStringHeatmap('emotion_primary', effectiveRange, bucket),
+          fetchLogs(effectiveRange, 'ALL', ''),
+          ...nextDesireKeys.map((key) =>
+            fetchMetric(key, effectiveRange, bucket),
+          ),
         ])
       if (disposed) return
 

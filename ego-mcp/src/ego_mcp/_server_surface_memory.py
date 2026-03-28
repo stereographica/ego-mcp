@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Callable
@@ -309,13 +310,13 @@ async def _handle_remember(
         )
     if notion_updates:
         by_state: dict[str, list[str]] = {}
-        notion_confidences: list[float] = []
+        notion_confidences: dict[str, float] = {}
         notion_store = get_notion_store()
         for notion_id, state in notion_updates:
             by_state.setdefault(state, []).append(notion_id)
             notion = notion_store.get_by_id(notion_id)
             if notion is not None:
-                notion_confidences.append(notion.confidence)
+                notion_confidences[notion_id] = notion.confidence
         if "reinforced" in by_state:
             remember_context["notion_reinforced"] = ",".join(by_state["reinforced"])
         if "weakened" in by_state:
@@ -323,7 +324,11 @@ async def _handle_remember(
         if "dormant" in by_state:
             remember_context["notion_dormant"] = ",".join(by_state["dormant"])
         if notion_confidences:
-            remember_context["notion_confidence"] = max(notion_confidences)
+            remember_context["notion_confidence"] = max(notion_confidences.values())
+            remember_context["notion_confidences"] = json.dumps(
+                notion_confidences,
+                sort_keys=True,
+            )
     _set_tool_context("remember", remember_context)
     return compose_response(data, scaffold)
 
@@ -388,7 +393,16 @@ async def _handle_recall(
                 if isinstance(tag, str) and tag.strip()
             }
         )
-        related_notions = get_notion_store().search_by_tags(notion_tags, min_match=1)
+        recalled_memory_ids = [result.memory.id for result in results if result.memory.id]
+        notion_store = get_notion_store()
+        if hasattr(notion_store, "search_related"):
+            related_notions = notion_store.search_related(
+                source_memory_ids=recalled_memory_ids,
+                tags=notion_tags,
+                min_tag_match=1,
+            )
+        else:
+            related_notions = notion_store.search_by_tags(notion_tags, min_match=1)
         if related_notions:
             lines.append("--- notions ---")
             for notion in related_notions[:5]:

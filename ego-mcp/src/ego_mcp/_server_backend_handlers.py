@@ -73,7 +73,7 @@ async def _handle_consolidate(
     """Run memory consolidation."""
     stats = await consolidation.run(memory)
     created_notion_ids: list[str] = []
-    created_notion_confidences: list[float] = []
+    created_notion_confidences: dict[str, float] = {}
     try:
         notion_store = get_notion_store()
     except Exception:
@@ -97,7 +97,7 @@ async def _handle_consolidate(
             notion = generate_notion_from_cluster(cluster_memories)
             notion_store.save(notion)
             created_notion_ids.append(notion.id)
-            created_notion_confidences.append(notion.confidence)
+            created_notion_confidences[notion.id] = notion.confidence
             existing_clusters.add(normalized_cluster)
     update_tool_metadata(
         consolidation_replay_events=stats.replay_events,
@@ -120,7 +120,10 @@ async def _handle_consolidate(
             sort_keys=True,
         ),
         notion_created=",".join(created_notion_ids) if created_notion_ids else None,
-        notion_confidence=max(created_notion_confidences)
+        notion_confidence=max(created_notion_confidences.values())
+        if created_notion_confidences
+        else None,
+        notion_confidences=json.dumps(created_notion_confidences, sort_keys=True)
         if created_notion_confidences
         else None,
     )

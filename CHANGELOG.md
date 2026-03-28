@@ -2,6 +2,23 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [0.4.3] - 2026-03-28
+
+### Fixed
+- ego-mcp: `remember` が docs にある感情ラベル（`calm`, `grateful`, `warm` など）を保存時に `neutral` へ潰してしまう問題を修正
+- ego-mcp: `consider_them` が単なる参照操作にもかかわらず `total_interactions` や mood trajectory を増やしてしまう副作用を除去し、推論した話題は出力にのみ反映するよう修正
+- ego-mcp: `link_memories` が同一 memory pair に対して 1 種類の link しか持てず、`SIMILAR` と `CAUSED_BY` / `LEADS_TO` を共存できない問題を修正
+- ego-mcp: `recall` の `--- notions ---` が tag 一致だけに依存して source memory 由来の Notion を取りこぼす問題を修正
+- dashboard: Notion confidence 履歴が複数 notion 同時更新時に混線する問題を修正し、notion 単位の confidence map を保存・集計するよう変更
+- dashboard: History タブのプリセット範囲がポーリング中に前進しない問題と、current snapshot に出ていない動的 desire 系列が履歴から消える問題を修正
+- dashboard: Notion パネルが notion history API を使わず静的一覧止まりだった問題を修正し、選択 notion の confidence trend を表示
+- dashboard: `dashboard/docker-compose.yml` で backend に `DASHBOARD_EGO_MCP_DATA_DIR` を渡すだけで実データを mount していなかった問題を修正
+
+### Changed
+- dashboard API に `GET /api/v1/desires/keys` を追加し、History タブの動的 desire key 検出を backend 集約へ変更
+- Dashboard Memory Network API が memory node の `label` を返すよう改善
+- リリース用 version を更新: ego-mcp `0.4.2` → `0.4.3`, dashboard `0.2.2` → `0.2.3`, dashboard/frontend `0.2.2` → `0.2.3`
+
 ## [0.4.2] - 2026-03-28
 
 ### Fixed

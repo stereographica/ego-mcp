@@ -44,7 +44,7 @@ export const HistoryTab = ({ range, preset }: HistoryTabProps) => {
       <ValenceArousalChart valence={valence} arousal={arousal} />
       <div className="grid gap-4 xl:grid-cols-2 [&>*]:min-w-0">
         <MemoryNetworkPanel network={memoryNetwork} />
-        <NotionPanel notions={notions} />
+        <NotionPanel notions={notions} range={range} preset={preset} />
       </div>
       <DesireHistoryChart
         desireChartData={desireChartData}

@@ -273,7 +273,10 @@ class MemoryStore:
             logger.warning("Cannot link: one or both memories not found")
             return False
 
-        if any(link.target_id == target_id for link in source.linked_ids):
+        if any(
+            link.target_id == target_id and link.link_type == lt
+            for link in source.linked_ids
+        ):
             return False
 
         source.linked_ids.append(MemoryLink(target_id=target_id, link_type=lt))
