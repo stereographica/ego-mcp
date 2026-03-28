@@ -2,6 +2,22 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [0.5.0] - 2026-03-28
+
+### Added
+- ego-mcp: Notion に `related_notion_ids`, `reinforcement_count`, `person_id` を追加し、migration `0004_notion_fields` で既存データを拡張
+- ego-mcp: `curate_notions` ツールを追加し、notion の list / merge / relabel / delete を MCP から実行可能にした
+- dashboard: `/api/v1/notions` が reinforcement / conviction / person / related notion 情報を返し、`/api/v1/memory/network` が `notion_related` edge を返すよう拡張
+
+### Changed
+- ego-mcp: `consolidate` が ephemeral cluster を除外し、notion 生成後に decay / prune / duplicate merge / auto-link を行う self-maintenance フローへ移行
+- ego-mcp: `wake_up`, `introspect`, `consider_them`, `am_i_being_genuine`, `recall` が notion baseline / framework / person impressions / convictions / related notions を surfacing
+- dashboard: History タブの Notion / Memory Network パネルが conviction, person, reinforcement, related notion 情報を表示
+- バージョンアップ: ego-mcp 0.4.3→0.5.0, dashboard 0.2.3→0.2.4, dashboard/frontend 0.2.3→0.2.4
+
+### Design
+- `design/wip/v0.5.0-notion-enhancement-design.md` — Notion System Enhancement 設計書
+
 ## [0.4.3] - 2026-03-28
 
 ### Fixed

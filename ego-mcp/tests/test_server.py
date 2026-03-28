@@ -11,6 +11,7 @@ from typing import Any, cast
 import pytest
 from mcp.types import TextContent
 
+import ego_mcp._server_backend_handlers as backend_handlers_mod
 import ego_mcp._server_surface_core as core_surface_mod
 import ego_mcp._server_surface_memory as memory_surface_mod
 import ego_mcp.server as server_mod
@@ -24,6 +25,7 @@ from ego_mcp.consolidation import ConsolidationStats, MergeCandidate
 from ego_mcp.desire import DesireEngine
 from ego_mcp.embedding import EgoEmbeddingFunction, EmbeddingProvider
 from ego_mcp.memory import MemoryStore
+from ego_mcp.notion import NotionStore
 from ego_mcp.types import (
     Category,
     Emotion,
@@ -172,6 +174,24 @@ class TestImplicitSatisfactionFromServer:
                 ]
 
         class FakeNotionStore:
+            def __init__(self) -> None:
+                self._notions = {
+                    "notion_1": Notion(
+                        id="notion_1",
+                        label="home & safety (anxious)",
+                        emotion_tone=Emotion.ANXIOUS,
+                        confidence=0.9,
+                        tags=["home", "safety"],
+                        related_notion_ids=["notion_2"],
+                    ),
+                    "notion_2": Notion(
+                        id="notion_2",
+                        label="steady shelter",
+                        emotion_tone=Emotion.NEUTRAL,
+                        confidence=0.7,
+                    ),
+                }
+
             def search_related(
                 self,
                 *,
@@ -182,15 +202,15 @@ class TestImplicitSatisfactionFromServer:
                 assert source_memory_ids == ["mem_1"]
                 assert tags == ["home", "safety"]
                 assert min_tag_match == 1
-                return [
-                    Notion(
-                        id="notion_1",
-                        label="home & safety (anxious)",
-                        emotion_tone=Emotion.ANXIOUS,
-                        confidence=0.9,
-                        tags=["home", "safety"],
-                    )
-                ]
+                return [self._notions["notion_1"]]
+
+            def get_by_id(self, notion_id: str) -> Notion | None:
+                return self._notions.get(notion_id)
+
+            def get_associated(self, notion_id: str, depth: int = 1) -> list[Notion]:
+                assert notion_id == "notion_1"
+                assert depth == 1
+                return [self._notions["notion_2"]]
 
         monkeypatch.setattr(
             memory_surface_mod,
@@ -206,6 +226,7 @@ class TestImplicitSatisfactionFromServer:
 
         assert "--- notions ---" in text
         assert '"home & safety (anxious)" anxious confidence: 0.9' in text
+        assert '  → "steady shelter" confidence: 0.7' in text
 
     @pytest.mark.asyncio
     async def test_handle_recall_includes_source_memory_related_notions(
@@ -240,6 +261,17 @@ class TestImplicitSatisfactionFromServer:
                 ]
 
         class FakeNotionStore:
+            def __init__(self) -> None:
+                self._notions = {
+                    "notion_2": Notion(
+                        id="notion_2",
+                        label="shared thread (curious)",
+                        emotion_tone=Emotion.CURIOUS,
+                        confidence=0.8,
+                        source_memory_ids=["mem_shared"],
+                    )
+                }
+
             def search_related(
                 self,
                 *,
@@ -250,15 +282,15 @@ class TestImplicitSatisfactionFromServer:
                 assert source_memory_ids == ["mem_shared"]
                 assert tags == []
                 assert min_tag_match == 1
-                return [
-                    Notion(
-                        id="notion_2",
-                        label="shared thread (curious)",
-                        emotion_tone=Emotion.CURIOUS,
-                        confidence=0.8,
-                        source_memory_ids=["mem_shared"],
-                    )
-                ]
+                return list(self._notions.values())
+
+            def get_by_id(self, notion_id: str) -> Notion | None:
+                return self._notions.get(notion_id)
+
+            def get_associated(self, notion_id: str, depth: int = 1) -> list[Notion]:
+                assert notion_id == "notion_2"
+                assert depth == 1
+                return []
 
         monkeypatch.setattr(
             memory_surface_mod,
@@ -324,6 +356,99 @@ class TestImplicitSatisfactionFromServer:
         assert "interactions=0" in first
         assert "interactions=0" in second
         assert rel.total_interactions == 0
+
+    @pytest.mark.asyncio
+    async def test_handle_consider_them_includes_person_impressions(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config = EgoConfig(
+            embedding_provider="gemini",
+            embedding_model="gemini-embedding-001",
+            api_key="test-key",
+            data_dir=tmp_path,
+            companion_name="Master",
+            workspace_dir=None,
+            timezone="UTC",
+        )
+
+        class FakeMemoryStore:
+            async def list_recent(
+                self,
+                n: int = 200,
+                category_filter: str | None = None,
+            ) -> list[Memory]:
+                return []
+
+        class FakeNotionStore:
+            def list_all(self) -> list[Notion]:
+                return [
+                    Notion(
+                        id="n1",
+                        label="Working together feels easy",
+                        emotion_tone=Emotion.HAPPY,
+                        confidence=0.8,
+                        person_id="Master",
+                    )
+                ]
+
+        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
+
+        text = await core_surface_mod._handle_consider_them(
+            config,
+            cast(Any, FakeMemoryStore()),
+            {"person": "Master"},
+        )
+
+        assert "Impressions of Master:" in text
+        assert "Working together feels easy" in text
+
+    @pytest.mark.asyncio
+    async def test_handle_consider_them_omits_impressions_without_matching_notions(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config = EgoConfig(
+            embedding_provider="gemini",
+            embedding_model="gemini-embedding-001",
+            api_key="test-key",
+            data_dir=tmp_path,
+            companion_name="Master",
+            workspace_dir=None,
+            timezone="UTC",
+        )
+
+        class FakeMemoryStore:
+            async def list_recent(
+                self,
+                n: int = 200,
+                category_filter: str | None = None,
+            ) -> list[Memory]:
+                return []
+
+        class FakeNotionStore:
+            def list_all(self) -> list[Notion]:
+                return [
+                    Notion(
+                        id="n1",
+                        label="Unrelated notion",
+                        emotion_tone=Emotion.HAPPY,
+                        confidence=0.8,
+                        person_id="SomeoneElse",
+                    )
+                ]
+
+        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
+
+        text = await core_surface_mod._handle_consider_them(
+            config,
+            cast(Any, FakeMemoryStore()),
+            {"person": "Master"},
+        )
+
+        assert "Impressions of Master:" not in text
 
     @pytest.mark.asyncio
     async def test_completion_log_context_emits_snapshot_for_non_feel_desires(
@@ -796,6 +921,94 @@ class TestWakeUpServerHandler:
         assert "[low]" not in text
 
     @pytest.mark.asyncio
+    async def test_handle_wake_up_includes_notion_baseline(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeSync:
+            def read_latest_monologue(self) -> tuple[str | None, str | None]:
+                return (None, None)
+
+        class FakeMemoryStore:
+            async def list_recent(
+                self, n: int = 1, category_filter: str | None = None
+            ) -> list[Memory]:
+                assert n == 1
+                assert category_filter == "introspection"
+                return []
+
+        class FakeDesire:
+            def compute_levels_with_modulation(self) -> dict[str, float]:
+                return {"expression": 0.45}
+
+        class FakeNotionStore:
+            def list_all(self) -> list[Notion]:
+                return [
+                    Notion(id="n1", emotion_tone=Emotion.CURIOUS, confidence=0.8),
+                    Notion(id="n2", emotion_tone=Emotion.CURIOUS, confidence=0.7),
+                    Notion(id="n3", emotion_tone=Emotion.CONTENTMENT, confidence=0.6),
+                ]
+
+        async def fake_relationship_snapshot(
+            _config: object, _memory: object, _person: str
+        ) -> str:
+            return "relationship snapshot"
+
+        monkeypatch.setattr(server_mod, "_workspace_sync", FakeSync())
+        monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
+        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
+
+        text = await server_mod._handle_wake_up(
+            cast(Any, SimpleNamespace(companion_name="Master")),
+            cast(Any, FakeMemoryStore()),
+            cast(Any, FakeDesire()),
+        )
+
+        assert "Notion baseline: curious(2), contentment(1)" in text
+
+    @pytest.mark.asyncio
+    async def test_handle_wake_up_omits_notion_baseline_when_store_is_empty(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeSync:
+            def read_latest_monologue(self) -> tuple[str | None, str | None]:
+                return (None, None)
+
+        class FakeMemoryStore:
+            async def list_recent(
+                self, n: int = 1, category_filter: str | None = None
+            ) -> list[Memory]:
+                assert n == 1
+                assert category_filter == "introspection"
+                return []
+
+        class FakeDesire:
+            def compute_levels_with_modulation(self) -> dict[str, float]:
+                return {"expression": 0.45}
+
+        class FakeNotionStore:
+            def list_all(self) -> list[Notion]:
+                return []
+
+        async def fake_relationship_snapshot(
+            _config: object, _memory: object, _person: str
+        ) -> str:
+            return "relationship snapshot"
+
+        monkeypatch.setattr(server_mod, "_workspace_sync", FakeSync())
+        monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
+        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
+
+        text = await server_mod._handle_wake_up(
+            cast(Any, SimpleNamespace(companion_name="Master")),
+            cast(Any, FakeMemoryStore()),
+            cast(Any, FakeDesire()),
+        )
+
+        assert "Notion baseline:" not in text
+
+    @pytest.mark.asyncio
     async def test_handle_introspect_uses_blended_desire_language(
         self,
         tmp_path: Path,
@@ -844,6 +1057,72 @@ class TestWakeUpServerHandler:
         assert "[high]" not in text
         assert "[mid]" not in text
         assert "[low]" not in text
+
+    @pytest.mark.asyncio
+    async def test_handle_introspect_includes_conceptual_framework(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeMemoryStore:
+            async def list_recent(self, n: int = 10) -> list[Memory]:
+                assert n == 30
+                return []
+
+        class FakeDesire:
+            def compute_levels_with_modulation(
+                self,
+                *,
+                context_boosts: dict[str, float] | None = None,
+                emotional_modulation: dict[str, float] | None = None,
+                prediction_error: dict[str, float] | None = None,
+            ) -> dict[str, float]:
+                return {"social_thirst": 0.52}
+
+        class FakeNotionStore:
+            def list_all(self) -> list[Notion]:
+                return [
+                    Notion(
+                        id="n1",
+                        label="Pattern seeking",
+                        emotion_tone=Emotion.CURIOUS,
+                        confidence=0.82,
+                        related_notion_ids=["n2"],
+                    ),
+                    Notion(
+                        id="n2",
+                        label="Continuity",
+                        emotion_tone=Emotion.CURIOUS,
+                        confidence=0.75,
+                        related_notion_ids=["n1"],
+                    ),
+                ]
+
+        async def fake_relationship_snapshot(
+            _config: object, _memory: object, _person: str
+        ) -> str:
+            return "relationship snapshot"
+
+        async def fake_derive_desire_modulation(
+            _memory: object,
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+            return {}, {}, {}
+
+        monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
+        monkeypatch.setattr(server_mod, "_derive_desire_modulation", fake_derive_desire_modulation)
+        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
+
+        text = await server_mod._handle_introspect(
+            cast(Any, SimpleNamespace(companion_name="Master", data_dir=tmp_path)),
+            cast(Any, FakeMemoryStore()),
+            cast(Any, FakeDesire()),
+        )
+
+        assert "Conceptual framework:" in text
+        assert '- "Pattern seeking" confidence: 0.8 → "Continuity"' in text
+        assert '- "Continuity" confidence: 0.8 → "Pattern seeking"' in text
 
 
 class TestForgetToolServerHandlers:
@@ -963,6 +1242,147 @@ class TestForgetToolServerHandlers:
 
         assert "use forget to remove it" in text
         assert "If both have value, consider which perspective to keep." in text
+
+    def test_handle_am_i_genuine_includes_convictions(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeNotionStore:
+            def list_all(self) -> list[Notion]:
+                return [
+                    Notion(
+                        id="n1",
+                        label="Continuity matters",
+                        confidence=0.9,
+                        reinforcement_count=5,
+                    )
+                ]
+
+        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
+
+        text = core_surface_mod._handle_am_i_genuine()
+
+        assert "Your convictions:" in text
+        assert "Continuity matters" in text
+
+    def test_handle_am_i_genuine_falls_back_without_convictions(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeNotionStore:
+            def list_all(self) -> list[Notion]:
+                return [
+                    Notion(
+                        id="n1",
+                        label="Tentative pattern",
+                        confidence=0.69,
+                        reinforcement_count=5,
+                    )
+                ]
+
+        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
+
+        text = core_surface_mod._handle_am_i_genuine()
+
+        assert "Self-check triggered." in text
+        assert "Your convictions:" not in text
+
+    def test_handle_curate_notions_list_and_delete(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="notion_1",
+                label="Pattern seeking",
+                confidence=0.8,
+                reinforcement_count=3,
+                person_id="Master",
+                related_notion_ids=["notion_2"],
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+        monkeypatch.setattr(
+            backend_handlers_mod,
+            "_call_relative_time",
+            lambda _timestamp, now=None: "2d ago",
+        )
+        text = server_mod._handle_curate_notions({"action": "list"}, store)
+        assert get_tool_metadata()["curate_action"] == "list"
+        deleted = server_mod._handle_curate_notions(
+            {"action": "delete", "notion_id": "notion_1"},
+            store,
+        )
+
+        assert "Pattern seeking" in text
+        assert "reinf=3" in text
+        assert "person=Master" in text
+        assert "age=2d ago" in text
+        assert "---" in text
+        assert "Which notions feel redundant or outdated?" in text
+        assert "Deleted notion_1" in deleted
+        assert store.get_by_id("notion_1") is None
+
+    def test_handle_curate_notions_merge_and_relabel(self, tmp_path: Path) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="keep",
+                label="Pattern seeking",
+                source_memory_ids=["m1", "m2"],
+                confidence=0.8,
+                reinforcement_count=2,
+            )
+        )
+        store.save(
+            Notion(
+                id="absorb",
+                label="Signal seeking",
+                source_memory_ids=["m2", "m3"],
+                confidence=0.7,
+                reinforcement_count=1,
+            )
+        )
+
+        merged = server_mod._handle_curate_notions(
+            {"action": "merge", "notion_id": "absorb", "merge_into": "keep", "person": "Master"},
+            store,
+        )
+        relabeled = server_mod._handle_curate_notions(
+            {"action": "relabel", "notion_id": "keep", "new_label": "Merged pattern", "person": ""},
+            store,
+        )
+        notion = store.get_by_id("keep")
+
+        assert "Merged absorb into keep" in merged
+        assert "Renamed keep to Merged pattern" in relabeled
+        assert notion is not None
+        assert notion.label == "Merged pattern"
+        assert notion.person_id == ""
+
+    def test_handle_curate_notions_error_paths(self, tmp_path: Path) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+
+        missing_id = server_mod._handle_curate_notions({"action": "delete"}, store)
+        missing_merge_into = server_mod._handle_curate_notions(
+            {"action": "merge", "notion_id": "missing"},
+            store,
+        )
+        missing_new_label = server_mod._handle_curate_notions(
+            {"action": "relabel", "notion_id": "missing"},
+            store,
+        )
+        missing_target = server_mod._handle_curate_notions(
+            {"action": "delete", "notion_id": "missing"},
+            store,
+        )
+
+        assert "notion_id is required." in missing_id
+        assert "merge_into is required for merge." in missing_merge_into
+        assert "new_label is required for relabel." in missing_new_label
+        assert "Notion not found: missing" in missing_target
 
     @pytest.mark.asyncio
     async def test_handle_get_episode_filters_deleted_memory_ids_and_adds_note(self) -> None:

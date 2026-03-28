@@ -395,21 +395,27 @@ async def _handle_recall(
         )
         recalled_memory_ids = [result.memory.id for result in results if result.memory.id]
         notion_store = get_notion_store()
-        if hasattr(notion_store, "search_related"):
-            related_notions = notion_store.search_related(
-                source_memory_ids=recalled_memory_ids,
-                tags=notion_tags,
-                min_tag_match=1,
-            )
-        else:
-            related_notions = notion_store.search_by_tags(notion_tags, min_match=1)
+        related_notions = notion_store.search_related(
+            source_memory_ids=recalled_memory_ids,
+            tags=notion_tags,
+            min_tag_match=1,
+        )
         if related_notions:
             lines.append("--- notions ---")
-            for notion in related_notions[:5]:
+            for notion in related_notions[:3]:
+                associated = notion_store.get_associated(notion.id, depth=1)
                 lines.append(
                     f'"{notion.label}" {notion.emotion_tone.value} '
                     f"confidence: {notion.confidence:.1f}"
                 )
+                if associated:
+                    lines.append(
+                        "  → "
+                        + ", ".join(
+                            f'"{item.label}" confidence: {item.confidence:.1f}'
+                            for item in associated[:2]
+                        )
+                    )
         data = "\n".join(lines)
 
     scaffold = _recall_scaffold(len(results), total_count, filters_used)

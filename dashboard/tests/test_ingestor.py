@@ -264,6 +264,27 @@ def test_projector_preserves_forgetting_and_notion_metrics() -> None:
     assert event.string_metrics["notion_reinforced"] == "notion_1"
 
 
+def test_projector_preserves_notion_link_and_curation_metrics() -> None:
+    projector = EgoMcpLogProjector()
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "consolidate",
+        "notion_links_created": 2,
+        "curate_action": "merge",
+        "curate_notion_id": "notion_1",
+    }
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.numeric_metrics["notion_links_created"] == 2
+    assert event.string_metrics["curate_action"] == "merge"
+    assert event.string_metrics["curate_notion_id"] == "notion_1"
+
+
 def test_projector_parses_top_level_dynamic_desires_and_impulse_metrics() -> None:
     projector = EgoMcpLogProjector()
     completion = {

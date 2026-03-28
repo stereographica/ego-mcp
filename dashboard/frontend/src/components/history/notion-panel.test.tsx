@@ -28,6 +28,11 @@ describe('NotionPanel', () => {
             confidence: 0.82,
             source_count: 3,
             source_memory_ids: ['mem-1'],
+            related_notion_ids: ['notion-2', 'notion-3'],
+            related_count: 2,
+            reinforcement_count: 5,
+            person_id: 'Master',
+            is_conviction: true,
             created: '2026-01-01T11:00:00Z',
             last_reinforced: '2026-01-01T12:00:00Z',
           },
@@ -43,6 +48,12 @@ describe('NotionPanel', () => {
     expect(screen.getByText('Notions')).toBeInTheDocument()
     expect(screen.getAllByText('Pattern seeking')).toHaveLength(2)
     expect(screen.getAllByText('82%').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getAllByText('conviction').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Master').length).toBeGreaterThanOrEqual(1)
+    expect(
+      screen.getAllByText('reinforcement 5').length,
+    ).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('notion-2, notion-3')).toBeInTheDocument()
     expect(container.firstChild).toHaveClass('min-w-0', 'overflow-hidden')
 
     await waitFor(() => {

@@ -160,6 +160,9 @@ class Notion:
     tags: list[str] = field(default_factory=list)
     created: str = ""
     last_reinforced: str = ""
+    related_notion_ids: list[str] = field(default_factory=list)
+    reinforcement_count: int = 0
+    person_id: str = ""
 
 
 @dataclass

@@ -83,7 +83,11 @@ export const MemoryNetworkPanel = ({ network }: MemoryNetworkPanelProps) => {
                 0.2,
                 Math.min(0.9, edge.confidence ?? 0.4),
               )
-              const strokeWidth = Math.max(1, (edge.confidence ?? 0.3) * 3)
+              const isNotionRelated = edge.link_type === 'notion_related'
+              const strokeWidth = Math.max(
+                isNotionRelated ? 2 : 1,
+                (edge.confidence ?? 0.3) * (isNotionRelated ? 4 : 3),
+              )
               return (
                 <line
                   key={`${edge.source}-${edge.target}-${edge.link_type}`}
@@ -91,9 +95,14 @@ export const MemoryNetworkPanel = ({ network }: MemoryNetworkPanelProps) => {
                   y1={edge.sourceNode?.y ?? 0}
                   x2={edge.targetNode?.x ?? 0}
                   y2={edge.targetNode?.y ?? 0}
-                  stroke="var(--color-muted-foreground)"
+                  stroke={
+                    isNotionRelated
+                      ? 'var(--color-chart-4)'
+                      : 'var(--color-muted-foreground)'
+                  }
                   strokeOpacity={opacity}
                   strokeWidth={strokeWidth}
+                  strokeDasharray={isNotionRelated ? '6 4' : undefined}
                 >
                   <title>{`${edge.link_type} (${edge.source} -> ${edge.target})`}</title>
                 </line>
@@ -150,6 +159,14 @@ export const MemoryNetworkPanel = ({ network }: MemoryNetworkPanelProps) => {
         <div className="flex flex-wrap gap-2 text-xs">
           <Badge variant="outline">nodes {network.nodes.length}</Badge>
           <Badge variant="outline">edges {network.edges.length}</Badge>
+          <Badge variant="outline">
+            notion links{' '}
+            {
+              network.edges.filter(
+                (edge) => edge.link_type === 'notion_related',
+              ).length
+            }
+          </Badge>
           <Badge variant="outline">radius {nodeRadius.toFixed(1)}</Badge>
         </div>
         <ScrollArea className="h-[140px] min-w-0 rounded-md border">
@@ -173,6 +190,19 @@ export const MemoryNetworkPanel = ({ network }: MemoryNetworkPanelProps) => {
                     <p className="text-muted-foreground truncate">
                       {node.category}
                     </p>
+                    {node.is_notion ? (
+                      <p className="text-muted-foreground truncate">
+                        {[
+                          node.is_conviction ? 'conviction' : '',
+                          node.person_id ? `person ${node.person_id}` : '',
+                          typeof node.related_count === 'number'
+                            ? `related ${node.related_count}`
+                            : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' • ')}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     <Badge variant="secondary">

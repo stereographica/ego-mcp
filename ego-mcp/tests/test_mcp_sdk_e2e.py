@@ -30,6 +30,7 @@ EXPECTED_TOOL_NAMES = {
     "emotion_trend",
     "get_episode",
     "create_episode",
+    "curate_notions",
 }
 
 

@@ -152,6 +152,7 @@ EXPECTED_TOOL_NAMES = {
     "emotion_trend",
     "get_episode",
     "create_episode",
+    "curate_notions",
 }
 
 
@@ -168,6 +169,33 @@ class TestMcpBoundary:
         props = recall_tool.inputSchema["properties"]
         assert "date_from" in props
         assert "date_to" in props
+
+    @pytest.mark.asyncio
+    async def test_recall_schema_preserves_context_and_date_descriptions(self) -> None:
+        tools = await server_mod.list_tools()
+        recall_tool = next(tool for tool in tools if tool.name == "recall")
+        props = recall_tool.inputSchema["properties"]
+
+        assert "search context" in str(props["context"].get("description", "")).lower()
+        assert "iso" in str(props["date_from"].get("description", "")).lower()
+        assert "iso" in str(props["date_to"].get("description", "")).lower()
+
+    @pytest.mark.asyncio
+    async def test_surface_and_backend_schema_preserve_parameter_descriptions(self) -> None:
+        tools = await server_mod.list_tools()
+        consider_tool = next(tool for tool in tools if tool.name == "consider_them")
+        forget_tool = next(tool for tool in tools if tool.name == "forget")
+        curate_tool = next(tool for tool in tools if tool.name == "curate_notions")
+
+        consider_props = consider_tool.inputSchema["properties"]
+        forget_props = forget_tool.inputSchema["properties"]
+        curate_props = curate_tool.inputSchema["properties"]
+
+        assert "person" in str(consider_props["person"].get("description", "")).lower()
+        assert "memory id" in str(forget_props["memory_id"].get("description", "")).lower()
+        assert "target notion id" in str(curate_props["merge_into"].get("description", "")).lower()
+        assert "new label" in str(curate_props["new_label"].get("description", "")).lower()
+        assert "associate" in str(curate_props["person"].get("description", "")).lower()
 
     @pytest.mark.asyncio
     async def test_update_relationship_schema_lists_updatable_fields(self) -> None:
@@ -2488,7 +2516,7 @@ class TestToolDefinitionSize:
         tools = await server_mod.list_tools()
         total_text = json.dumps([t.model_dump() for t in tools], ensure_ascii=False)
         total_chars = len(total_text)
-        assert len(tools) == 16
+        assert len(tools) == 17
         # Target: 7,000 chars or less
         assert total_chars <= 7000, (
             f"Tool definitions too large: {total_chars} chars (target: ≤7,000)"

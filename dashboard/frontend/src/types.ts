@@ -69,6 +69,10 @@ export type MemoryNetworkNode = {
   confidence?: number
   access_count?: number
   decay?: number
+  reinforcement_count?: number
+  person_id?: string
+  related_count?: number
+  is_conviction?: boolean
 }
 export type MemoryNetworkEdge = {
   source: string
@@ -87,6 +91,11 @@ export type Notion = {
   confidence: number
   source_count: number
   source_memory_ids: string[]
+  related_notion_ids: string[]
+  related_count: number
+  reinforcement_count: number
+  person_id: string
+  is_conviction: boolean
   created: string
   last_reinforced: string
 }

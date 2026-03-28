@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 
 from ego_mcp import timezone_utils
@@ -27,8 +28,17 @@ from ego_mcp.consolidation import ConsolidationEngine
 from ego_mcp.desire import DesireEngine
 from ego_mcp.episode import EpisodeStore
 from ego_mcp.memory import MemoryStore
-from ego_mcp.notion import generate_notion_from_cluster
-from ego_mcp.scaffolds import SCAFFOLD_EMOTION_TREND, compose_response
+from ego_mcp.notion import (
+    NotionStore,
+    generate_notion_from_cluster,
+    infer_person_id,
+    is_ephemeral_cluster,
+)
+from ego_mcp.scaffolds import (
+    SCAFFOLD_CURATE_NOTIONS,
+    SCAFFOLD_EMOTION_TREND,
+    compose_response,
+)
 from ego_mcp.self_model import SelfModelStore
 
 logger = logging.getLogger(__name__)
@@ -67,6 +77,59 @@ def _handle_satisfy_desire(desire: DesireEngine, args: dict[str, Any]) -> str:
     return f"{name} satisfied (quality: {quality}). New level: {new_level:.2f}"
 
 
+def _load_person_memory_ids(memory: MemoryStore) -> dict[str, set[str]]:
+    person_memory_ids: dict[str, set[str]] = {}
+    if not hasattr(memory, "data_dir") or not hasattr(memory, "get_client"):
+        return person_memory_ids
+    relationships_path = Path(memory.data_dir) / "relationships" / "models.json"
+    try:
+        raw_payload = json.loads(relationships_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw_payload = {}
+    if not isinstance(raw_payload, dict):
+        raw_payload = {}
+
+    try:
+        collection = memory.get_client().get_or_create_collection(name="ego_episodes")
+    except Exception:
+        collection = None
+
+    for person, raw in raw_payload.items():
+        if not isinstance(person, str) or not isinstance(raw, dict):
+            continue
+        episode_ids = raw.get("shared_episode_ids", [])
+        if not isinstance(episode_ids, list) or not episode_ids:
+            continue
+        if collection is None:
+            continue
+        try:
+            rows = collection.get(ids=episode_ids, include=["metadatas"])
+        except Exception:
+            continue
+        metadatas = rows.get("metadatas", [])
+        if not isinstance(metadatas, list):
+            continue
+        for metadata in metadatas:
+            if not isinstance(metadata, dict):
+                continue
+            raw_memory_ids = metadata.get("memory_ids", [])
+            if isinstance(raw_memory_ids, str):
+                try:
+                    memory_ids = json.loads(raw_memory_ids)
+                except json.JSONDecodeError:
+                    memory_ids = []
+            else:
+                memory_ids = raw_memory_ids
+            if not isinstance(memory_ids, list):
+                continue
+            person_memory_ids.setdefault(person, set()).update(
+                memory_id
+                for memory_id in memory_ids
+                if isinstance(memory_id, str) and memory_id
+            )
+    return person_memory_ids
+
+
 async def _handle_consolidate(
     memory: MemoryStore, consolidation: ConsolidationEngine
 ) -> str:
@@ -74,11 +137,16 @@ async def _handle_consolidate(
     stats = await consolidation.run(memory)
     created_notion_ids: list[str] = []
     created_notion_confidences: dict[str, float] = {}
+    decayed_notion_ids: list[str] = []
+    pruned_notion_ids: list[str] = []
+    merged_notion_ids: list[str] = []
+    notion_links_created = 0
     try:
         notion_store = get_notion_store()
     except Exception:
         notion_store = None
     if notion_store is not None:
+        person_memory_ids = _load_person_memory_ids(memory)
         existing_clusters = {
             tuple(sorted(notion.source_memory_ids)) for notion in notion_store.list_all()
         }
@@ -94,11 +162,48 @@ async def _handle_consolidate(
             ]
             if len(cluster_memories) < 3:
                 continue
+            if is_ephemeral_cluster(cluster_memories):
+                continue
             notion = generate_notion_from_cluster(cluster_memories)
+            notion.person_id = infer_person_id(notion.source_memory_ids, person_memory_ids)
             notion_store.save(notion)
             created_notion_ids.append(notion.id)
             created_notion_confidences[notion.id] = notion.confidence
             existing_clusters.add(normalized_cluster)
+        for notion_id, outcome in notion_store.apply_time_decay():
+            if outcome == "decayed":
+                decayed_notion_ids.append(notion_id)
+                loaded_notion = notion_store.get_by_id(notion_id)
+                if loaded_notion is not None:
+                    created_notion_confidences[loaded_notion.id] = loaded_notion.confidence
+            elif outcome == "pruned":
+                pruned_notion_ids.append(notion_id)
+        for component in notion_store.find_duplicate_components():
+            notions = [
+                notion
+                for notion_id in component
+                for notion in [notion_store.get_by_id(notion_id)]
+                if notion is not None
+            ]
+            if len(notions) < 2:
+                continue
+            ordered = sorted(
+                notions,
+                key=lambda notion: (
+                    -notion.confidence,
+                    -notion.reinforcement_count,
+                    notion.created,
+                    notion.id,
+                ),
+            )
+            keep = ordered[0]
+            for absorb in ordered[1:]:
+                merged = notion_store.merge_notions(keep.id, absorb.id)
+                if merged is not None:
+                    keep = merged
+                    merged_notion_ids.append(absorb.id)
+                    created_notion_confidences[keep.id] = keep.confidence
+        notion_links_created = notion_store.auto_link_notions()
     update_tool_metadata(
         consolidation_replay_events=stats.replay_events,
         consolidation_new_links=stats.link_updates,
@@ -126,6 +231,10 @@ async def _handle_consolidate(
         notion_confidences=json.dumps(created_notion_confidences, sort_keys=True)
         if created_notion_confidences
         else None,
+        notion_decayed=",".join(decayed_notion_ids) if decayed_notion_ids else None,
+        notion_pruned=",".join(pruned_notion_ids) if pruned_notion_ids else None,
+        notion_merged=",".join(merged_notion_ids) if merged_notion_ids else None,
+        notion_links_created=notion_links_created or None,
     )
     base = (
         f"Consolidation complete. "
@@ -136,6 +245,14 @@ async def _handle_consolidate(
     )
     if created_notion_ids:
         base += f" Created {len(created_notion_ids)} notion(s)."
+    if decayed_notion_ids:
+        base += f" Decayed {len(decayed_notion_ids)} notion(s)."
+    if pruned_notion_ids:
+        base += f" Pruned {len(pruned_notion_ids)} notion(s)."
+    if merged_notion_ids:
+        base += f" Merged {len(merged_notion_ids)} duplicate(s)."
+    if notion_links_created:
+        base += f" Linked {notion_links_created} notion pair(s)."
     if not stats.merge_candidates:
         return base
 
@@ -241,6 +358,76 @@ def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
 
     store.update({field_name: value})
     return f"Updated self.{field_name}"
+
+
+def _handle_curate_notions(args: dict[str, Any], notion_store: NotionStore) -> str:
+    def _compose(data: str) -> str:
+        return compose_response(data, SCAFFOLD_CURATE_NOTIONS)
+
+    action = str(args.get("action", "")).strip()
+    if action == "list":
+        notions = sorted(
+            notion_store.list_all(),
+            key=lambda notion: (
+                -notion.confidence,
+                -notion.reinforcement_count,
+                notion.label,
+                notion.id,
+            ),
+        )
+        update_tool_metadata(curate_action=action)
+        if not notions:
+            return _compose("No notions available.")
+        lines = ["Notions:"]
+        for notion in notions[:15]:
+            person_label = notion.person_id or "-"
+            age = _call_relative_time(notion.created)
+            lines.append(
+                f'- {notion.id}: "{notion.label}" '
+                f"conf={notion.confidence:.2f} reinf={notion.reinforcement_count} "
+                f"age={age} person={person_label} related={len(notion.related_notion_ids)}"
+            )
+        return _compose("\n".join(lines))
+
+    notion_id = str(args.get("notion_id", "")).strip()
+    if not notion_id:
+        return _compose("notion_id is required.")
+
+    if action == "delete":
+        if notion_store.delete(notion_id):
+            update_tool_metadata(curate_action=action, curate_notion_id=notion_id)
+            return _compose(f"Deleted {notion_id}")
+        return _compose(f"Notion not found: {notion_id}")
+
+    if action == "merge":
+        merge_into = str(args.get("merge_into", "")).strip()
+        if not merge_into:
+            return _compose("merge_into is required for merge.")
+        person_value = args.get("person")
+        person: str | None = None
+        if isinstance(person_value, str):
+            person = person_value.strip()
+        merged = notion_store.merge_notions(merge_into, notion_id, person_id=person)
+        if merged is None:
+            return _compose("Merge failed.")
+        update_tool_metadata(curate_action=action, curate_notion_id=notion_id)
+        return _compose(f"Merged {notion_id} into {merge_into}")
+
+    if action == "relabel":
+        new_label = str(args.get("new_label", "")).strip()
+        if not new_label:
+            return _compose("new_label is required for relabel.")
+        updates: dict[str, Any] = {"label": new_label}
+        person_value = args.get("person")
+        if isinstance(person_value, str):
+            updates["person_id"] = person_value.strip()
+        updated_notion = notion_store.update(notion_id, **updates)
+        if updated_notion is None:
+            return _compose(f"Notion not found: {notion_id}")
+        update_tool_metadata(curate_action=action, curate_notion_id=notion_id)
+        return _compose(f"Renamed {notion_id} to {new_label}")
+
+    return _compose(f"Unknown action: {action}")
 
 
 async def _handle_emotion_trend(memory: MemoryStore) -> str:

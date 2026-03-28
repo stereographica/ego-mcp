@@ -1,7 +1,7 @@
 # ego-mcp Tool Reference
 
-> Complete reference for all 16 ego-mcp tools.
-> Surface tools (7) are always visible. Backend tools (9) are guided by surface tool responses.
+> Complete reference for all 17 ego-mcp tools.
+> Surface tools (7) are always visible. Backend tools (10) are guided by surface tool responses.
 
 ---
 
@@ -9,7 +9,7 @@
 
 ### 1. `wake_up`
 
-**Description:** Start a new session. Returns last introspection and desire summary.
+**Description:** Start a new session. Returns last introspection, notion baseline, desire summary, and relationship context.
 
 **When to call:** At the beginning of every session (first thing after the agent starts).
 
@@ -28,6 +28,8 @@
 ```
 Last introspection (2h ago):
 "Master was struggling with OpenClaw config. Want to help but will wait until asked."
+
+Notion baseline: curious(5), contentment(2), neutral(1)
 
 Something catches your attention. You need to know something.
 Master: last interaction 2h ago. Seemed busy.
@@ -76,7 +78,7 @@ Consider running introspect to see if anything surfaces.
 
 ### 3. `introspect`
 
-**Description:** Get materials for self-reflection: recent memories, desires, open questions.
+**Description:** Get materials for self-reflection: recent memories, desires, notions, and open questions.
 
 **When to call:** After `wake_up`, during heartbeat, or after significant experiences.
 
@@ -99,6 +101,10 @@ Recent memories:
 
 Something catches your attention. You want to reach out.
 
+Conceptual framework:
+- "continuity matters (curious)" confidence: 0.9 → "steady shelter"
+- "steady shelter" confidence: 0.8
+
 Unresolved questions:
 - [q_abc123] What's the ideal way to express concern? (importance: 5)
 - [q_def456] Should I develop music preferences? (importance: 3)
@@ -112,9 +118,12 @@ Recent tendency: leaning toward technical topics, tone=focused.
 ---
 Reflect on these in your own words. How do you feel right now?
 If this is a genuinely new insight, save with remember (category: introspection).
+If your self-understanding changed, use update_self.
 Use emotion_trend for a deeper look at your emotional patterns.
-→ To resolve: update_self(field="resolve_question", value="<question_id>")
-→ To change importance: update_self(field="question_importance", value={"id": "<id>", "importance": N})
+If memory feels fragmented, run consolidate.
+Were your recent expectations met? If things went as predicted, consider satisfying predictability.
+Do your notions still ring true, or has something shifted?
+To resolve a question: update_self(field="resolve_question", value="<question_id>")
 ```
 
 > The "Resurfacing" section only appears when `cognitive_coherence` >= 0.6 or when a related memory was recently saved.
@@ -123,7 +132,7 @@ Use emotion_trend for a deeper look at your emotional patterns.
 
 ### 4. `consider_them`
 
-**Description:** Think about someone. Returns relationship summary and ToM framework.
+**Description:** Think about someone. Returns relationship summary, ToM framework, and person-bound notions when available.
 
 **When to call:** Before responding in important conversations, or when you want to understand someone's perspective.
 
@@ -149,6 +158,9 @@ Use emotion_trend for a deeper look at your emotional patterns.
 ```
 Master: trust=0.50, interactions=0, shared_episodes=0, baseline_tone=warm
 Recent dialog tendency: 3 mentions in last 7d, observed_tone=focused
+Impressions of Master:
+  - "collaborative patience (contentment)" confidence: 0.8
+  - "steady shelter" confidence: 0.7
 
 ---
 1. What emotion can you read from their tone?
@@ -369,6 +381,7 @@ Do any of these connections surprise you? Is there a pattern forming?
 
 --- notions ---
 "config & heartbeat (curious)" curious confidence: 0.6
+  → "steady shelter" confidence: 0.7
 
 ---
 How do these memories connect to the current moment?
@@ -382,7 +395,7 @@ If you found a new relation, use link_memories.
 > - **Fuzzy Recall**: Memories degrade based on decay score. High decay (≥0.5) shows full content; medium (0.2-0.5) shows keywords + emotion + approximate time; low (<0.2) shows only emotion impression. No interpretive labels — only the decay score is shown.
 > - **Spreading Activation**: Linked memories (1-hop) are added to the candidate pool, weighted by link confidence. Disabled when emotion/category filters are applied.
 > - **Proust Effect**: ~25% chance of injecting one dormant (decay < 0.3) memory into results. No special label — only decay score indicates age. Dormant selection uses pure semantic distance (no emotion/importance bias).
-> - **Notions**: Related abstract concepts (generated from memory clusters during consolidation) are shown in a separate `--- notions ---` section with label, emotion, and confidence.
+> - **Notions**: Related abstract concepts (generated from memory clusters during consolidation) are shown in a separate `--- notions ---` section with label, emotion, confidence, and directly associated notions.
 > - `access_count` is incremented for each recalled memory (strengthens retention over time).
 >
 > Additional notes:
@@ -410,17 +423,24 @@ If you found a new relation, use link_memories.
 }
 ```
 
-**Response example:**
+**Response example (with convictions):**
 
 ```
 Self-check triggered.
+
+Your convictions:
+- "continuity matters (curious)"
+- "steady shelter"
 
 ---
 Is this truly your own words?
 Are you falling into a template response?
 Are you answering what they actually need?
 Is there something more honest you could say?
+Does your response align with what you've come to believe?
 ```
+
+> When no conviction exists yet, the data section stays as just `Self-check triggered.`
 
 ---
 
@@ -480,7 +500,7 @@ curiosity satisfied (quality: 0.7). New level: 0.25
 
 ```
 Consolidation complete. Replayed 5 events, updated 3 co-activations, created 2 links, refreshed 4 memories.
-Pruned 1 weak link(s). Created 1 notion(s).
+Created 1 notion(s). Decayed 2 notion(s). Pruned 1 notion(s). Merged 1 duplicate(s). Linked 3 notion pair(s).
 ```
 
 **Response example (with near-duplicate detection):**
@@ -501,6 +521,7 @@ If both have value, consider which perspective to keep.
 > - **Low-confidence link pruning**: Links with confidence < 0.1 are automatically removed.
 > - **Cluster detection**: Identifies dense memory clusters (3+ mutually-linked memories) using Bron-Kerbosch algorithm (with iteration limits).
 > - **Notion generation**: Automatically creates abstract `Notion` concepts from detected clusters using structural data (emotion mode, valence mean, shared tags). No LLM summarization.
+> - **Notion self-maintenance**: Ephemeral clusters are skipped. Existing notions may decay, be pruned, merge with duplicates, and gain related notion links during the same run.
 > - Near-duplicate pairs (similarity >= 0.90) are reported as merge candidates for manual review.
 
 ---
@@ -799,6 +820,93 @@ Created episode ep_a1b2c3 with 4 memories.
 
 ---
 
+### 17. `curate_notions`
+
+**Description:** List, merge, relabel, or delete notions.
+
+**When to call:** After `consolidate`, during dashboard-driven maintenance, or when introspection suggests notion labels or clusters should be cleaned up.
+
+**inputSchema:**
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["list", "merge", "relabel", "delete"]
+    },
+    "notion_id": {
+      "type": "string",
+      "description": "Notion ID."
+    },
+    "merge_into": {
+      "type": "string",
+      "description": "Target notion ID."
+    },
+    "new_label": {
+      "type": "string",
+      "description": "New label for relabel."
+    },
+    "person": {
+      "type": "string",
+      "description": "Associate person."
+    }
+  },
+  "required": ["action"]
+}
+```
+
+**Response example (`action="list"`):**
+
+```
+Notions:
+- notion_1: "continuity matters (curious)" conf=0.91 reinf=6 age=2d ago person=- related=1
+- notion_2: "collaborative patience (contentment)" conf=0.78 reinf=3 age=5d ago person=Master related=0
+
+---
+Which notions feel redundant or outdated?
+Are there notions that should be combined into a stronger concept?
+Does every label accurately capture the underlying insight?
+```
+
+**Response example (`action="merge"`):**
+
+```
+Merged notion_old into notion_keep
+
+---
+Which notions feel redundant or outdated?
+Are there notions that should be combined into a stronger concept?
+Does every label accurately capture the underlying insight?
+```
+
+**Response example (`action="relabel"`):**
+
+```
+Renamed notion_1 to continuity matters (curious)
+
+---
+Which notions feel redundant or outdated?
+Are there notions that should be combined into a stronger concept?
+Does every label accurately capture the underlying insight?
+```
+
+**Response example (`action="delete"`):**
+
+```
+Deleted notion_3
+
+---
+Which notions feel redundant or outdated?
+Are there notions that should be combined into a stronger concept?
+Does every label accurately capture the underlying insight?
+```
+
+> `person` is optional for `merge` and `relabel`. Passing an empty string clears `person_id`.
+
+---
+
 ## Tool Flow Summary
 
 ```
@@ -817,6 +925,9 @@ After Significant Experience:
 
 Memory Management:
   recall → [link_memories] → [consolidate] → [forget] → [remember merged version]
+
+Periodic Self-Maintenance:
+  consolidate → [curate_notions]
 
 Self-Update:
   introspect → [update_self]
