@@ -66,15 +66,15 @@ export const MemoryNetworkPanel = ({ network }: MemoryNetworkPanelProps) => {
   }, [network])
 
   return (
-    <Card>
+    <Card className="min-w-0 overflow-hidden">
       <CardHeader>
         <CardTitle className="text-sm">Memory network</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="rounded-lg border border-border/60 bg-muted/20 p-2">
+      <CardContent className="min-w-0 space-y-3">
+        <div className="min-w-0 overflow-hidden rounded-lg border border-border/60 bg-muted/20 p-2">
           <svg
             viewBox="0 0 320 320"
-            className="h-[320px] w-full"
+            className="h-[320px] w-full max-w-full"
             role="img"
             aria-label="Memory network graph"
           >
@@ -152,7 +152,7 @@ export const MemoryNetworkPanel = ({ network }: MemoryNetworkPanelProps) => {
           <Badge variant="outline">edges {network.edges.length}</Badge>
           <Badge variant="outline">radius {nodeRadius.toFixed(1)}</Badge>
         </div>
-        <ScrollArea className="h-[140px] rounded-md border">
+        <ScrollArea className="h-[140px] min-w-0 rounded-md border">
           <div className="divide-y">
             {[...network.nodes]
               .sort(

@@ -4,7 +4,7 @@ import { NotionPanel } from '@/components/history/notion-panel'
 
 describe('NotionPanel', () => {
   it('renders notion confidence rows', () => {
-    render(
+    const { container } = render(
       <NotionPanel
         notions={[
           {
@@ -24,5 +24,6 @@ describe('NotionPanel', () => {
     expect(screen.getByText('Notions')).toBeInTheDocument()
     expect(screen.getByText('Pattern seeking')).toBeInTheDocument()
     expect(screen.getByText('82%')).toBeInTheDocument()
+    expect(container.firstChild).toHaveClass('min-w-0', 'overflow-hidden')
   })
 })
