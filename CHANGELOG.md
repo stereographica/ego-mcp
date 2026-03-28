@@ -2,6 +2,17 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [0.4.2] - 2026-03-28
+
+### Fixed
+- Dashboard Memory Network API が `ego_mcp` 内部モジュールの import に依存していたため、docker compose の backend コンテナから常に空表示になる不具合を修正。Chroma metadata を dashboard 側だけで直接読み取り、コンテナ運用でも記憶ノードとリンクを描画できるように変更
+- Dashboard Memory Network / Notions パネルがモバイル幅で縮まず、History タブ全体の横幅を押し広げてしまう不具合を修正（`min-w-0` / `overflow-hidden` を適用）
+- Memory Network の memory 読み込みに失敗した際でも Notion ノードまで消えてしまうフォールバック不備を修正
+
+### Changed
+- `dashboard/docker-compose.yml` に `DASHBOARD_EGO_MCP_DATA_DIR` の backend 受け渡しを追加し、`.env.example` に設定欄を追加
+- バージョンアップ: ego-mcp 0.4.1→0.4.2, dashboard 0.2.1→0.2.2, dashboard/frontend 0.2.1→0.2.2
+
 ## [0.4.0] - 2026-03-22
 
 ### Added
