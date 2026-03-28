@@ -17,6 +17,10 @@ __pycache__/
 # IDE / Editor
 .mcp.json
 
+# Claude Code (local settings & per-user memory)
+.claude/settings.local.json
+.claude/projects/
+
 # Working design docs & tasks
 /design/wip/
 /tasks/
