@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
-from ego_mcp import timezone_utils
 from ego_mcp._server_context import (
     _derive_desire_modulation,
     _fading_important_questions,
@@ -91,6 +90,18 @@ def _call_get_body_state() -> dict[str, Any]:
     if _get_body_state_override is not None:
         return _get_body_state_override()
     return get_body_state()
+
+
+def _merge_topic_hints(*topic_groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for topic_group in topic_groups:
+        for topic in topic_group:
+            if topic in seen:
+                continue
+            seen.add(topic)
+            merged.append(topic)
+    return merged
 
 
 async def _handle_wake_up(
@@ -317,21 +328,20 @@ async def _handle_consider_them(
     """ToM: relationship summary + scaffold."""
     person = args.get("person", config.companion_name)
     store = _relationship_store(config)
+    rel = store.get(person)
     (
         frequency,
         dominant_tone,
-        preferred_topics,
-        sensitive_topics,
+        inferred_preferred_topics,
+        inferred_sensitive_topics,
     ) = await _summarize_conversation_tendency(memory, person)
-
-    now_iso = timezone_utils.now().isoformat()
-    if dominant_tone != "unknown tone":
-        store.add_interaction(person, now_iso, dominant_tone)
-    rel = store.apply_tom_feedback(
-        person_id=person,
-        dominant_tone=dominant_tone,
-        preferred_topics=preferred_topics,
-        sensitive_topics=sensitive_topics,
+    preferred_topics = _merge_topic_hints(
+        rel.preferred_topics,
+        inferred_preferred_topics,
+    )
+    sensitive_topics = _merge_topic_hints(
+        rel.sensitive_topics,
+        inferred_sensitive_topics,
     )
 
     relationship_summary = (
@@ -339,13 +349,13 @@ async def _handle_consider_them(
         f"interactions={rel.total_interactions}, "
         f"shared_episodes={len(rel.shared_episode_ids)}"
     )
-    if rel.preferred_topics:
+    if preferred_topics:
         relationship_summary += (
-            f", preferred_topics={','.join(rel.preferred_topics[:2])}"
+            f", preferred_topics={','.join(preferred_topics[:2])}"
         )
-    if rel.sensitive_topics:
+    if sensitive_topics:
         relationship_summary += (
-            f", sensitive_topics={','.join(rel.sensitive_topics[:2])}"
+            f", sensitive_topics={','.join(sensitive_topics[:2])}"
         )
     if rel.last_interaction:
         relationship_summary += f", last_interaction={rel.last_interaction[:10]}"

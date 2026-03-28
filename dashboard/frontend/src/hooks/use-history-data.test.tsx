@@ -5,7 +5,7 @@ import { useHistoryData } from '@/hooks/use-history-data'
 
 vi.mock('@/api', () => ({
   fetchArousal: vi.fn(),
-  fetchCurrent: vi.fn(),
+  fetchDesireKeys: vi.fn(),
   fetchIntensity: vi.fn(),
   fetchLogs: vi.fn(),
   fetchMemoryNetwork: vi.fn(),
@@ -30,24 +30,7 @@ describe('useHistoryData', () => {
       to: '2026-01-01T12:10:00Z',
     }
 
-    vi.mocked(api.fetchCurrent).mockResolvedValue({
-      tool_calls_per_min: 1,
-      error_rate: 0,
-      window_24h: { tool_calls: 1, error_rate: 0 },
-      latest_desires: { curiosity: 0.9, social_thirst: 0.4, novelty: 0.8 },
-      latest_emergent_desires: { momentum: 0.6 },
-      latest: {
-        ts: '2026-01-01T12:05:00Z',
-        emotion_primary: 'curious',
-        emotion_intensity: 0.7,
-        string_metrics: {
-          impulse_boosted_desire: 'curiosity',
-        },
-        numeric_metrics: {
-          impulse_boost_amount: 0.2,
-        },
-      },
-    })
+    vi.mocked(api.fetchDesireKeys).mockResolvedValue(['novelty', 'momentum'])
     vi.mocked(api.fetchIntensity).mockResolvedValue([
       { ts: '2026-01-01T12:01:00Z', value: 0.7 },
     ])
@@ -110,11 +93,12 @@ describe('useHistoryData', () => {
       },
     ])
 
-    const { result } = renderHook(() => useHistoryData('history', range, '15m'))
+    const { result } = renderHook(() =>
+      useHistoryData('history', range, 'custom'),
+    )
 
     await waitFor(() => {
       expect(result.current.intensity).toHaveLength(1)
-      expect(result.current.historyMarkers.length).toBeGreaterThan(0)
     })
 
     expect(
@@ -149,27 +133,26 @@ describe('useHistoryData', () => {
     expect(api.fetchStringHeatmap).toHaveBeenCalledWith(
       'emotion_primary',
       range,
-      '1m',
+      '5m',
     )
-    expect(api.fetchMetric).toHaveBeenCalledWith('novelty', range, '1m')
-    expect(api.fetchMetric).toHaveBeenCalledWith('momentum', range, '1m')
+    expect(api.fetchDesireKeys).toHaveBeenCalledWith(range)
+    expect(api.fetchMetric).toHaveBeenCalledWith('novelty', range, '5m')
+    expect(api.fetchMetric).toHaveBeenCalledWith('momentum', range, '5m')
   })
 
   it('keeps memory network and notions on a slower refresh cadence', async () => {
     vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T12:10:00Z'))
     const range = {
       from: '2026-01-01T12:00:00Z',
       to: '2026-01-01T12:10:00Z',
     }
+    const effectiveRange = {
+      from: '2026-01-01T11:55:00.000Z',
+      to: '2026-01-01T12:10:00.000Z',
+    }
 
-    vi.mocked(api.fetchCurrent).mockResolvedValue({
-      tool_calls_per_min: 1,
-      error_rate: 0,
-      window_24h: { tool_calls: 1, error_rate: 0 },
-      latest_desires: {},
-      latest_emergent_desires: {},
-      latest: { ts: '2026-01-01T12:05:00Z' },
-    })
+    vi.mocked(api.fetchDesireKeys).mockResolvedValue([])
     vi.mocked(api.fetchIntensity).mockResolvedValue([])
     vi.mocked(api.fetchUsage).mockResolvedValue([])
     vi.mocked(api.fetchTimeline).mockResolvedValue([])
@@ -191,6 +174,7 @@ describe('useHistoryData', () => {
       await vi.advanceTimersByTimeAsync(0)
     })
 
+    expect(api.fetchDesireKeys).toHaveBeenNthCalledWith(1, effectiveRange)
     expect(api.fetchMemoryNetwork).toHaveBeenCalledTimes(1)
     expect(api.fetchNotions).toHaveBeenCalledTimes(1)
 
@@ -198,7 +182,7 @@ describe('useHistoryData', () => {
       await vi.advanceTimersByTimeAsync(2000)
     })
 
-    expect(api.fetchCurrent).toHaveBeenCalledTimes(2)
+    expect(api.fetchDesireKeys).toHaveBeenCalledTimes(2)
     expect(api.fetchMemoryNetwork).toHaveBeenCalledTimes(1)
     expect(api.fetchNotions).toHaveBeenCalledTimes(1)
     expect(result.current.memoryNetwork).toEqual({ nodes: [], edges: [] })

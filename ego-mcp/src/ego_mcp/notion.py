@@ -218,6 +218,35 @@ class NotionStore:
         ranked.sort(key=lambda item: (-item[0], -item[1], item[2].label))
         return [item[2] for item in ranked]
 
+    def search_related(
+        self,
+        *,
+        source_memory_ids: list[str],
+        tags: list[str],
+        min_tag_match: int = 1,
+    ) -> list[Notion]:
+        wanted_memory_ids = {
+            memory_id.strip()
+            for memory_id in source_memory_ids
+            if isinstance(memory_id, str) and memory_id.strip()
+        }
+        wanted_tags = {
+            tag.strip() for tag in tags if isinstance(tag, str) and tag.strip()
+        }
+        if not wanted_memory_ids and not wanted_tags:
+            return []
+
+        ranked: list[tuple[int, int, float, Notion]] = []
+        for notion in self.list_all():
+            source_overlap = len(wanted_memory_ids.intersection(notion.source_memory_ids))
+            tag_overlap = len(wanted_tags.intersection(notion.tags))
+            if source_overlap == 0 and tag_overlap < min_tag_match:
+                continue
+            ranked.append((source_overlap, tag_overlap, notion.confidence, notion))
+
+        ranked.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3].label))
+        return [item[3] for item in ranked]
+
 
 def generate_notion_from_cluster(memories: list[Memory]) -> Notion:
     """Generate a notion from a densely linked memory cluster."""

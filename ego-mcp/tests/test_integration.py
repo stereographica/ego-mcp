@@ -667,7 +667,7 @@ class TestConsiderThem:
         assert "Recent dialog tendency" in result
 
     @pytest.mark.asyncio
-    async def test_updates_recent_interaction_and_topics(
+    async def test_surfaces_inferred_topics_without_mutating_relationship(
         self,
         config: EgoConfig,
         memory: MemoryStore,
@@ -680,15 +680,16 @@ class TestConsiderThem:
             category="conversation",
             emotion="curious",
         )
-        await _call(
+        result = await _call(
             "consider_them", {}, config, memory, desire, episodes, consolidation
         )
 
         store = server_mod._relationship_store(config)
         rel = store.get("Master")
-        assert rel.total_interactions >= 1
-        assert len(rel.recent_mood_trajectory) >= 1
-        assert "technical" in rel.preferred_topics or "planning" in rel.preferred_topics
+        assert rel.total_interactions == 0
+        assert rel.preferred_topics == []
+        assert rel.sensitive_topics == []
+        assert "preferred_topics=technical" in result or "preferred_topics=planning" in result
 
     @pytest.mark.asyncio
     async def test_includes_baseline_tone_and_preserves_emotional_baseline(

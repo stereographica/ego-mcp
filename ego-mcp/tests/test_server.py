@@ -172,9 +172,16 @@ class TestImplicitSatisfactionFromServer:
                 ]
 
         class FakeNotionStore:
-            def search_by_tags(self, tags: list[str], min_match: int = 1) -> list[Notion]:
+            def search_related(
+                self,
+                *,
+                source_memory_ids: list[str],
+                tags: list[str],
+                min_tag_match: int = 1,
+            ) -> list[Notion]:
+                assert source_memory_ids == ["mem_1"]
                 assert tags == ["home", "safety"]
-                assert min_match == 1
+                assert min_tag_match == 1
                 return [
                     Notion(
                         id="notion_1",
@@ -199,6 +206,124 @@ class TestImplicitSatisfactionFromServer:
 
         assert "--- notions ---" in text
         assert '"home & safety (anxious)" anxious confidence: 0.9' in text
+
+    @pytest.mark.asyncio
+    async def test_handle_recall_includes_source_memory_related_notions(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeMemoryStore:
+            def collection_count(self) -> int:
+                return 1
+
+            async def recall(
+                self,
+                _context: str,
+                **_kwargs: object,
+            ) -> list[MemorySearchResult]:
+                return [
+                    MemorySearchResult(
+                        memory=Memory(
+                            id="mem_shared",
+                            content="This memory has no tags.",
+                            timestamp="2026-02-26T00:00:00+00:00",
+                            tags=[],
+                            emotional_trace=EmotionalTrace(
+                                primary=Emotion.CURIOUS,
+                                intensity=0.4,
+                            ),
+                        ),
+                        distance=0.1,
+                        score=0.2,
+                        decay=0.8,
+                    )
+                ]
+
+        class FakeNotionStore:
+            def search_related(
+                self,
+                *,
+                source_memory_ids: list[str],
+                tags: list[str],
+                min_tag_match: int = 1,
+            ) -> list[Notion]:
+                assert source_memory_ids == ["mem_shared"]
+                assert tags == []
+                assert min_tag_match == 1
+                return [
+                    Notion(
+                        id="notion_2",
+                        label="shared thread (curious)",
+                        emotion_tone=Emotion.CURIOUS,
+                        confidence=0.8,
+                        source_memory_ids=["mem_shared"],
+                    )
+                ]
+
+        monkeypatch.setattr(
+            memory_surface_mod,
+            "get_notion_store",
+            lambda: FakeNotionStore(),
+        )
+
+        text = await memory_surface_mod._handle_recall(
+            cast(Any, SimpleNamespace()),
+            cast(Any, FakeMemoryStore()),
+            {"context": "shared", "n_results": 1},
+        )
+
+        assert "--- notions ---" in text
+        assert '"shared thread (curious)" curious confidence: 0.8' in text
+
+    @pytest.mark.asyncio
+    async def test_handle_consider_them_does_not_mutate_relationship_interactions(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        config = EgoConfig(
+            embedding_provider="gemini",
+            embedding_model="gemini-embedding-001",
+            api_key="test-key",
+            data_dir=tmp_path,
+            companion_name="Master",
+            workspace_dir=None,
+            timezone="UTC",
+        )
+
+        class FakeMemoryStore:
+            async def list_recent(
+                self,
+                n: int = 200,
+                category_filter: str | None = None,
+            ) -> list[Memory]:
+                assert n == 200
+                assert category_filter == "conversation"
+                return [
+                    Memory(
+                        id="mem_1",
+                        content="Master asked about config and code review",
+                        timestamp="2026-03-28T00:00:00+00:00",
+                        category=Category.CONVERSATION,
+                        emotional_trace=EmotionalTrace(primary=Emotion.CURIOUS),
+                    )
+                ]
+
+        first = await core_surface_mod._handle_consider_them(
+            config,
+            cast(Any, FakeMemoryStore()),
+            {"person": "Master"},
+        )
+        second = await core_surface_mod._handle_consider_them(
+            config,
+            cast(Any, FakeMemoryStore()),
+            {"person": "Master"},
+        )
+        store = server_mod._relationship_store(config)
+        rel = store.get("Master")
+
+        assert "interactions=0" in first
+        assert "interactions=0" in second
+        assert rel.total_interactions == 0
 
     @pytest.mark.asyncio
     async def test_completion_log_context_emits_snapshot_for_non_feel_desires(

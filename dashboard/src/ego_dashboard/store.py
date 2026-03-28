@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime, timedelta
@@ -192,6 +193,16 @@ class TelemetryStore:
 
         return alerts
 
+    def desire_metric_keys(self, start: datetime, end: datetime) -> list[str]:
+        keys: set[str] = set()
+        for event in self._filtered(start, end):
+            if event.tool_name != "feel_desires":
+                continue
+            for key in event.numeric_metrics:
+                if key in DESIRE_METRIC_KEYS or "want" in key.lower():
+                    keys.add(key)
+        return sorted(keys)
+
     def current(self) -> dict[str, object]:
         if not self._events:
             return {
@@ -306,20 +317,14 @@ class TelemetryStore:
     def notion_history(
         self, notion_id: str, start: datetime, end: datetime, bucket: str
     ) -> list[dict[str, object]]:
-        events = [
-            event
-            for event in self._filtered(start, end)
-            if "notion_confidence" in event.numeric_metrics
-            and any(
-                notion_id in event.string_metrics.get(key, "").split(",")
-                for key in (
-                    "notion_created",
-                    "notion_reinforced",
-                    "notion_weakened",
-                    "notion_dormant",
-                )
-            )
-        ]
+        events = []
+        for event in self._filtered(start, end):
+            confidence = self._notion_confidence_for_event(event, notion_id)
+            if confidence is None:
+                continue
+            cloned = event.model_copy(deep=True)
+            cloned.numeric_metrics["notion_confidence"] = confidence
+            events.append(cloned)
         rows: list[dict[str, object]] = []
         for at, grouped in self._bucket_events(events, start, end, bucket):
             values = [
@@ -330,3 +335,51 @@ class TelemetryStore:
             if values:
                 rows.append({"ts": at.isoformat(), "value": sum(values) / len(values)})
         return rows
+
+    @staticmethod
+    def _parse_notion_confidences(value: object) -> dict[str, float]:
+        if not isinstance(value, str) or not value:
+            return {}
+        try:
+            payload = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        parsed: dict[str, float] = {}
+        for notion_id, confidence in payload.items():
+            if not isinstance(notion_id, str) or not isinstance(confidence, (int, float)):
+                continue
+            parsed[notion_id] = float(confidence)
+        return parsed
+
+    @classmethod
+    def _notion_confidence_for_event(
+        cls,
+        event: DashboardEvent,
+        notion_id: str,
+    ) -> float | None:
+        confidence_map = cls._parse_notion_confidences(
+            event.string_metrics.get("notion_confidences")
+        )
+        if notion_id in confidence_map:
+            return confidence_map[notion_id]
+
+        related_ids = {
+            candidate
+            for key in (
+                "notion_created",
+                "notion_reinforced",
+                "notion_weakened",
+                "notion_dormant",
+            )
+            for candidate in event.string_metrics.get(key, "").split(",")
+            if candidate
+        }
+        if (
+            notion_id in related_ids
+            and len(related_ids) == 1
+            and "notion_confidence" in event.numeric_metrics
+        ):
+            return float(event.numeric_metrics["notion_confidence"])
+        return None

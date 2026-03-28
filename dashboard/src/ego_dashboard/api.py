@@ -56,6 +56,8 @@ class StoreProtocol(Protocol):
         self, notion_id: str, start: datetime, end: datetime, bucket: str
     ) -> list[dict[str, object]]: ...
 
+    def desire_metric_keys(self, start: datetime, end: datetime) -> list[str]: ...
+
 
 class _MemoryLinkPayload(TypedDict):
     target_id: str
@@ -91,6 +93,21 @@ def _coerce_int(value: object, default: int = 0) -> int:
         except ValueError:
             return default
     return default
+
+
+def _memory_label(document: object, metadata: object, *, limit: int = 72) -> str | None:
+    metadata_dict = metadata if isinstance(metadata, dict) else {}
+    private_raw = metadata_dict.get("is_private") if isinstance(metadata_dict, dict) else False
+    if private_raw in (True, 1, "1", "true", "True"):
+        return "REDACTED"
+    if not isinstance(document, str):
+        return None
+    compact = " ".join(document.split()).strip()
+    if not compact:
+        return None
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3].rstrip() + "..."
 
 
 def _parse_iso_timestamp(value: object) -> datetime | None:
@@ -210,18 +227,21 @@ def _load_memory_network(settings: DashboardSettings) -> dict[str, object]:
                 rows = collection.get(
                     limit=_MEMORY_NETWORK_BATCH_SIZE,
                     offset=offset,
-                    include=["metadatas"],
+                    include=["documents", "metadatas"],
                 )
 
                 ids = rows.get("ids", [])
+                documents = rows.get("documents", [])
                 metadatas = rows.get("metadatas", [])
                 if not isinstance(ids, list) or not ids:
                     break
+                document_rows = documents if isinstance(documents, list) else []
                 metadata_rows = metadatas if isinstance(metadatas, list) else []
 
                 for index, memory_id in enumerate(ids):
                     if not isinstance(memory_id, str):
                         continue
+                    document = document_rows[index] if index < len(document_rows) else None
                     metadata = metadata_rows[index] if index < len(metadata_rows) else {}
                     if not isinstance(metadata, dict):
                         continue
@@ -235,6 +255,7 @@ def _load_memory_network(settings: DashboardSettings) -> dict[str, object]:
                     nodes.append(
                         {
                             "id": memory_id,
+                            "label": _memory_label(document, metadata),
                             "category": (
                                 str(category) if isinstance(category, str) and category else "daily"
                             ),
@@ -402,6 +423,13 @@ def create_app(
         bucket: str = "5m",
     ) -> dict[str, object]:
         return {"items": telemetry.string_heatmap(key, from_ts, to_ts, bucket)}
+
+    @app.get("/api/v1/desires/keys")
+    def get_desire_metric_keys(
+        from_ts: datetime = Query(alias="from"),
+        to_ts: datetime = Query(alias="to"),
+    ) -> dict[str, object]:
+        return {"items": telemetry.desire_metric_keys(from_ts, to_ts)}
 
     @app.get("/api/v1/logs")
     def get_logs(

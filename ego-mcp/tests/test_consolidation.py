@@ -422,7 +422,7 @@ class TestConsolidationEngine:
         theme_loaded = await store.get_by_id(theme_a.id)
         cross_loaded = await store.get_by_id(cross_a.id)
 
-        assert stats.emotion_links == 1
+        assert stats.emotion_links == 2
         assert stats.theme_links == 1
         assert stats.cross_category_links == 1
         assert emotion_loaded is not None and any(
@@ -433,6 +433,11 @@ class TestConsolidationEngine:
         )
         assert cross_loaded is not None and any(
             link.target_id == cross_b.id for link in cross_loaded.linked_ids
+        )
+        theme_b_loaded = await store.get_by_id(theme_b.id)
+        assert theme_b_loaded is not None and any(
+            link.target_id == cross_b.id and link.link_type == LinkType.SIMILAR
+            for link in theme_b_loaded.linked_ids
         )
 
     @pytest.mark.asyncio

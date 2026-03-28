@@ -157,3 +157,41 @@ def test_notion_store_search_by_tags_ranks_overlap_and_confidence(
     matches = store.search_by_tags(["pattern", "signal"], min_match=1)
 
     assert [item.id for item in matches] == ["notion_a", "notion_b"]
+
+
+def test_notion_store_search_related_prefers_source_memory_overlap(
+    tmp_path: Path,
+) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(
+        Notion(
+            id="notion_a",
+            label="from-source",
+            emotion_tone=Emotion.CURIOUS,
+            confidence=0.4,
+            source_memory_ids=["mem_shared"],
+            tags=[],
+            created="2026-02-26T00:00:00+00:00",
+            last_reinforced="2026-02-26T00:00:00+00:00",
+        )
+    )
+    store.save(
+        Notion(
+            id="notion_b",
+            label="from-tags",
+            emotion_tone=Emotion.CURIOUS,
+            confidence=0.9,
+            source_memory_ids=["mem_other"],
+            tags=["pattern", "signal"],
+            created="2026-02-26T00:00:00+00:00",
+            last_reinforced="2026-02-26T00:00:00+00:00",
+        )
+    )
+
+    matches = store.search_related(
+        source_memory_ids=["mem_shared"],
+        tags=["pattern"],
+        min_tag_match=1,
+    )
+
+    assert [item.id for item in matches] == ["notion_a", "notion_b"]

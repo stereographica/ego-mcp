@@ -1,4 +1,5 @@
 import {
+  fetchDesireKeys,
   fetchLogs,
   fetchMemoryNetwork,
   fetchNotionHistory,
@@ -137,7 +138,7 @@ describe('api history extensions', () => {
         from: '2026-01-01T12:00:00Z',
         to: '2026-01-01T12:10:00Z',
       },
-      '1h',
+      '15m',
     )
 
     const notionHistoryUrl = String(
@@ -146,6 +147,21 @@ describe('api history extensions', () => {
 
     expect(notionsUrl).toContain('/api/v1/notions')
     expect(notionHistoryUrl).toContain('/api/v1/notions/notion-1/history?')
-    expect(notionHistoryUrl).toContain('bucket=1h')
+    expect(notionHistoryUrl).toContain('bucket=15m')
+  })
+
+  it('fetches desire metric keys in a range', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [] }),
+    } as Response)
+
+    await fetchDesireKeys({
+      from: '2026-01-01T12:00:00Z',
+      to: '2026-01-01T12:10:00Z',
+    })
+    const url = String(vi.mocked(globalThis.fetch).mock.calls[0]?.[0] ?? '')
+
+    expect(url).toContain('/api/v1/desires/keys?')
   })
 })

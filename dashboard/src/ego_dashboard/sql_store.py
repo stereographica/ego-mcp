@@ -15,6 +15,40 @@ def _escape_ilike_pattern(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _parse_notion_confidences(value: object) -> dict[str, float]:
+    if not isinstance(value, str) or not value:
+        return {}
+    try:
+        payload = json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    parsed: dict[str, float] = {}
+    for notion_id, confidence in payload.items():
+        if not isinstance(notion_id, str) or not isinstance(confidence, (int, float)):
+            continue
+        parsed[notion_id] = float(confidence)
+    return parsed
+
+
+def _fallback_notion_confidence(
+    notion_id: str,
+    confidence: object,
+    *related_values: object,
+) -> float | None:
+    related_ids = {
+        candidate.strip()
+        for raw_value in related_values
+        if isinstance(raw_value, str)
+        for candidate in raw_value.split(",")
+        if candidate.strip()
+    }
+    if notion_id in related_ids and len(related_ids) == 1 and isinstance(confidence, (int, float)):
+        return float(confidence)
+    return None
+
+
 class SqlTelemetryStore:
     def __init__(self, database_url: str, redis_url: str) -> None:
         self._db_url = database_url
@@ -182,50 +216,104 @@ class SqlTelemetryStore:
             {"ts": ts.isoformat(), "value": float(value)} for ts, value in rows if value is not None
         ]
 
-    def notion_history(
-        self, notion_id: str, start: datetime, end: datetime, bucket: str
-    ) -> list[dict[str, object]]:
-        bucket_size = _bucket_to_sql(bucket)
+    def desire_metric_keys(self, start: datetime, end: datetime) -> list[str]:
         with psycopg.connect(self._db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT time_bucket(%s::interval, ts) AS b,
-                           avg((numeric_metrics ->> 'notion_confidence')::double precision)
+                    SELECT numeric_metrics
+                    FROM tool_events
+                    WHERE ts >= %s AND ts <= %s AND tool_name = 'feel_desires'
+                    ORDER BY ts ASC
+                    """,
+                    (start, end),
+                )
+                rows = cur.fetchall()
+
+        keys: set[str] = set()
+        for (numeric_metrics,) in rows:
+            if not isinstance(numeric_metrics, dict):
+                continue
+            for key in numeric_metrics:
+                if isinstance(key, str) and (key in DESIRE_METRIC_KEYS or "want" in key.lower()):
+                    keys.add(key)
+        return sorted(keys)
+
+    def notion_history(
+        self, notion_id: str, start: datetime, end: datetime, bucket: str
+    ) -> list[dict[str, object]]:
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                      ts,
+                      string_metrics ->> 'notion_confidences',
+                      string_metrics ->> 'notion_created',
+                      string_metrics ->> 'notion_reinforced',
+                      string_metrics ->> 'notion_weakened',
+                      string_metrics ->> 'notion_dormant',
+                      (numeric_metrics ->> 'notion_confidence')::double precision
                     FROM tool_events
                     WHERE ts >= %s
                       AND ts <= %s
-                      AND numeric_metrics ? 'notion_confidence'
                       AND (
-                        %s = ANY(string_to_array(
-                          COALESCE(string_metrics ->> 'notion_created', ''), ','
-                        )) OR
-                        %s = ANY(string_to_array(
-                          COALESCE(string_metrics ->> 'notion_reinforced', ''), ','
-                        )) OR
-                        %s = ANY(string_to_array(
-                          COALESCE(string_metrics ->> 'notion_weakened', ''), ','
-                        )) OR
-                        %s = ANY(string_to_array(
-                          COALESCE(string_metrics ->> 'notion_dormant', ''), ','
-                        ))
+                        string_metrics ? 'notion_confidences'
+                        OR string_metrics ? 'notion_created'
+                        OR string_metrics ? 'notion_reinforced'
+                        OR string_metrics ? 'notion_weakened'
+                        OR string_metrics ? 'notion_dormant'
                       )
-                    GROUP BY b
-                    ORDER BY b ASC
+                    ORDER BY ts ASC
                     """,
-                    (
-                        bucket_size,
-                        start,
-                        end,
-                        notion_id,
-                        notion_id,
-                        notion_id,
-                        notion_id,
-                    ),
+                    (start, end),
                 )
                 rows = cur.fetchall()
+
+        grouped: dict[str, list[float]] = defaultdict(list)
+        bucket_delta = _bucket_to_timedelta(bucket)
+        for row in rows:
+            if not isinstance(row, tuple) or len(row) < 2:
+                continue
+            ts = row[0]
+            if len(row) >= 7:
+                (
+                    _ts,
+                    confidence_map_raw,
+                    created_raw,
+                    reinforced_raw,
+                    weakened_raw,
+                    dormant_raw,
+                    fallback_confidence,
+                ) = row[:7]
+            else:
+                confidence_map_raw = None
+                created_raw = None
+                reinforced_raw = notion_id
+                weakened_raw = None
+                dormant_raw = None
+                fallback_confidence = row[1]
+            if not isinstance(ts, datetime):
+                continue
+            confidence = _parse_notion_confidences(confidence_map_raw).get(notion_id)
+            if confidence is None:
+                confidence = _fallback_notion_confidence(
+                    notion_id,
+                    fallback_confidence,
+                    created_raw,
+                    reinforced_raw,
+                    weakened_raw,
+                    dormant_raw,
+                )
+            if confidence is None:
+                continue
+            bucket_ts = _bucket_floor(ts, bucket_delta)
+            grouped[bucket_ts.isoformat()].append(confidence)
+
         return [
-            {"ts": ts.isoformat(), "value": float(value)} for ts, value in rows if value is not None
+            {"ts": ts, "value": sum(values) / len(values)}
+            for ts, values in sorted(grouped.items())
+            if values
         ]
 
     def string_timeline(self, key: str, start: datetime, end: datetime) -> list[dict[str, str]]:

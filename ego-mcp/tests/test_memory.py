@@ -195,6 +195,20 @@ class TestMemorySave:
         assert loaded.last_accessed == ""
 
     @pytest.mark.asyncio
+    async def test_save_preserves_extended_documented_emotions(self, store: MemoryStore) -> None:
+        mem = await store.save(
+            content="A calmer note that should stay calm",
+            emotion="calm",
+            secondary=["grateful", "warm"],
+        )
+
+        loaded = await store.get_by_id(mem.id)
+
+        assert loaded is not None
+        assert loaded.emotional_trace.primary == Emotion.CALM
+        assert loaded.emotional_trace.secondary == [Emotion.GRATEFUL, Emotion.WARM]
+
+    @pytest.mark.asyncio
     async def test_save_private_roundtrip(self, store: MemoryStore) -> None:
         mem = await store.save(
             content="This is private context",
@@ -502,6 +516,31 @@ class TestMemoryLinking:
         reloaded = await store.get_by_id(source.id)
         assert reloaded is not None
         assert [link.target_id for link in reloaded.linked_ids].count(target.id) == 1
+
+    @pytest.mark.asyncio
+    async def test_link_memories_allows_multiple_relationship_types(
+        self, store: MemoryStore
+    ) -> None:
+        source = await store.save(content="source for typed link")
+        target = await store.save(content="target for typed link")
+
+        similar = await store.link_memories(source.id, target.id, link_type="similar")
+        caused_by = await store.link_memories(
+            source.id,
+            target.id,
+            link_type="caused_by",
+        )
+
+        assert similar is True
+        assert caused_by is True
+        reloaded = await store.get_by_id(source.id)
+        assert reloaded is not None
+        assert sorted(
+            (link.target_id, link.link_type.value) for link in reloaded.linked_ids
+        ) == [
+            (target.id, "caused_by"),
+            (target.id, "similar"),
+        ]
 
     @pytest.mark.asyncio
     async def test_bump_link_confidence_creates_link_and_caps_at_one(

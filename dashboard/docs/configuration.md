@@ -15,7 +15,7 @@
 | `DASHBOARD_LOG_MOUNT_TARGET` | `/host-tmp` | (compose) ingestor コンテナ側 mount 先 |
 | `DASHBOARD_LOG_PATH` | `/tmp/ego-mcp-*.log` (ローカル) / `/host-tmp/ego-mcp-*.log` (compose) | ingestor が tail する JSONL ログファイル / glob |
 | `DASHBOARD_INGEST_POLL_SECONDS` | `1.0` | ingestor のファイルポーリング間隔（秒） |
-| `DASHBOARD_EGO_MCP_DATA_DIR` | なし | ego-mcp のデータディレクトリ。Memory Network / Notions API が ChromaDB と notions.json を読み取る際に使用 |
+| `DASHBOARD_EGO_MCP_DATA_DIR` | なし | ego-mcp のデータディレクトリ。Memory Network / Notions API が ChromaDB と notions.json を読み取る際に使用。compose では同じ絶対パスを backend コンテナへ read-only mount する |
 | `VITE_DASHBOARD_API_BASE` | `http://localhost:8000` | ブラウザから参照する API URL |
 | `VITE_DASHBOARD_WS_BASE` | `ws://localhost:8000` | ブラウザから参照する WS URL |
 
@@ -40,6 +40,7 @@
 - `dashboard` の `DASHBOARD_LOG_PATH` は単一ファイルだけでなく glob も受け付ける
 - compose ではホストの `DASHBOARD_LOG_MOUNT_SOURCE`（既定 `/tmp`）をコンテナに read-only mount
 - ingestor は inode 変更 / truncate と、glob の最新一致ファイルへの切替（日次ローテーション相当）に対応
+- `DASHBOARD_EGO_MCP_DATA_DIR` を設定した場合、compose はその絶対パスを backend コンテナ内の同じパスへ read-only mount する
 
 ## 運用者向け
 
