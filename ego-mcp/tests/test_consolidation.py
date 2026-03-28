@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 import ego_mcp._server_backend_handlers as backend_handlers_mod
 from ego_mcp._memory_serialization import links_to_json
+from ego_mcp._server_runtime import get_tool_metadata, reset_tool_metadata
 from ego_mcp.config import EgoConfig
 from ego_mcp.consolidation import (
     ConsolidationEngine,
@@ -18,7 +21,14 @@ from ego_mcp.consolidation import (
 from ego_mcp.embedding import EgoEmbeddingFunction, EmbeddingProvider
 from ego_mcp.memory import MemoryStore
 from ego_mcp.notion import NotionStore
-from ego_mcp.types import Emotion, LinkType, Memory, MemoryLink, MemorySearchResult
+from ego_mcp.types import (
+    Emotion,
+    LinkType,
+    Memory,
+    MemoryLink,
+    MemorySearchResult,
+    Notion,
+)
 
 
 class FakeEmbeddingProvider:
@@ -486,3 +496,261 @@ class TestConsolidationEngine:
         assert len(notions) == 1
         assert set(notions[0].source_memory_ids) == {m1.id, m2.id, m3.id}
         assert notions[0].tags == ["pattern", "signal"]
+
+    def test_load_person_memory_ids_reads_json_encoded_episode_memory_ids(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        data_dir = tmp_path / "ego-data"
+        relationships_dir = data_dir / "relationships"
+        relationships_dir.mkdir(parents=True)
+        (relationships_dir / "models.json").write_text(
+            json.dumps({"Master": {"shared_episode_ids": ["ep_1"]}}),
+            encoding="utf-8",
+        )
+
+        class FakeCollection:
+            def get(self, *, ids: list[str], include: list[str]) -> dict[str, object]:
+                assert ids == ["ep_1"]
+                assert include == ["metadatas"]
+                return {
+                    "metadatas": [
+                        {
+                            "memory_ids": json.dumps(["mem_1", "mem_2"]),
+                        }
+                    ]
+                }
+
+        class FakeClient:
+            def get_or_create_collection(self, *, name: str) -> FakeCollection:
+                assert name == "ego_episodes"
+                return FakeCollection()
+
+        class FakeMemory:
+            def __init__(self, root: Path) -> None:
+                self.data_dir = root
+
+            def get_client(self) -> FakeClient:
+                return FakeClient()
+
+        person_memory_ids = backend_handlers_mod._load_person_memory_ids(
+            FakeMemory(data_dir),  # type: ignore[arg-type]
+        )
+
+        assert person_memory_ids == {"Master": {"mem_1", "mem_2"}}
+
+    @pytest.mark.asyncio
+    async def test_handle_consolidate_skips_ephemeral_clusters_and_maintains_notions(
+        self,
+        config: EgoConfig,
+        store: MemoryStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        notion_store = NotionStore(config.data_dir / "notions.json")
+        monkeypatch.setattr(
+            backend_handlers_mod,
+            "get_notion_store",
+            lambda: notion_store,
+        )
+        monkeypatch.setattr(
+            "ego_mcp.notion.timezone_utils.now",
+            lambda: datetime.fromisoformat("2026-02-20T12:00:00+00:00"),
+        )
+
+        keep = Notion(
+            id="notion_keep",
+            label="pattern link",
+            confidence=0.8,
+            source_memory_ids=["mem_a", "mem_b", "mem_c"],
+            related_notion_ids=["notion_dup"],
+            reinforcement_count=4,
+            created="2026-01-01T12:00:00+00:00",
+            last_reinforced="2026-01-15T12:00:00+00:00",
+        )
+        duplicate = Notion(
+            id="notion_dup",
+            label="pattern link alt",
+            confidence=0.6,
+            source_memory_ids=["mem_a", "mem_b", "mem_c"],
+            related_notion_ids=["notion_keep"],
+            reinforcement_count=2,
+            created="2026-01-02T12:00:00+00:00",
+            last_reinforced="2026-01-10T12:00:00+00:00",
+        )
+        stale = Notion(
+            id="notion_stale",
+            label="old trace",
+            confidence=0.2,
+            source_memory_ids=["mem_old"],
+            created="2026-01-01T12:00:00+00:00",
+            last_reinforced="2026-01-01T12:00:00+00:00",
+        )
+        notion_store.save(keep)
+        notion_store.save(duplicate)
+        notion_store.save(stale)
+
+        m1 = await store.save(
+            content="session end soon",
+            emotion=Emotion.NEUTRAL.value,
+            importance=1,
+        )
+        m2 = await store.save(
+            content="bye for now",
+            emotion=Emotion.NEUTRAL.value,
+            importance=1,
+        )
+        m3 = await store.save(
+            content="see you later",
+            emotion=Emotion.NEUTRAL.value,
+            importance=1,
+        )
+
+        class FakeConsolidation:
+            async def run(self, _memory: MemoryStore) -> ConsolidationStats:
+                return ConsolidationStats(
+                    replay_events=0,
+                    coactivation_updates=0,
+                    link_updates=0,
+                    refreshed_memories=0,
+                    detected_clusters=((m1.id, m2.id, m3.id),),
+                )
+
+        result = await backend_handlers_mod._handle_consolidate(
+            store,
+            FakeConsolidation(),  # type: ignore[arg-type]
+        )
+
+        assert "Created 1 notion(s)." not in result
+        assert "Pruned 1 notion(s)." in result
+        assert "Merged 1 duplicate(s)." in result
+        assert notion_store.get_by_id("notion_stale") is None
+        assert notion_store.get_by_id("notion_dup") is None
+        assert notion_store.get_by_id("notion_keep") is not None
+
+    @pytest.mark.asyncio
+    async def test_handle_consolidate_reports_linked_notion_pairs_and_metadata(
+        self,
+        config: EgoConfig,
+        store: MemoryStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        notion_store = NotionStore(config.data_dir / "notions.json")
+        notion_store.save(
+            Notion(
+                id="notion_a",
+                label="pattern alpha",
+                confidence=0.7,
+                source_memory_ids=["mem_a", "mem_b", "mem_c"],
+                created="2026-02-01T12:00:00+00:00",
+                last_reinforced="2026-02-10T12:00:00+00:00",
+            )
+        )
+        notion_store.save(
+            Notion(
+                id="notion_b",
+                label="pattern beta",
+                confidence=0.6,
+                source_memory_ids=["mem_b", "mem_c", "mem_d"],
+                created="2026-02-02T12:00:00+00:00",
+                last_reinforced="2026-02-11T12:00:00+00:00",
+            )
+        )
+        monkeypatch.setattr(backend_handlers_mod, "get_notion_store", lambda: notion_store)
+        monkeypatch.setattr(
+            "ego_mcp.notion.timezone_utils.now",
+            lambda: datetime.fromisoformat("2026-02-20T12:00:00+00:00"),
+        )
+
+        class FakeConsolidation:
+            async def run(self, _memory: MemoryStore) -> ConsolidationStats:
+                return ConsolidationStats(
+                    replay_events=0,
+                    coactivation_updates=0,
+                    link_updates=0,
+                    refreshed_memories=0,
+                )
+
+        result = await backend_handlers_mod._handle_consolidate(
+            store,
+            FakeConsolidation(),  # type: ignore[arg-type]
+        )
+
+        metadata = get_tool_metadata()
+        assert "Linked 1 notion pair(s)." in result
+        assert metadata["notion_links_created"] == 1
+
+    @pytest.mark.asyncio
+    async def test_handle_consolidate_emits_maintenance_metadata_keys(
+        self,
+        config: EgoConfig,
+        store: MemoryStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        notion_store = NotionStore(config.data_dir / "notions.json")
+        notion_store.save(
+            Notion(
+                id="keep",
+                label="pattern link",
+                confidence=0.8,
+                source_memory_ids=["m1", "m2", "m3"],
+                created="2026-01-01T12:00:00+00:00",
+                last_reinforced="2026-01-15T12:00:00+00:00",
+            )
+        )
+        notion_store.save(
+            Notion(
+                id="dup",
+                label="pattern link alt",
+                confidence=0.6,
+                source_memory_ids=["m1", "m2", "m3"],
+                created="2026-02-20T00:00:00+00:00",
+                last_reinforced="2026-02-20T00:00:00+00:00",
+            )
+        )
+        notion_store.save(
+            Notion(
+                id="stale",
+                label="old trace",
+                confidence=0.2,
+                source_memory_ids=["stale_mem"],
+                created="2026-01-01T12:00:00+00:00",
+                last_reinforced="2026-01-01T12:00:00+00:00",
+            )
+        )
+        notion_store.save(
+            Notion(
+                id="decay",
+                label="fading pattern",
+                confidence=0.8,
+                source_memory_ids=["m2", "m3", "m4"],
+                created="2026-01-01T12:00:00+00:00",
+                last_reinforced="2026-01-01T12:00:00+00:00",
+            )
+        )
+        monkeypatch.setattr(backend_handlers_mod, "get_notion_store", lambda: notion_store)
+        monkeypatch.setattr(
+            "ego_mcp.notion.timezone_utils.now",
+            lambda: datetime.fromisoformat("2026-02-20T12:00:00+00:00"),
+        )
+
+        class FakeConsolidation:
+            async def run(self, _memory: MemoryStore) -> ConsolidationStats:
+                return ConsolidationStats(
+                    replay_events=0,
+                    coactivation_updates=0,
+                    link_updates=0,
+                    refreshed_memories=0,
+                )
+
+        await backend_handlers_mod._handle_consolidate(
+            store,
+            FakeConsolidation(),  # type: ignore[arg-type]
+        )
+
+        metadata = get_tool_metadata()
+        assert metadata["notion_pruned"] == "stale"
+        assert metadata["notion_merged"] in {"keep", "dup"}
+        assert metadata["notion_decayed"] == "keep,decay"
+        assert metadata["notion_links_created"] == 1

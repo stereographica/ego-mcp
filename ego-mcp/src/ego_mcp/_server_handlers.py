@@ -12,6 +12,7 @@ import ego_mcp._server_surface_memory as _surface_memory_module
 from ego_mcp._server_backend_handlers import (
     _handle_consolidate,
     _handle_create_episode,
+    _handle_curate_notions,
     _handle_emotion_trend,
     _handle_forget,
     _handle_get_episode,
@@ -120,6 +121,7 @@ __all__ = [
     "_handle_am_i_genuine",
     "_handle_satisfy_desire",
     "_handle_consolidate",
+    "_handle_curate_notions",
     "_handle_forget",
     "_handle_link_memories",
     "_handle_update_relationship",

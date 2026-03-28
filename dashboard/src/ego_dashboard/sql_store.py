@@ -253,6 +253,9 @@ class SqlTelemetryStore:
                       string_metrics ->> 'notion_reinforced',
                       string_metrics ->> 'notion_weakened',
                       string_metrics ->> 'notion_dormant',
+                      string_metrics ->> 'notion_decayed',
+                      string_metrics ->> 'notion_pruned',
+                      string_metrics ->> 'notion_merged',
                       (numeric_metrics ->> 'notion_confidence')::double precision
                     FROM tool_events
                     WHERE ts >= %s
@@ -263,6 +266,9 @@ class SqlTelemetryStore:
                         OR string_metrics ? 'notion_reinforced'
                         OR string_metrics ? 'notion_weakened'
                         OR string_metrics ? 'notion_dormant'
+                        OR string_metrics ? 'notion_decayed'
+                        OR string_metrics ? 'notion_pruned'
+                        OR string_metrics ? 'notion_merged'
                       )
                     ORDER BY ts ASC
                     """,
@@ -276,7 +282,20 @@ class SqlTelemetryStore:
             if not isinstance(row, tuple) or len(row) < 2:
                 continue
             ts = row[0]
-            if len(row) >= 7:
+            if len(row) >= 10:
+                (
+                    _ts,
+                    confidence_map_raw,
+                    created_raw,
+                    reinforced_raw,
+                    weakened_raw,
+                    dormant_raw,
+                    decayed_raw,
+                    pruned_raw,
+                    merged_raw,
+                    fallback_confidence,
+                ) = row[:10]
+            elif len(row) >= 7:
                 (
                     _ts,
                     confidence_map_raw,
@@ -286,12 +305,18 @@ class SqlTelemetryStore:
                     dormant_raw,
                     fallback_confidence,
                 ) = row[:7]
+                decayed_raw = None
+                pruned_raw = None
+                merged_raw = None
             else:
                 confidence_map_raw = None
                 created_raw = None
                 reinforced_raw = notion_id
                 weakened_raw = None
                 dormant_raw = None
+                decayed_raw = None
+                pruned_raw = None
+                merged_raw = None
                 fallback_confidence = row[1]
             if not isinstance(ts, datetime):
                 continue
@@ -304,6 +329,9 @@ class SqlTelemetryStore:
                     reinforced_raw,
                     weakened_raw,
                     dormant_raw,
+                    decayed_raw,
+                    pruned_raw,
+                    merged_raw,
                 )
             if confidence is None:
                 continue

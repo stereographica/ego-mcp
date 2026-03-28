@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This monorepo contains **ego-mcp** (MCP server) and **dashboard** (telemetry UI).
 
@@ -50,6 +50,7 @@ uv run python -m ego_mcp
 - Heartbeat: `feel_desires` -> if needed `introspect` -> act or `HEARTBEAT_OK`
 - Before important responses: `consider_them` -> `am_i_being_genuine`
 - After significant experiences: `remember`
+- Periodic self-maintenance: `consolidate` -> if notions feel cluttered `curate_notions`
 
 ## dashboard
 

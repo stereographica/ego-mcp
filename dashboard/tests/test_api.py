@@ -160,6 +160,9 @@ def test_memory_network_and_notions_endpoints(
                     "emotion_tone": "frustrated",
                     "confidence": 0.7,
                     "source_memory_ids": ["mem_1", "mem_2"],
+                    "related_notion_ids": ["notion_2"],
+                    "reinforcement_count": 5,
+                    "person_id": "Master",
                     "created": "2026-01-01T12:00:00+00:00",
                     "last_reinforced": "2026-01-02T12:00:00+00:00",
                 }
@@ -194,7 +197,13 @@ def test_memory_network_and_notions_endpoints(
                     "target": "notion_1",
                     "link_type": "notion_source",
                     "confidence": 0.7,
-                }
+                },
+                {
+                    "source": "notion_1",
+                    "target": "notion_2",
+                    "link_type": "notion_related",
+                    "confidence": 0.7,
+                },
             ],
         },
     )
@@ -210,6 +219,7 @@ def test_memory_network_and_notions_endpoints(
     assert network.json()["nodes"][0]["id"] == "mem_1"
     assert network.json()["nodes"][1]["is_notion"] is True
     assert network.json()["edges"][0]["link_type"] == "notion_source"
+    assert network.json()["edges"][1]["link_type"] == "notion_related"
 
     notions = client.get("/api/v1/notions")
     assert notions.status_code == 200
@@ -218,6 +228,11 @@ def test_memory_network_and_notions_endpoints(
     assert item["emotion_tone"] == "frustrated"
     assert item["confidence"] == 0.7
     assert item["source_count"] == 2
+    assert item["related_notion_ids"] == ["notion_2"]
+    assert item["related_count"] == 1
+    assert item["reinforcement_count"] == 5
+    assert item["person_id"] == "Master"
+    assert item["is_conviction"] is True
     assert item["created"] == "2026-01-01T12:00:00+00:00"
     assert item["last_reinforced"] == "2026-01-02T12:00:00+00:00"
 
@@ -333,6 +348,9 @@ def test_load_memory_network_keeps_notion_nodes_when_memory_load_fails(
                     "emotion_tone": "curious",
                     "confidence": 0.8,
                     "source_memory_ids": ["mem_1"],
+                    "related_notion_ids": ["notion_2"],
+                    "reinforcement_count": 6,
+                    "person_id": "Master",
                     "created": "2026-01-01T12:00:00+00:00",
                     "last_reinforced": "2026-01-02T12:00:00+00:00",
                 }
@@ -361,6 +379,10 @@ def test_load_memory_network_keeps_notion_nodes_when_memory_load_fails(
             "access_count": 1,
             "decay": 0.8,
             "category": "notion",
+            "reinforcement_count": 6,
+            "person_id": "Master",
+            "related_count": 1,
+            "is_conviction": True,
         }
     ]
     assert result["edges"] == [
@@ -369,7 +391,13 @@ def test_load_memory_network_keeps_notion_nodes_when_memory_load_fails(
             "target": "mem_1",
             "link_type": "notion_source",
             "confidence": 0.8,
-        }
+        },
+        {
+            "source": "notion_1",
+            "target": "notion_2",
+            "link_type": "notion_related",
+            "confidence": 0.8,
+        },
     ]
 
 

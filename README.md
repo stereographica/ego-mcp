@@ -10,6 +10,7 @@ ego-mcp is a monorepo containing an [MCP (Model Context Protocol)](https://model
 - **Abstract Desire System** — Nonlinear computation with emotion/memory modulation for intrinsic motivation
 - **Cognitive Scaffolding** — Tool responses include thinking frameworks, not just data, guiding natural AI behavior
 - **Relationship Model** — Theory of Mind framework for structuring relationships with others
+- **Self-Maintaining Notions** — Reinforcement, decay, duplicate merge, person association, and related-notion links
 - **Telemetry Dashboard** — Real-time visualization of tool usage, emotion trends, and logs
 
 ## Repository Structure
@@ -55,6 +56,7 @@ MCP server providing cognitive capabilities to AI agents.
 | `emotion_trend` | Analyze emotional patterns over time |
 | `get_episode` | Get episode details |
 | `create_episode` | Create episode from memories |
+| `curate_notions` | List, merge, relabel, or delete notions |
 
 ### Setup
 
@@ -106,7 +108,7 @@ See [ego-mcp/README.md](ego-mcp/README.md) for full documentation including envi
 Telemetry dashboard for observing ego-mcp in action.
 
 - **Now tab**: Summary cards + real-time charts + event feed
-- **History tab**: Tool usage counts and parameter trends with time range selection
+- **History tab**: Tool usage counts, notion maintenance history, network links, and parameter trends
 - **Logs tab**: Live tail of masked logs
 
 ### Run (Docker Compose)

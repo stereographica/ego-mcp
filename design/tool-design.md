@@ -15,12 +15,14 @@ LLM のシステムプロンプトに常に含まれるツール。
 
 **呼ぶタイミング:** セッション開始時
 
-**実装:** 最新の内部独白 + 欲求サマリ + 関係性サマリ + 次にやるべきことを示唆
+**実装:** 最新の内部独白 + Notion baseline + 欲求サマリ + 関係性サマリ + 次にやるべきことを示唆
 
 **レスポンス例:**
 ```
 Last introspection (2h ago):
 "Master was struggling with OpenClaw config. Want to help but will wait until asked."
+
+Notion baseline: curious(5), contentment(2), neutral(1)
 
 Desires: curiosity[high] social_thirst[mid]
 Master: last interaction 2h ago. Seemed busy.
@@ -63,7 +65,7 @@ Consider running introspect to see if anything surfaces.
 
 **呼ぶタイミング:** セッション開始後、Heartbeat 時、重要な体験の後
 
-**実装:** 直近の記憶 + 欲求 + 自己モデル + 未解決の問い（salience ベース）を統合して内省の素材を返す
+**実装:** 直近の記憶 + 欲求 + 自己モデル + 高 confidence notion による conceptual framework + 未解決の問い（salience ベース）を統合して内省の素材を返す
 
 **レスポンス例:**
 ```
@@ -80,6 +82,9 @@ Unresolved questions:
 Resurfacing (you'd almost forgotten):
 - [q_ghi789] What's the optimal heartbeat interval? (importance: 4, dormant 12 days)
   ↑ Triggered by recent memory about heartbeat config
+
+Conceptual framework:
+- "continuity matters" confidence: 0.9 → "steady shelter"
 
 Recent tendency: leaning toward technical topics, tone=focused.
 
@@ -99,7 +104,7 @@ Use emotion_trend for a deeper look at your emotional patterns.
 
 **呼ぶタイミング:** 返答する前、相手の気持ちが気になった時
 
-**実装:** 関係性モデル + 直近の対話パターンから相手の状態を推定し、スキャフォールドを返す
+**実装:** 関係性モデル + 直近の対話パターンから相手の状態を推定し、person_id に紐づく notion があれば印象セクションも返す
 
 #### 5. `remember` — 記憶する
 
@@ -179,9 +184,9 @@ If you found a new relation, use link_memories.
 
 **呼ぶタイミング:** 返答する前（特に重要な会話で）
 
-**実装:** 完全な固定文字列。データ処理なし。
+**実装:** 基本は `Self-check triggered.` を返し、conviction（高 confidence かつ十分に強化された notion）がある場合は `Your convictions:` セクションを追加して genuineness の照合材料を返す。
 
-### バックエンドツール（8 個）
+### バックエンドツール（10 個）
 
 表面ツールのレスポンスからの指示によって初めて使われるツール。
 
@@ -195,6 +200,102 @@ If you found a new relation, use link_memories.
 | `emotion_trend` | 感情パターンの時系列分析 | `introspect` |
 | `get_episode` | エピソード詳細を取得 | `recall` |
 | `create_episode` | エピソードを作成 | `remember` |
+| `forget` | 記憶を削除する | `consolidate` / `recall` |
+| `curate_notions` | notion を list / merge / relabel / delete する | `consolidate` / dashboard 運用 |
+
+---
+
+## Notion のライフサイクル（技術設計）
+
+Notion は生成して終わりのラベルではなく、経験によって補強され、反証と時間経過によって弱まり、必要なら統合・剪定される概念である。
+
+```text
+[generated]
+  confidence: 0.3-0.9
+  reinforcement_count: 0
+  related_notion_ids: []
+  person_id: inferred when majority overlap exists
+
+  -> reinforce
+     confidence +0.1
+     reinforcement_count +1
+     last_reinforced updated
+
+  -> contradict
+     confidence -0.15
+     last_reinforced unchanged
+
+  -> time decay
+     confidence *= 0.5^(days / half_life)
+
+  -> conviction
+     reinforcement_count >= 5 and confidence >= 0.7
+     decay half-life extends from 30d to 90d
+
+  -> dormant
+     confidence < 0.2 after contradiction
+
+  -> pruned
+     confidence < 0.15 after time decay
+```
+
+閾値一覧:
+
+| 項目 | 値 |
+|---|---|
+| reinforce | `+0.1 confidence`, `+1 reinforcement_count` |
+| contradict | `-0.15 confidence` |
+| dormant | `confidence < 0.2` |
+| pruned | `confidence < 0.15` |
+| conviction | `reinforcement_count >= 5` and `confidence >= 0.7` |
+| normal half-life | `30 days` |
+| conviction half-life | `90 days` |
+
+---
+
+## curate_notions 詳細仕様
+
+`curate_notions` は notion の手動整理用バックエンドツールであり、LLM が「今の概念整理」を行うための操作面を提供する。
+
+### アクション
+
+| action | 必須パラメータ | 挙動 |
+|---|---|---|
+| `list` | なし | 上位 15 notion を `conf / reinf / age / person / related` 付きで compact 表示 |
+| `merge` | `notion_id`, `merge_into` | `notion_id` を `merge_into` に吸収し、必要なら `person` を設定 |
+| `relabel` | `notion_id`, `new_label` | notion ラベルを変更し、必要なら `person` を設定または空文字で clear |
+| `delete` | `notion_id` | notion を削除 |
+
+### レスポンス例
+
+```text
+Notions:
+- notion_1: "Pattern seeking" conf=0.80 reinf=3 age=2d ago person=Master related=1
+
+---
+Which notions feel redundant or outdated?
+Are there notions that should be combined into a stronger concept?
+Does every label accurately capture the underlying insight?
+```
+
+```text
+Merged notion_old into notion_keep
+
+---
+Which notions feel redundant or outdated?
+Are there notions that should be combined into a stronger concept?
+Does every label accurately capture the underlying insight?
+```
+
+### Scaffold
+
+```python
+SCAFFOLD_CURATE_NOTIONS = (
+    "Which notions feel redundant or outdated?\n"
+    "Are there notions that should be combined into a stronger concept?\n"
+    "Does every label accurately capture the underlying insight?"
+)
+```
 
 ---
 
@@ -397,8 +498,9 @@ async def wake_up(self, arguments: dict) -> str:
 |---|---|---|---|
 | **初期設計** | 7 | 8 | 15 |
 | **Phase 3b 後** | 7 | 8 (+emotion_trend, -search_memories) | 15 |
+| **v0.5.0** | 7 | 10 | 17 |
 
-ツール総数は変わらない。表面ツールの増加はゼロ。
+v0.5.0 では `forget` と `curate_notions` が加わり、バックエンドツール数が増加した。表面ツール数は引き続き 7 のまま。
 
 ---
 
@@ -410,4 +512,5 @@ async def wake_up(self, arguments: dict) -> str:
 - Heartbeat 時: `feel_desires` → 必要なら `introspect` → 行動 or HEARTBEAT_OK
 - 返答前（重要な会話）: `consider_them` → 必要なら `am_i_being_genuine`
 - 重要な体験の後: `remember` で保存
+- 定期的な自己整理: `consolidate` → 観念が散らかっていたら `curate_notions`
 ```

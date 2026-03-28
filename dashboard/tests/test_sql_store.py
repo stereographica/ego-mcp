@@ -553,7 +553,59 @@ def test_notion_history_uses_exact_matching(
     assert "ILIKE" not in compact_sql
     assert "string_metrics ->> 'notion_confidences'" in compact_sql
     assert "string_metrics ->> 'notion_reinforced'" in compact_sql
+    assert "string_metrics ->> 'notion_decayed'" in compact_sql
+    assert "string_metrics ->> 'notion_merged'" in compact_sql
     assert params == (
         datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
         datetime(2026, 1, 1, 12, 30, tzinfo=UTC),
     )
+
+
+def test_metric_and_string_queries_handle_notion_link_and_curation_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(None),
+    )
+    all_rows_queue: list[list[tuple[Any, ...]]] = [
+        [
+            (
+                datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+                2.0,
+            )
+        ],
+        [
+            (
+                datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+                "merge",
+            )
+        ],
+        [
+            (
+                datetime(2026, 1, 1, 12, 1, tzinfo=UTC),
+                "notion_1",
+            )
+        ],
+    ]
+
+    class _SequencedConnection(_FakeConnection):
+        def __init__(self) -> None:
+            self._cursor = _FakeCursor(rows=[], all_rows=all_rows_queue.pop(0))
+
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _SequencedConnection(),
+    )
+
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 12, 5, tzinfo=UTC)
+
+    metric_rows = store.metric_history("notion_links_created", start, end, "1m")
+    action_rows = store.string_timeline("curate_action", start, end)
+    notion_rows = store.string_timeline("curate_notion_id", start, end)
+
+    assert metric_rows == [{"ts": "2026-01-01T12:00:00+00:00", "value": 2.0}]
+    assert action_rows == [{"ts": "2026-01-01T12:00:00+00:00", "value": "merge"}]
+    assert notion_rows == [{"ts": "2026-01-01T12:01:00+00:00", "value": "notion_1"}]

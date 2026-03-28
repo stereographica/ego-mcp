@@ -112,6 +112,7 @@ export const NotionPanel = ({ notions, range, preset }: NotionPanelProps) => {
   const selectedNotion =
     sorted.find((notion) => notion.id === selectedNotionId) ?? null
   const sparkline = buildSparkline(selectedHistory)
+  const selectedRelated = selectedNotion?.related_notion_ids ?? []
 
   return (
     <Card className="min-w-0 overflow-hidden">
@@ -137,12 +138,49 @@ export const NotionPanel = ({ notions, range, preset }: NotionPanelProps) => {
               <p className="truncate text-xs font-medium">
                 {selectedNotion?.label ?? 'No notion selected'}
               </p>
-              <p className="text-muted-foreground text-xs">Confidence trend</p>
+              <p className="text-muted-foreground text-xs">
+                {selectedNotion
+                  ? `${selectedNotion.emotion_tone} notion detail`
+                  : 'Confidence trend'}
+              </p>
             </div>
-            <Badge variant="outline">
-              {selectedNotion ? formatPercent(selectedNotion.confidence) : '0%'}
-            </Badge>
+            <div className="flex flex-wrap justify-end gap-2">
+              {selectedNotion?.is_conviction ? (
+                <Badge variant="secondary">conviction</Badge>
+              ) : null}
+              {selectedNotion?.person_id ? (
+                <Badge variant="outline">{selectedNotion.person_id}</Badge>
+              ) : null}
+              <Badge variant="outline">
+                {selectedNotion
+                  ? formatPercent(selectedNotion.confidence)
+                  : '0%'}
+              </Badge>
+            </div>
           </div>
+          {selectedNotion ? (
+            <div className="flex flex-wrap gap-2 text-xs">
+              <Badge variant="outline">
+                reinforcement {selectedNotion.reinforcement_count}
+              </Badge>
+              <Badge variant="outline">
+                related {selectedNotion.related_count}
+              </Badge>
+              <Badge variant="outline">
+                sources {selectedNotion.source_count}
+              </Badge>
+            </div>
+          ) : null}
+          {selectedNotion ? (
+            <div className="space-y-1 text-xs">
+              <p className="text-muted-foreground">Related notions</p>
+              <p>
+                {selectedRelated.length > 0
+                  ? selectedRelated.join(', ')
+                  : 'None'}
+              </p>
+            </div>
+          ) : null}
           {sparkline ? (
             <svg
               viewBox="0 0 320 96"
@@ -192,7 +230,15 @@ export const NotionPanel = ({ notions, range, preset }: NotionPanelProps) => {
                       {notion.id}
                     </p>
                   </div>
-                  <Badge variant="secondary">{notion.emotion_tone}</Badge>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {notion.is_conviction ? (
+                      <Badge variant="secondary">conviction</Badge>
+                    ) : null}
+                    {notion.person_id ? (
+                      <Badge variant="outline">{notion.person_id}</Badge>
+                    ) : null}
+                    <Badge variant="secondary">{notion.emotion_tone}</Badge>
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center justify-between gap-2">
@@ -213,11 +259,19 @@ export const NotionPanel = ({ notions, range, preset }: NotionPanelProps) => {
                 </div>
                 <div className="flex flex-wrap gap-2 text-muted-foreground">
                   <span>sources {notion.source_count}</span>
+                  <span>reinforcement {notion.reinforcement_count}</span>
+                  <span>related {notion.related_count}</span>
                   <span>created {notion.created.slice(0, 10) || '-'}</span>
                   <span>
                     reinforced {notion.last_reinforced.slice(0, 10) || '-'}
                   </span>
                 </div>
+                <p className="text-muted-foreground truncate">
+                  related ids:{' '}
+                  {notion.related_notion_ids.length > 0
+                    ? notion.related_notion_ids.join(', ')
+                    : 'none'}
+                </p>
               </button>
             ))}
           </div>

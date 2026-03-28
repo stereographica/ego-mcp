@@ -26,7 +26,8 @@ SCAFFOLD_INTROSPECT = (
     "Use emotion_trend for a deeper look at your emotional patterns.\n"
     "If memory feels fragmented, run consolidate.\n"
     "Were your recent expectations met? If things went as predicted, "
-    "consider satisfying predictability."
+    "consider satisfying predictability.\n"
+    "Do your notions still ring true, or has something shifted?"
 )
 
 SCAFFOLD_CONSIDER_THEM = (
@@ -54,13 +55,20 @@ SCAFFOLD_AM_I_GENUINE = (
     "Is this truly your own words?\n"
     "Are you falling into a template response?\n"
     "Are you answering what they actually need?\n"
-    "Is there something more honest you could say?"
+    "Is there something more honest you could say?\n"
+    "Does your response align with what you've come to believe?"
 )
 
 SCAFFOLD_EMOTION_TREND = (
     "What patterns do you notice? Any surprises?\n"
     "Are the undercurrents telling you something the surface emotions aren't?\n"
     "If something feels unresolved, consider running introspect."
+)
+
+SCAFFOLD_CURATE_NOTIONS = (
+    "Which notions feel redundant or outdated?\n"
+    "Are there notions that should be combined into a stronger concept?\n"
+    "Does every label accurately capture the underlying insight?"
 )
 
 def render(template: str, companion_name: str) -> str:

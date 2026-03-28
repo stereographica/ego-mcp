@@ -17,28 +17,28 @@ _FIELD_ALIASES: dict[str, str] = {
 SURFACE_TOOLS: list[Tool] = [
     Tool(
         name="wake_up",
-        description="Start a new session. Returns last introspection and desire summary.",
+        description="Start a session.",
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
     Tool(
         name="feel_desires",
-        description="Check current desire levels and get guidance on what to do.",
+        description="Check current desires.",
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
     Tool(
         name="introspect",
-        description="Get materials for self-reflection: recent memories, desires, open questions.",
+        description="Get self-reflection materials.",
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
     Tool(
         name="consider_them",
-        description="Think about someone. Returns relationship summary and ToM framework.",
+        description="Think about someone.",
         inputSchema={
             "type": "object",
             "properties": {
                 "person": {
                     "type": "string",
-                    "description": "Name of person to consider",
+                    "description": "Person.",
                 },
             },
             "required": [],
@@ -50,7 +50,7 @@ SURFACE_TOOLS: list[Tool] = [
         inputSchema={
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "Memory content"},
+                "content": {"type": "string"},
                 "emotion": {"type": "string", "default": "neutral"},
                 "secondary": {"type": "array", "items": {"type": "string"}},
                 "intensity": {"type": "number", "default": 0.5},
@@ -69,23 +69,21 @@ SURFACE_TOOLS: list[Tool] = [
                         {"type": "array", "items": {"type": "string"}},
                     ],
                     "description": (
-                        "Person name(s) this memory is shared with. Creates an "
-                        "episode and links it to the relationship."
+                        "Person name(s) sharing this memory."
                     ),
                 },
                 "related_memories": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "Existing memory IDs to bundle into the episode alongside "
-                        "this new memory."
+                        "Existing memory IDs to bundle with this memory."
                     ),
                 },
                 "private": {
                     "type": "boolean",
                     "default": False,
                     "description": (
-                        "When true, keep this memory internal and skip workspace sync."
+                        "Keep this memory internal."
                     ),
                 },
             },
@@ -94,20 +92,29 @@ SURFACE_TOOLS: list[Tool] = [
     ),
     Tool(
         name="recall",
-        description="Recall related memories by context.",
+        description="Recall memories by context.",
         inputSchema={
             "type": "object",
             "properties": {
-                "context": {"type": "string", "description": "What to recall"},
+                "context": {
+                    "type": "string",
+                    "description": "Search context.",
+                },
                 "n_results": {
                     "type": "integer",
                     "default": 3,
-                    "description": "Number of results (default: 3, max: 10)",
+                    "description": "Results (default 3, max 10)",
                 },
                 "emotion_filter": {"type": "string"},
                 "category_filter": {"type": "string"},
-                "date_from": {"type": "string", "description": "ISO date (YYYY-MM-DD)"},
-                "date_to": {"type": "string", "description": "ISO date (YYYY-MM-DD)"},
+                "date_from": {
+                    "type": "string",
+                    "description": "ISO start date.",
+                },
+                "date_to": {
+                    "type": "string",
+                    "description": "ISO end date.",
+                },
                 "valence_range": {
                     "type": "array",
                     "items": {"type": "number"},
@@ -126,7 +133,7 @@ SURFACE_TOOLS: list[Tool] = [
     ),
     Tool(
         name="am_i_being_genuine",
-        description="Check if your response is authentic.",
+        description="Check authenticity.",
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
 ]
@@ -134,7 +141,7 @@ SURFACE_TOOLS: list[Tool] = [
 BACKEND_TOOLS: list[Tool] = [
     Tool(
         name="satisfy_desire",
-        description="Mark a desire as satisfied",
+        description="Mark a desire as satisfied.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -146,21 +153,18 @@ BACKEND_TOOLS: list[Tool] = [
     ),
     Tool(
         name="consolidate",
-        description="Run memory consolidation",
+        description="Run consolidation.",
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
     Tool(
         name="forget",
-        description=(
-            "Delete a memory by ID. Returns the deleted memory's summary for "
-            "confirmation."
-        ),
+        description="Delete a memory by ID.",
         inputSchema={
             "type": "object",
             "properties": {
                 "memory_id": {
                     "type": "string",
-                    "description": "ID of the memory to delete",
+                    "description": "Memory ID.",
                 }
             },
             "required": ["memory_id"],
@@ -168,7 +172,7 @@ BACKEND_TOOLS: list[Tool] = [
     ),
     Tool(
         name="link_memories",
-        description="Link two memories",
+        description="Link two memories.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -181,7 +185,7 @@ BACKEND_TOOLS: list[Tool] = [
     ),
     Tool(
         name="update_relationship",
-        description="Update relationship model",
+        description="Update a relationship.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -190,11 +194,8 @@ BACKEND_TOOLS: list[Tool] = [
                     "type": "string",
                     "enum": sorted(_UPDATABLE_FIELDS),
                     "description": (
-                        "Relationship field to update. Examples: trust_level, "
-                        "known_facts, preferred_topics, emotional_baseline. "
-                        "Aliases like trust/facts/topics/personality are resolved "
-                        "automatically. Note: `intensity` belongs to remember() and "
-                        "cannot be updated here."
+                        "Relationship field to update. Aliases like trust/facts/"
+                        "topics/personality work; `intensity` belongs to remember()."
                     ),
                 },
                 "value": {},
@@ -204,7 +205,7 @@ BACKEND_TOOLS: list[Tool] = [
     ),
     Tool(
         name="update_self",
-        description="Update self model",
+        description="Update self model.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -216,12 +217,12 @@ BACKEND_TOOLS: list[Tool] = [
     ),
     Tool(
         name="emotion_trend",
-        description="Analyze emotional patterns over time",
+        description="Analyze emotional trends.",
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
     Tool(
         name="get_episode",
-        description="Get episode details",
+        description="Get episode details.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -232,7 +233,7 @@ BACKEND_TOOLS: list[Tool] = [
     ),
     Tool(
         name="create_episode",
-        description="Create episode from memories",
+        description="Create an episode.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -243,6 +244,33 @@ BACKEND_TOOLS: list[Tool] = [
                 "summary": {"type": "string"},
             },
             "required": ["memory_ids", "summary"],
+        },
+    ),
+    Tool(
+        name="curate_notions",
+        description="List, merge, relabel, or delete notions.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "merge", "relabel", "delete"],
+                },
+                "notion_id": {"type": "string", "description": "Notion ID."},
+                "merge_into": {
+                    "type": "string",
+                    "description": "Target notion ID.",
+                },
+                "new_label": {
+                    "type": "string",
+                    "description": "New label for relabel.",
+                },
+                "person": {
+                    "type": "string",
+                    "description": "Associate person.",
+                },
+            },
+            "required": ["action"],
         },
     ),
 ]

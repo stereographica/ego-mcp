@@ -126,6 +126,9 @@ class TestDataclassDefaults:
         assert notion.tags == []
         assert notion.created == ""
         assert notion.last_reinforced == ""
+        assert notion.related_notion_ids == []
+        assert notion.reinforcement_count == 0
+        assert notion.person_id == ""
 
     def test_relationship_model(self) -> None:
         rm = RelationshipModel()

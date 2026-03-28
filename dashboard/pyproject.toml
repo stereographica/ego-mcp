@@ -1,6 +1,6 @@
 [project]
 name = "ego-dashboard"
-version = "0.2.3"
+version = "0.2.4"
 description = "Dashboard backend for ego-mcp telemetry"
 requires-python = ">=3.11"
 dependencies = [

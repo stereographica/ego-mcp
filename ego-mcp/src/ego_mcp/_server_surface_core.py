@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any, Awaitable, Callable
 
 from ego_mcp._server_context import (
@@ -24,6 +25,7 @@ from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_blend import blend_desires
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
+from ego_mcp.notion import is_conviction
 from ego_mcp.scaffolds import (
     SCAFFOLD_AM_I_GENUINE,
     SCAFFOLD_CONSIDER_THEM,
@@ -35,6 +37,7 @@ from ego_mcp.scaffolds import (
     render_with_data,
 )
 from ego_mcp.self_model import SelfModelStore
+from ego_mcp.types import Notion
 
 _relationship_snapshot_override: (
     Callable[[EgoConfig, MemoryStore, str], Awaitable[str]] | None
@@ -104,6 +107,39 @@ def _merge_topic_hints(*topic_groups: list[str]) -> list[str]:
     return merged
 
 
+def _notion_map() -> dict[str, Notion]:
+    try:
+        store = get_notion_store()
+    except Exception:
+        return {}
+    return {
+        notion.id: notion
+        for notion in store.list_all()
+        if isinstance(notion, Notion) and notion.id
+    }
+
+
+def _list_notions_safe() -> list[Notion]:
+    return list(_notion_map().values())
+
+
+def _format_associated_from_map(
+    notion: Notion,
+    notion_map: dict[str, Notion],
+    *,
+    limit: int,
+) -> str:
+    associated = [
+        notion_map[related_id]
+        for related_id in notion.related_notion_ids
+        if related_id in notion_map
+    ]
+    associated.sort(key=lambda item: (-item.confidence, item.label, item.id))
+    if not associated:
+        return ""
+    return " → " + ", ".join(f'"{item.label}"' for item in associated[:limit])
+
+
 async def _handle_wake_up(
     config: EgoConfig, memory: MemoryStore, desire: DesireEngine
 ) -> str:
@@ -137,7 +173,26 @@ async def _handle_wake_up(
         config, memory, config.companion_name
     )
 
-    parts = [intro_line, f"\nDesires: {desire_summary}", relationship_line]
+    notion_counts = Counter(
+        notion.emotion_tone.value
+        for notion in _list_notions_safe()
+        if notion.confidence >= 0.5
+    )
+    notion_baseline = ""
+    if notion_counts:
+        rendered = ", ".join(
+            f"{emotion}({count})"
+            for emotion, count in sorted(
+                notion_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:3]
+        )
+        notion_baseline = f"Notion baseline: {rendered}"
+
+    parts = [intro_line]
+    if notion_baseline:
+        parts.append(notion_baseline)
+    parts.extend([f"\nDesires: {desire_summary}", relationship_line])
     data = "\n".join(parts)
 
     return render_with_data(data, SCAFFOLD_WAKE_UP, config.companion_name)
@@ -147,7 +202,7 @@ async def _handle_feel_desires(
     config: EgoConfig, memory: MemoryStore, desire: DesireEngine
 ) -> str:
     """Check desire levels with scaffold."""
-    created_emergent = desire.generate_emergent_desires(get_notion_store().list_all())
+    created_emergent = desire.generate_emergent_desires(_list_notions_safe())
     expired_emergent = desire.expire_emergent_desires()
     self_store = SelfModelStore(config.data_dir / "self_model.json")
     fading_questions = _fading_important_questions(memory, store=self_store)
@@ -309,15 +364,35 @@ async def _handle_introspect(
         config, memory, config.companion_name
     )
 
+    notion_map = _notion_map()
+    framework_lines: list[str] = []
+    if notion_map:
+        top_notions = sorted(
+            (
+                notion
+                for notion in notion_map.values()
+                if notion.confidence >= 0.7
+            ),
+            key=lambda notion: (-notion.confidence, -notion.reinforcement_count, notion.label),
+        )[:5]
+        if top_notions:
+            framework_lines.append("Conceptual framework:")
+            for notion in top_notions:
+                framework_lines.append(
+                    f'- "{notion.label}" confidence: {notion.confidence:.1f}'
+                    f"{_format_associated_from_map(notion, notion_map, limit=2)}"
+                )
+
     parts = [
         memory_section,
         f"\nDesires: {desire_summary}",
         self_summary,
         relationship_summary,
+        "\n".join(framework_lines) if framework_lines else "",
         open_questions,
         trend,
     ]
-    data = "\n".join(parts)
+    data = "\n".join(part for part in parts if part)
 
     return render_with_data(data, SCAFFOLD_INTROSPECT, config.companion_name)
 
@@ -379,10 +454,34 @@ async def _handle_consider_them(
         )
     else:
         data = f"{relationship_summary}\n{tendency}"
+    person_notions = sorted(
+        (
+            notion for notion in _list_notions_safe() if notion.person_id == person
+        ),
+        key=lambda notion: (-notion.confidence, -notion.reinforcement_count, notion.label),
+    )
+    if person_notions:
+        impression_lines = [f"Impressions of {person}:"]
+        for notion in person_notions[:3]:
+            impression_lines.append(
+                f'  - "{notion.label}" confidence: {notion.confidence:.1f}'
+            )
+        data = f"{data}\n" + "\n".join(impression_lines)
     return render_with_data(data, SCAFFOLD_CONSIDER_THEM, config.companion_name)
 
 
 def _handle_am_i_genuine() -> str:
     """Authenticity check with consistent data+scaffold format."""
     data = "Self-check triggered."
+    convictions = sorted(
+        (
+            notion for notion in _list_notions_safe() if is_conviction(notion)
+        ),
+        key=lambda notion: (-notion.confidence, -notion.reinforcement_count, notion.label),
+    )
+    if convictions:
+        lines = [data, "Your convictions:"]
+        for notion in convictions[:5]:
+            lines.append(f'- "{notion.label}"')
+        data = "\n".join(lines)
     return compose_response(data, SCAFFOLD_AM_I_GENUINE)

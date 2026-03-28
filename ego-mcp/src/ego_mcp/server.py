@@ -202,6 +202,10 @@ def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
     return _handlers._handle_update_self(config, args)
 
 
+def _handle_curate_notions(args: dict[str, Any], notion_store: NotionStore) -> str:
+    return _handlers._handle_curate_notions(args, notion_store)
+
+
 async def _handle_emotion_trend(memory: MemoryStore) -> str:
     _sync_handler_overrides()
     return await _handlers._handle_emotion_trend(memory)
@@ -446,6 +450,10 @@ async def _dispatch(
         return await _handle_get_episode(episodes, memory, args)
     elif name == "create_episode":
         return await _handle_create_episode(episodes, args)
+    elif name == "curate_notions":
+        result = _handle_curate_notions(args, _get_notion_store())
+        desire.satisfy_implicit("consolidate")
+        return result
     else:
         return f"Unknown tool: {name}"
 

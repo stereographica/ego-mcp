@@ -372,6 +372,9 @@ class TelemetryStore:
                 "notion_reinforced",
                 "notion_weakened",
                 "notion_dormant",
+                "notion_decayed",
+                "notion_pruned",
+                "notion_merged",
             )
             for candidate in event.string_metrics.get(key, "").split(",")
             if candidate

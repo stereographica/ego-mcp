@@ -449,3 +449,73 @@ def test_notion_history_aggregates_matching_events() -> None:
     )
 
     assert history == [{"ts": start.isoformat(), "value": 0.7}]
+
+
+def test_notion_history_tracks_decay_and_merge_events() -> None:
+    store = TelemetryStore()
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store.ingest(
+        DashboardEvent(
+            ts=start,
+            event_type="tool_call_completed",
+            tool_name="consolidate",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={"notion_confidence": 0.42},
+            string_metrics={"notion_decayed": "notion_1"},
+            params={},
+            private=False,
+        )
+    )
+    store.ingest(
+        DashboardEvent(
+            ts=start + timedelta(minutes=5),
+            event_type="tool_call_completed",
+            tool_name="consolidate",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={"notion_confidence": 0.9},
+            string_metrics={"notion_merged": "notion_1"},
+            params={},
+            private=False,
+        )
+    )
+
+    history = store.notion_history(
+        "notion_1",
+        start,
+        start + timedelta(minutes=20),
+        bucket="15m",
+    )
+
+    assert history == [{"ts": start.isoformat(), "value": 0.66}]
+
+
+def test_store_exposes_generic_notion_link_and_curation_metrics() -> None:
+    store = TelemetryStore()
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    end = start + timedelta(minutes=10)
+    store.ingest(
+        DashboardEvent(
+            ts=start,
+            event_type="tool_call_completed",
+            tool_name="consolidate",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={"notion_links_created": 2},
+            string_metrics={
+                "curate_action": "merge",
+                "curate_notion_id": "notion_1",
+            },
+            params={},
+            private=False,
+        )
+    )
+
+    metric_rows = store.metric_history("notion_links_created", start, end, bucket="1m")
+    action_rows = store.string_timeline("curate_action", start, end)
+    notion_rows = store.string_timeline("curate_notion_id", start, end)
+
+    assert metric_rows == [{"ts": start.isoformat(), "value": 2.0}]
+    assert action_rows == [{"ts": start.isoformat(), "value": "merge"}]
+    assert notion_rows == [{"ts": start.isoformat(), "value": "notion_1"}]

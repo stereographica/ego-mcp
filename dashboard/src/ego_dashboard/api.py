@@ -189,14 +189,23 @@ def _load_notion_rows(settings: DashboardSettings) -> list[dict[str, object]]:
         if not isinstance(raw, dict):
             continue
         source_ids = raw.get("source_memory_ids", [])
+        related_ids = raw.get("related_notion_ids", [])
+        reinforcement_count = _coerce_int(raw.get("reinforcement_count"), 0)
+        person_id = raw.get("person_id")
+        confidence = float(raw.get("confidence", 0.5))
         rows.append(
             {
                 "id": str(notion_id),
                 "label": str(raw.get("label", "")),
                 "emotion_tone": str(raw.get("emotion_tone", "neutral")),
-                "confidence": float(raw.get("confidence", 0.5)),
+                "confidence": confidence,
                 "source_count": len(source_ids) if isinstance(source_ids, list) else 0,
                 "source_memory_ids": list(source_ids) if isinstance(source_ids, list) else [],
+                "related_notion_ids": (list(related_ids) if isinstance(related_ids, list) else []),
+                "related_count": len(related_ids) if isinstance(related_ids, list) else 0,
+                "reinforcement_count": reinforcement_count,
+                "person_id": str(person_id) if isinstance(person_id, str) else "",
+                "is_conviction": confidence >= 0.7 and reinforcement_count >= 5,
                 "created": str(raw.get("created", "")),
                 "last_reinforced": str(raw.get("last_reinforced", "")),
             }
@@ -304,6 +313,10 @@ def _load_memory_network(settings: DashboardSettings) -> dict[str, object]:
                 "access_count": notion["source_count"],
                 "decay": notion["confidence"],
                 "category": "notion",
+                "reinforcement_count": notion["reinforcement_count"],
+                "person_id": notion["person_id"],
+                "related_count": notion["related_count"],
+                "is_conviction": notion["is_conviction"],
             }
         )
         source_memory_ids = notion.get("source_memory_ids", [])
@@ -317,6 +330,29 @@ def _load_memory_network(settings: DashboardSettings) -> dict[str, object]:
                     "source": notion_id,
                     "target": source_memory_id,
                     "link_type": "notion_source",
+                    "confidence": notion["confidence"],
+                }
+            )
+        related_notion_ids = notion.get("related_notion_ids", [])
+        if not isinstance(related_notion_ids, list):
+            continue
+        for related_notion_id in related_notion_ids:
+            if not isinstance(related_notion_id, str):
+                continue
+            ordered_ids = tuple(sorted((notion_id, related_notion_id)))
+            edge_key = (
+                ordered_ids[0],
+                ordered_ids[1],
+                "notion_related",
+            )
+            if edge_key in seen_edges:
+                continue
+            seen_edges.add(edge_key)
+            edges.append(
+                {
+                    "source": notion_id,
+                    "target": related_notion_id,
+                    "link_type": "notion_related",
                     "confidence": notion["confidence"],
                 }
             )

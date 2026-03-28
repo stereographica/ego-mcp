@@ -9,6 +9,7 @@ import pytest
 from ego_mcp.scaffolds import (
     SCAFFOLD_AM_I_GENUINE,
     SCAFFOLD_CONSIDER_THEM,
+    SCAFFOLD_CURATE_NOTIONS,
     SCAFFOLD_EMOTION_TREND,
     SCAFFOLD_FEEL_DESIRES,
     SCAFFOLD_INTROSPECT,
@@ -27,6 +28,7 @@ ALL_SCAFFOLDS = [
     SCAFFOLD_CONSIDER_THEM,
     SCAFFOLD_AM_I_GENUINE,
     SCAFFOLD_EMOTION_TREND,
+    SCAFFOLD_CURATE_NOTIONS,
 ]
 
 
@@ -66,6 +68,7 @@ class TestScaffoldConstants:
 
     def test_introspect_mentions_predictability(self) -> None:
         assert "predictability" in SCAFFOLD_INTROSPECT
+        assert "Do your notions still ring true" in SCAFFOLD_INTROSPECT
 
     def test_consider_them_mentions_predictability(self) -> None:
         assert "predictability" in SCAFFOLD_CONSIDER_THEM
@@ -78,6 +81,14 @@ class TestScaffoldConstants:
     def test_remember_mentions_post_hoc_satisfy_desire_prompt(self) -> None:
         assert "satisfy" in SCAFFOLD_REMEMBER
         assert "Did this action" in SCAFFOLD_REMEMBER
+
+    def test_am_i_genuine_mentions_alignment_with_beliefs(self) -> None:
+        assert "align with what you've come to believe" in SCAFFOLD_AM_I_GENUINE
+
+    def test_curate_notions_scaffold_mentions_redundancy_and_labels(self) -> None:
+        assert "redundant or outdated" in SCAFFOLD_CURATE_NOTIONS
+        assert "combined into a stronger concept" in SCAFFOLD_CURATE_NOTIONS
+        assert "accurately capture the underlying insight" in SCAFFOLD_CURATE_NOTIONS
 
 
 class TestRender:
@@ -114,6 +125,7 @@ class TestDataScaffoldFormat:
             SCAFFOLD_CONSIDER_THEM,
             SCAFFOLD_AM_I_GENUINE,
             SCAFFOLD_EMOTION_TREND,
+            SCAFFOLD_CURATE_NOTIONS,
         ],
     )
     def test_each_template_supports_data_scaffold_format(self, template: str) -> None:
