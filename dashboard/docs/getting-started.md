@@ -25,6 +25,8 @@ npm run dev
 ```bash
 cd dashboard
 cp .env.example .env
+# Memory Network / Notions を compose で有効化する場合は
+# DASHBOARD_EGO_MCP_DATA_DIR に ego-mcp の data dir を設定
 docker compose up --build
 ```
 
@@ -43,10 +45,11 @@ docker compose up --build
 ### 初回導入時の最小手順
 
 1. `.env` を作成して DB/Redis/ログパスを設定する
-2. `ego-mcp` の `EGO_MCP_LOG_DIR`（既定 `/tmp`）配下に `ego-mcp-YYYY-MM-DD.log` が出力されることを確認する
-3. `.env` の `DASHBOARD_LOG_MOUNT_SOURCE` / `DASHBOARD_LOG_PATH` を必要に応じて合わせる
-4. `docker compose up -d` を実行する
-5. `docker compose logs -f ingestor` で取り込みログを確認する
+2. Memory Network / Notions を使う場合は `.env` の `DASHBOARD_EGO_MCP_DATA_DIR` に ego-mcp data dir の絶対パスを設定する
+3. `ego-mcp` の `EGO_MCP_LOG_DIR`（既定 `/tmp`）配下に `ego-mcp-YYYY-MM-DD.log` が出力されることを確認する
+4. `.env` の `DASHBOARD_LOG_MOUNT_SOURCE` / `DASHBOARD_LOG_PATH` を必要に応じて合わせる
+5. `docker compose up -d` を実行する
+6. `docker compose logs -f ingestor` で取り込みログを確認する
 
 ### 画面簡易図（Now / History / Logs）
 

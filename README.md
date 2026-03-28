@@ -114,6 +114,8 @@ Telemetry dashboard for observing ego-mcp in action.
 ```bash
 cd dashboard
 cp .env.example .env
+# Memory Network / Notions も使う場合は ego-mcp の data dir を設定
+# export DASHBOARD_EGO_MCP_DATA_DIR="/absolute/path/to/ego-mcp-data"
 docker compose up --build
 ```
 

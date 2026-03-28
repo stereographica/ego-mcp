@@ -16,6 +16,8 @@
   - string メトリクスの時系列点列
 - `GET /api/v1/metrics/{key}/heatmap?from=...&to=...&bucket=...`
   - string 値ごとの出現頻度
+- `GET /api/v1/desires/keys?from=...&to=...`
+  - 履歴期間内に現れた固定/動的 desire key 一覧
 - `GET /api/v1/logs?from=...&to=...&level=INFO&search=remember`
   - live tail / 履歴表示用ログ（最大 300 行）
 - `GET /api/v1/alerts/anomalies?from=...&to=...&bucket=...`
@@ -27,7 +29,7 @@
 - `GET /api/v1/notions`
   - Notion（観念）一覧: label, emotion_tone, confidence, source_count, created, last_reinforced
 - `GET /api/v1/notions/{notion_id}/history?from=...&to=...&bucket=15m`
-  - Notion 個別の confidence 推移（テレメトリイベントから集計）
+  - Notion 個別の confidence 推移（notion 単位 confidence map を優先してテレメトリイベントから集計）
 
 ### WebSocket（現在フォーカス）
 
