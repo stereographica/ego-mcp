@@ -4,7 +4,7 @@ import { MemoryNetworkPanel } from '@/components/history/memory-network-panel'
 
 describe('MemoryNetworkPanel', () => {
   it('renders network summary and node list', () => {
-    render(
+    const { container } = render(
       <MemoryNetworkPanel
         network={{
           nodes: [
@@ -41,5 +41,9 @@ describe('MemoryNetworkPanel', () => {
     expect(screen.getByText('Memory one')).toBeInTheDocument()
     expect(screen.getAllByText('Notion one')).toHaveLength(2)
     expect(screen.getByText('nodes 2')).toBeInTheDocument()
+    expect(container.firstChild).toHaveClass('min-w-0', 'overflow-hidden')
+    expect(
+      screen.getByRole('img', { name: 'Memory network graph' }),
+    ).toHaveClass('max-w-full')
   })
 })

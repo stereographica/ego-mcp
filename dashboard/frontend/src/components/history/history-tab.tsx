@@ -42,7 +42,7 @@ export const HistoryTab = ({ range, preset }: HistoryTabProps) => {
       <EmotionTimelineChart points={emotionTrend} markers={historyMarkers} />
       <EmotionDistributionChart heatmapData={emotionHeatmap} />
       <ValenceArousalChart valence={valence} arousal={arousal} />
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-4 xl:grid-cols-2 [&>*]:min-w-0">
         <MemoryNetworkPanel network={memoryNetwork} />
         <NotionPanel notions={notions} />
       </div>
