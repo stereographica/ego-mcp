@@ -9,7 +9,7 @@ from ego_mcp.chromadb_compat import load_chromadb
 from ego_mcp.notion import NotionStore, derive_notion_label, is_placeholder_notion_label
 from ego_mcp.types import Memory
 
-TARGET_VERSION = "0.4.1"
+TARGET_VERSION = "0.4.2"
 _MEMORY_COLLECTION_NAME = "ego_memories"
 
 

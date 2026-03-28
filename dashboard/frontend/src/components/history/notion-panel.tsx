@@ -16,11 +16,11 @@ export const NotionPanel = ({ notions }: NotionPanelProps) => {
   )
 
   return (
-    <Card>
+    <Card className="min-w-0 overflow-hidden">
       <CardHeader>
         <CardTitle className="text-sm">Notions</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="min-w-0 space-y-3">
         <div className="flex flex-wrap gap-2 text-xs">
           <Badge variant="outline">count {sorted.length}</Badge>
           <Badge variant="outline">
@@ -33,7 +33,7 @@ export const NotionPanel = ({ notions }: NotionPanelProps) => {
               : '0%'}
           </Badge>
         </div>
-        <ScrollArea className="h-[300px] rounded-md border">
+        <ScrollArea className="h-[300px] min-w-0 rounded-md border">
           <div className="divide-y">
             {sorted.length === 0 ? (
               <p className="text-muted-foreground px-3 py-4 text-xs">

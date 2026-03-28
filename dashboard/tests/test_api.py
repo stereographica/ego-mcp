@@ -4,13 +4,12 @@ import json
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
 
-from ego_dashboard.api import create_app
+from ego_dashboard.api import _load_memory_network, create_app
 from ego_dashboard.models import DashboardEvent
 from ego_dashboard.settings import DashboardSettings
 from ego_dashboard.store import TelemetryStore
@@ -228,31 +227,6 @@ def test_load_memory_network_uses_existing_collection_in_batches(
 ) -> None:
     chroma_dir = tmp_path / "chroma"
     chroma_dir.mkdir()
-
-    class _FakeLink:
-        def __init__(self, target_id: str, link_type: str, confidence: float) -> None:
-            self.target_id = target_id
-            self.link_type = SimpleNamespace(value=link_type)
-            self.confidence = confidence
-
-    class _FakeMemory:
-        def __init__(
-            self,
-            memory_id: str,
-            category: str,
-            access_count: int,
-            linked_ids: list[_FakeLink],
-        ) -> None:
-            self.id = memory_id
-            self.category = SimpleNamespace(value=category)
-            self.timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-            self.access_count = access_count
-            self.linked_ids = linked_ids
-
-    memory_map = {
-        "mem_1": _FakeMemory("mem_1", "daily", 2, [_FakeLink("mem_2", "related", 0.4)]),
-        "mem_2": _FakeMemory("mem_2", "daily", 5, []),
-    }
     collection_calls: list[dict[str, object]] = []
 
     class _FakeCollection:
@@ -267,16 +241,36 @@ def test_load_memory_network_uses_existing_collection_in_batches(
             if offset == 0:
                 return {
                     "ids": ["mem_1"],
-                    "documents": ["doc-1"],
-                    "metadatas": [{"foo": "bar"}],
+                    "metadatas": [
+                        {
+                            "category": "daily",
+                            "timestamp": "2026-01-01T12:00:00+00:00",
+                            "access_count": 2,
+                            "linked_ids": json.dumps(
+                                [
+                                    {
+                                        "target_id": "mem_2",
+                                        "link_type": "related",
+                                        "confidence": 0.4,
+                                    }
+                                ]
+                            ),
+                        }
+                    ],
                 }
             if offset == 1:
                 return {
                     "ids": ["mem_2"],
-                    "documents": ["doc-2"],
-                    "metadatas": [{"foo": "baz"}],
+                    "metadatas": [
+                        {
+                            "category": "daily",
+                            "timestamp": "2026-01-01T12:00:00+00:00",
+                            "access_count": 5,
+                            "linked_ids": "[]",
+                        }
+                    ],
                 }
-            return {"ids": [], "documents": [], "metadatas": []}
+            return {"ids": [], "metadatas": []}
 
     class _FakePersistentClient:
         def __init__(self, path: str) -> None:
@@ -288,47 +282,87 @@ def test_load_memory_network_uses_existing_collection_in_batches(
             self.collection_requested = name
             return self.collection
 
-    def fake_import_module(name: str) -> object:
-        if name == "ego_mcp._memory_scoring":
-            return SimpleNamespace(
-                calculate_time_decay=lambda timestamp, *, link_confidence_max, access_count: (
-                    access_count + link_confidence_max + timestamp.hour / 100.0
-                )
-            )
-        if name == "ego_mcp._memory_serialization":
-            return SimpleNamespace(
-                memory_from_chromadb=lambda memory_id, _document, _metadata: memory_map[memory_id]
-            )
-        if name == "ego_mcp.chromadb_compat":
-            return SimpleNamespace(
-                load_chromadb=lambda: SimpleNamespace(
-                    PersistentClient=_FakePersistentClient,
-                )
-            )
-        raise AssertionError(f"unexpected import: {name}")
-
-    monkeypatch.setattr("ego_dashboard.api.importlib.import_module", fake_import_module)
+    monkeypatch.setattr("ego_dashboard.api.chromadb.PersistentClient", _FakePersistentClient)
+    monkeypatch.setattr(
+        "ego_dashboard.api._calculate_memory_decay",
+        lambda timestamp, *, link_confidence_max, access_count, now=None: (
+            access_count + link_confidence_max + 0.12
+        ),
+    )
     monkeypatch.setattr("ego_dashboard.api._MEMORY_NETWORK_BATCH_SIZE", 1)
-
-    from ego_dashboard.api import _load_memory_network
 
     result = _load_memory_network(DashboardSettings(ego_mcp_data_dir=str(tmp_path)))
     nodes = cast(list[dict[str, object]], result["nodes"])
     edges = cast(list[dict[str, object]], result["edges"])
 
     assert collection_calls == [
-        {"limit": 1, "offset": 0, "include": ("documents", "metadatas")},
-        {"limit": 1, "offset": 1, "include": ("documents", "metadatas")},
-        {"limit": 1, "offset": 2, "include": ("documents", "metadatas")},
+        {"limit": 1, "offset": 0, "include": ("metadatas",)},
+        {"limit": 1, "offset": 1, "include": ("metadatas",)},
+        {"limit": 1, "offset": 2, "include": ("metadatas",)},
     ]
     assert nodes[0]["id"] == "mem_1"
     assert nodes[1]["access_count"] == 5
+    assert nodes[0]["decay"] == pytest.approx(2.52)
     assert edges == [
         {
             "source": "mem_1",
             "target": "mem_2",
             "link_type": "related",
             "confidence": 0.4,
+        }
+    ]
+
+
+def test_load_memory_network_keeps_notion_nodes_when_memory_load_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chroma_dir = tmp_path / "chroma"
+    chroma_dir.mkdir()
+    (tmp_path / "notions.json").write_text(
+        json.dumps(
+            {
+                "notion_1": {
+                    "label": "pattern & signal (curious)",
+                    "emotion_tone": "curious",
+                    "confidence": 0.8,
+                    "source_memory_ids": ["mem_1"],
+                    "created": "2026-01-01T12:00:00+00:00",
+                    "last_reinforced": "2026-01-02T12:00:00+00:00",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _ExplodingPersistentClient:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def get_collection(self, name: str) -> None:
+            raise RuntimeError(f"cannot open {name}")
+
+    monkeypatch.setattr("ego_dashboard.api.chromadb.PersistentClient", _ExplodingPersistentClient)
+
+    result = _load_memory_network(DashboardSettings(ego_mcp_data_dir=str(tmp_path)))
+
+    assert result["nodes"] == [
+        {
+            "id": "notion_1",
+            "label": "pattern & signal (curious)",
+            "is_notion": True,
+            "confidence": 0.8,
+            "access_count": 1,
+            "decay": 0.8,
+            "category": "notion",
+        }
+    ]
+    assert result["edges"] == [
+        {
+            "source": "notion_1",
+            "target": "mem_1",
+            "link_type": "notion_source",
+            "confidence": 0.8,
         }
     ]
 

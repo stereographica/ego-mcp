@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import json
-import sys
+import logging
 import threading
 from collections import deque
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Protocol, TypedDict
 
+import chromadb
 from fastapi import FastAPI, Query, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -20,6 +19,7 @@ from ego_dashboard.sql_store import SqlTelemetryStore
 from ego_dashboard.store import TelemetryStore
 
 _MEMORY_NETWORK_BATCH_SIZE = 512
+logger = logging.getLogger(__name__)
 
 
 class StoreProtocol(Protocol):
@@ -57,15 +57,102 @@ class StoreProtocol(Protocol):
     ) -> list[dict[str, object]]: ...
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+class _MemoryLinkPayload(TypedDict):
+    target_id: str
+    link_type: str
+    confidence: float
 
 
-def _ensure_ego_mcp_importable() -> None:
-    ego_src = _repo_root() / "ego-mcp" / "src"
-    ego_src_str = str(ego_src)
-    if ego_src.exists() and ego_src_str not in sys.path:
-        sys.path.insert(0, ego_src_str)
+def _clamp_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        parsed = float(int(value))
+    elif isinstance(value, (int, float)):
+        parsed = float(value)
+    elif isinstance(value, str):
+        try:
+            parsed = float(value)
+        except ValueError:
+            parsed = default
+    else:
+        parsed = default
+    return max(0.0, min(1.0, parsed))
+
+
+def _coerce_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
+def _parse_iso_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _calculate_memory_decay(
+    timestamp: object,
+    *,
+    link_confidence_max: float = 0.0,
+    access_count: int = 0,
+    now: datetime | None = None,
+) -> float:
+    memory_time = _parse_iso_timestamp(timestamp)
+    if memory_time is None:
+        return 1.0
+
+    current = now or datetime.now(tz=UTC)
+    age_seconds = (current - memory_time).total_seconds()
+    if age_seconds < 0:
+        return 1.0
+
+    age_days = age_seconds / 86400
+    access_bonus = min(max(access_count, 0) * 5, 60)
+    effective_half_life = (30.0 + access_bonus) * (1.0 + _clamp_float(link_confidence_max) * 0.5)
+    return max(0.0, min(1.0, 2 ** (-age_days / max(effective_half_life, 1e-6))))
+
+
+def _load_link_metadata(value: object) -> list[_MemoryLinkPayload]:
+    if not isinstance(value, str) or not value:
+        return []
+    try:
+        payload = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, list):
+        return []
+
+    links: list[_MemoryLinkPayload] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        target_id = item.get("target_id")
+        if not isinstance(target_id, str) or not target_id:
+            continue
+        link_type = item.get("link_type")
+        links.append(
+            {
+                "target_id": target_id,
+                "link_type": link_type if isinstance(link_type, str) and link_type else "related",
+                "confidence": _clamp_float(item.get("confidence"), 0.5),
+            }
+        )
+    return links
 
 
 def _load_notion_rows(settings: DashboardSettings) -> list[dict[str, object]]:
@@ -102,96 +189,90 @@ def _load_notion_rows(settings: DashboardSettings) -> list[dict[str, object]]:
 
 
 def _load_memory_network(settings: DashboardSettings) -> dict[str, object]:
+    notion_rows = _load_notion_rows(settings)
     if not settings.ego_mcp_data_dir:
-        return {"nodes": [], "edges": []}
-    try:
-        _ensure_ego_mcp_importable()
-        memory_scoring = cast(Any, importlib.import_module("ego_mcp._memory_scoring"))
-        memory_serialization = cast(Any, importlib.import_module("ego_mcp._memory_serialization"))
-        chromadb_compat = cast(Any, importlib.import_module("ego_mcp.chromadb_compat"))
-        calculate_time_decay = cast(Callable[..., float], memory_scoring.calculate_time_decay)
-        memory_from_chromadb = cast(
-            Callable[[str, str, dict[str, object]], Any],
-            memory_serialization.memory_from_chromadb,
-        )
-        load_chromadb = cast(Callable[[], Any], chromadb_compat.load_chromadb)
-    except Exception:
-        return {"nodes": [], "edges": []}
-
-    chroma_dir = Path(settings.ego_mcp_data_dir) / "chroma"
-    if not chroma_dir.exists():
-        return {"nodes": [], "edges": []}
-    try:
-        chromadb = load_chromadb()
-        client = chromadb.PersistentClient(path=str(chroma_dir))
-        collection = client.get_collection(name="ego_memories")
-    except Exception:
         return {"nodes": [], "edges": []}
 
     nodes: list[dict[str, object]] = []
     edges: list[dict[str, object]] = []
     seen_edges: set[tuple[str, str, str]] = set()
-    offset = 0
-    while True:
+    chroma_dir = Path(settings.ego_mcp_data_dir) / "chroma"
+    if not chroma_dir.exists():
+        logger.warning(
+            "Memory network skipped because Chroma directory does not exist: %s", chroma_dir
+        )
+    else:
         try:
-            rows = collection.get(
-                limit=_MEMORY_NETWORK_BATCH_SIZE,
-                offset=offset,
-                include=["documents", "metadatas"],
-            )
-        except Exception:
-            return {"nodes": [], "edges": []}
-
-        ids = rows.get("ids", [])
-        documents = rows.get("documents", [])
-        metadatas = rows.get("metadatas", [])
-        if not isinstance(ids, list) or not ids:
-            break
-
-        for memory_id, document, metadata in zip(ids, documents, metadatas):
-            if (
-                not isinstance(memory_id, str)
-                or not isinstance(document, str)
-                or not isinstance(metadata, dict)
-            ):
-                continue
-            memory = memory_from_chromadb(memory_id, document, metadata)
-            max_confidence = max((link.confidence for link in memory.linked_ids), default=0.0)
-            nodes.append(
-                {
-                    "id": memory.id,
-                    "category": memory.category.value,
-                    "decay": calculate_time_decay(
-                        memory.timestamp,
-                        link_confidence_max=max_confidence,
-                        access_count=memory.access_count,
-                    ),
-                    "access_count": memory.access_count,
-                    "is_notion": False,
-                }
-            )
-            for link in memory.linked_ids:
-                if memory.id <= link.target_id:
-                    edge_key = (memory.id, link.target_id, link.link_type.value)
-                else:
-                    edge_key = (link.target_id, memory.id, link.link_type.value)
-                if edge_key in seen_edges:
-                    continue
-                seen_edges.add(edge_key)
-                edges.append(
-                    {
-                        "source": memory.id,
-                        "target": link.target_id,
-                        "link_type": link.link_type.value,
-                        "confidence": link.confidence,
-                    }
+            client = chromadb.PersistentClient(path=str(chroma_dir))
+            collection = client.get_collection(name="ego_memories")
+            offset = 0
+            while True:
+                rows = collection.get(
+                    limit=_MEMORY_NETWORK_BATCH_SIZE,
+                    offset=offset,
+                    include=["metadatas"],
                 )
 
-        if len(ids) < _MEMORY_NETWORK_BATCH_SIZE:
-            break
-        offset += len(ids)
+                ids = rows.get("ids", [])
+                metadatas = rows.get("metadatas", [])
+                if not isinstance(ids, list) or not ids:
+                    break
+                metadata_rows = metadatas if isinstance(metadatas, list) else []
 
-    for notion in _load_notion_rows(settings):
+                for index, memory_id in enumerate(ids):
+                    if not isinstance(memory_id, str):
+                        continue
+                    metadata = metadata_rows[index] if index < len(metadata_rows) else {}
+                    if not isinstance(metadata, dict):
+                        continue
+                    linked_ids = _load_link_metadata(metadata.get("linked_ids"))
+                    max_confidence = max(
+                        (link["confidence"] for link in linked_ids),
+                        default=0.0,
+                    )
+                    access_count = _coerce_int(metadata.get("access_count"), 0)
+                    category = metadata.get("category")
+                    nodes.append(
+                        {
+                            "id": memory_id,
+                            "category": (
+                                str(category) if isinstance(category, str) and category else "daily"
+                            ),
+                            "decay": _calculate_memory_decay(
+                                metadata.get("timestamp"),
+                                link_confidence_max=max_confidence,
+                                access_count=access_count,
+                            ),
+                            "access_count": access_count,
+                            "is_notion": False,
+                        }
+                    )
+                    for link in linked_ids:
+                        target_id = str(link["target_id"])
+                        link_type = str(link["link_type"])
+                        if memory_id <= target_id:
+                            edge_key = (memory_id, target_id, link_type)
+                        else:
+                            edge_key = (target_id, memory_id, link_type)
+                        if edge_key in seen_edges:
+                            continue
+                        seen_edges.add(edge_key)
+                        edges.append(
+                            {
+                                "source": memory_id,
+                                "target": target_id,
+                                "link_type": link_type,
+                                "confidence": link["confidence"],
+                            }
+                        )
+
+                if len(ids) < _MEMORY_NETWORK_BATCH_SIZE:
+                    break
+                offset += len(ids)
+        except Exception:
+            logger.exception("Failed to load memory nodes for Memory Network from %s", chroma_dir)
+
+    for notion in notion_rows:
         notion_id = str(notion["id"])
         nodes.append(
             {
