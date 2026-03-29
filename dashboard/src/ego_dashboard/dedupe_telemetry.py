@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 import psycopg
+from psycopg.errors import UniqueViolation
 
 from ego_dashboard.ingestor import _resolve_source_files
 from ego_dashboard.models import DashboardEvent, LogEvent
@@ -105,8 +106,8 @@ def partition_dedupe_updates(
     rows: list[tuple[str, object, str]],
     *,
     existing: set[tuple[object, str]] | None = None,
-) -> tuple[list[tuple[str, str]], list[str]]:
-    updates: list[tuple[str, str]] = []
+) -> tuple[list[tuple[str, object, str]], list[str]]:
+    updates: list[tuple[str, object, str]] = []
     duplicate_ctids: list[str] = []
     seen = set(existing or set())
     for ctid, ts, dedupe_key in rows:
@@ -115,8 +116,63 @@ def partition_dedupe_updates(
             duplicate_ctids.append(ctid)
             continue
         seen.add(identity)
-        updates.append((ctid, dedupe_key))
+        updates.append((ctid, ts, dedupe_key))
     return updates, duplicate_ctids
+
+
+def _apply_backfill_updates(
+    cursor: Any,
+    *,
+    table: str,
+    updates: list[tuple[str, object, str]],
+) -> tuple[int, int]:
+    updated_rows = 0
+    deleted_duplicates = 0
+
+    for ctid, ts, dedupe_key in updates:
+        cursor.execute(
+            f"""
+            DELETE FROM {table}
+            WHERE ctid = %s::tid
+              AND EXISTS (
+                SELECT 1
+                FROM {table} AS existing
+                WHERE existing.ts = %s
+                  AND existing.dedupe_key = %s
+              )
+            """,
+            (ctid, ts, dedupe_key),
+        )
+        deleted_now = getattr(cursor, "rowcount", 0)
+        if isinstance(deleted_now, int) and deleted_now > 0:
+            deleted_duplicates += deleted_now
+            continue
+
+        try:
+            cursor.execute(
+                f"""
+                UPDATE {table}
+                SET dedupe_key = %s
+                WHERE ctid = %s::tid
+                """,
+                (dedupe_key, ctid),
+            )
+        except UniqueViolation:
+            cursor.execute(
+                f"""
+                DELETE FROM {table}
+                WHERE ctid = %s::tid
+                """,
+                (ctid,),
+            )
+            deleted_duplicates += 1
+            continue
+
+        updated_now = getattr(cursor, "rowcount", 0)
+        if isinstance(updated_now, int) and updated_now > 0:
+            updated_rows += updated_now
+
+    return updated_rows, deleted_duplicates
 
 
 def _backfill_tool_event_dedupe_keys(cursor: Any, *, dry_run: bool) -> tuple[int, int]:
@@ -164,16 +220,10 @@ def _backfill_tool_event_dedupe_keys(cursor: Any, *, dry_run: bool) -> tuple[int
             """,
             (ctid,),
         )
-    for ctid, dedupe_key in updates:
-        cursor.execute(
-            """
-            UPDATE tool_events
-            SET dedupe_key = %s
-            WHERE ctid = %s::tid
-            """,
-            (dedupe_key, ctid),
-        )
-    return (len(updates), len(duplicate_ctids))
+    updated_rows, deleted_on_conflict = _apply_backfill_updates(
+        cursor, table="tool_events", updates=updates
+    )
+    return (updated_rows, len(duplicate_ctids) + deleted_on_conflict)
 
 
 def _backfill_log_event_dedupe_keys(cursor: Any, *, dry_run: bool) -> tuple[int, int]:
@@ -215,16 +265,10 @@ def _backfill_log_event_dedupe_keys(cursor: Any, *, dry_run: bool) -> tuple[int,
             """,
             (ctid,),
         )
-    for ctid, dedupe_key in updates:
-        cursor.execute(
-            """
-            UPDATE log_events
-            SET dedupe_key = %s
-            WHERE ctid = %s::tid
-            """,
-            (dedupe_key, ctid),
-        )
-    return (len(updates), len(duplicate_ctids))
+    updated_rows, deleted_on_conflict = _apply_backfill_updates(
+        cursor, table="log_events", updates=updates
+    )
+    return (updated_rows, len(duplicate_ctids) + deleted_on_conflict)
 
 
 def _delete_tool_event_duplicates(cursor: Any, *, dry_run: bool) -> int:
