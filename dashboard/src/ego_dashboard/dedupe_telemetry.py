@@ -306,11 +306,11 @@ def _initialize_checkpoints(cursor: Any, log_path: str, *, dry_run: bool) -> int
             continue
         cursor.execute(
             """
-            INSERT INTO ingestion_checkpoints (path, inode, offset, updated_at)
+            INSERT INTO ingestion_checkpoints (path, inode, byte_offset, updated_at)
             VALUES (%s, %s, %s, now())
             ON CONFLICT (path) DO UPDATE
             SET inode = EXCLUDED.inode,
-                offset = EXCLUDED.offset,
+                byte_offset = EXCLUDED.byte_offset,
                 updated_at = EXCLUDED.updated_at
             """,
             (resolved_path, stat.st_ino, stat.st_size),

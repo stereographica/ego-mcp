@@ -171,7 +171,7 @@ class SqlTelemetryStore:
                     CREATE TABLE IF NOT EXISTS ingestion_checkpoints (
                       path TEXT PRIMARY KEY,
                       inode BIGINT NOT NULL,
-                      offset BIGINT NOT NULL,
+                      byte_offset BIGINT NOT NULL,
                       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                     )
                     """
@@ -249,7 +249,7 @@ class SqlTelemetryStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT inode, offset
+                    SELECT inode, byte_offset
                     FROM ingestion_checkpoints
                     WHERE path = %s
                     """,
@@ -268,11 +268,11 @@ class SqlTelemetryStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO ingestion_checkpoints (path, inode, offset, updated_at)
+                    INSERT INTO ingestion_checkpoints (path, inode, byte_offset, updated_at)
                     VALUES (%s, %s, %s, now())
                     ON CONFLICT (path) DO UPDATE
                     SET inode = EXCLUDED.inode,
-                        offset = EXCLUDED.offset,
+                        byte_offset = EXCLUDED.byte_offset,
                         updated_at = EXCLUDED.updated_at
                     """,
                     (path, inode, offset),
