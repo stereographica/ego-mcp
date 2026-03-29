@@ -9,7 +9,7 @@ import threading
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from ego_dashboard.constants import DESIRE_METRIC_KEYS
 from ego_dashboard.models import DashboardEvent, LogEvent
@@ -118,6 +118,13 @@ class IngestStoreProtocol(Protocol):
     def ingest(self, event: DashboardEvent) -> None: ...
 
     def ingest_log(self, event: LogEvent) -> None: ...
+
+
+@runtime_checkable
+class CheckpointStoreProtocol(Protocol):
+    def load_checkpoint(self, path: str) -> tuple[int, int] | None: ...
+
+    def save_checkpoint(self, path: str, inode: int, offset: int) -> None: ...
 
 
 class EgoMcpLogProjector:
@@ -380,6 +387,17 @@ def _resolve_source_files(path_or_glob: str) -> list[str]:
     return [path_or_glob] if os.path.isfile(path_or_glob) else []
 
 
+def _load_checkpoint(store: IngestStoreProtocol, path: str) -> tuple[int, int] | None:
+    if isinstance(store, CheckpointStoreProtocol):
+        return store.load_checkpoint(path)
+    return None
+
+
+def _save_checkpoint(store: IngestStoreProtocol, path: str, inode: int, offset: int) -> None:
+    if isinstance(store, CheckpointStoreProtocol):
+        store.save_checkpoint(path, inode, offset)
+
+
 def tail_jsonl_file(
     path: str,
     store: IngestStoreProtocol,
@@ -390,6 +408,7 @@ def tail_jsonl_file(
     inodes: dict[str, int] = {}
     positions: dict[str, int] = {}
     projectors: dict[str, EgoMcpLogProjector] = {}
+    announced_resumes: set[str] = set()
 
     while stop_event is None or not stop_event.is_set():
         selected_paths = _resolve_source_files(path)
@@ -399,6 +418,7 @@ def tail_jsonl_file(
             inodes.clear()
             positions.clear()
             projectors.clear()
+            announced_resumes.clear()
             if stop_event is not None and stop_event.wait(poll_seconds):
                 break
             if stop_event is None:
@@ -411,14 +431,22 @@ def tail_jsonl_file(
                 positions.pop(stale_path, None)
                 inodes.pop(stale_path, None)
                 projectors.pop(stale_path, None)
+                announced_resumes.discard(stale_path)
 
         for selected_path in selected_paths:
             if stop_event is not None and stop_event.is_set():
                 break
+            if selected_path not in positions:
+                checkpoint = _load_checkpoint(store, selected_path)
+                if checkpoint is not None:
+                    checkpoint_inode, checkpoint_offset = checkpoint
+                    inodes[selected_path] = checkpoint_inode
+                    positions[selected_path] = checkpoint_offset
             stat = os.stat(selected_path)
             current_inode = inodes.get(selected_path)
             position = positions.get(selected_path, 0)
             projector = projectors.setdefault(selected_path, EgoMcpLogProjector())
+            checkpoint_changed = False
 
             if current_inode != stat.st_ino or stat.st_size < position:
                 inodes[selected_path] = stat.st_ino
@@ -426,7 +454,12 @@ def tail_jsonl_file(
                 positions[selected_path] = 0
                 projectors[selected_path] = EgoMcpLogProjector()
                 projector = projectors[selected_path]
+                announced_resumes.discard(selected_path)
+                checkpoint_changed = True
                 LOGGER.info("opened source file: %s", selected_path)
+            elif position > 0 and selected_path not in announced_resumes:
+                LOGGER.info("resuming source file: %s at offset=%s", selected_path, position)
+                announced_resumes.add(selected_path)
 
             with open(selected_path, encoding="utf-8") as handle:
                 handle.seek(position)
@@ -437,8 +470,11 @@ def tail_jsonl_file(
                     if line == "":
                         break
                     ingest_jsonl_line(line, store, projector=projector)
-                positions[selected_path] = handle.tell()
+                new_position = handle.tell()
+                positions[selected_path] = new_position
                 inodes[selected_path] = stat.st_ino
+                if checkpoint_changed or new_position != position:
+                    _save_checkpoint(store, selected_path, stat.st_ino, new_position)
 
         if stop_event is not None:
             if stop_event.wait(poll_seconds):

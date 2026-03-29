@@ -9,7 +9,7 @@
 - `GET /api/v1/current`
   - 現在値サマリ（latest / tool_calls_per_min / error_rate）
 - `GET /api/v1/usage/tools?from=...&to=...&bucket=1m|5m|15m`
-  - ツール別使用回数系列
+  - ツール別使用回数系列。`Tool invocation` log を 1 call = 1 count として集計し、log が無い旧データのみ terminal event へフォールバック
 - `GET /api/v1/metrics/{key}?from=...&to=...&bucket=...`
   - 数値メトリクス平均系列
 - `GET /api/v1/metrics/{key}/string-timeline?from=...&to=...`

@@ -9,6 +9,7 @@ from redis import Redis
 
 from ego_dashboard.constants import DESIRE_METRIC_KEYS
 from ego_dashboard.models import DashboardEvent, LogEvent
+from ego_dashboard.telemetry_identity import dashboard_event_dedupe_key, log_event_dedupe_key
 
 
 def _escape_ilike_pattern(value: str) -> str:
@@ -49,6 +50,49 @@ def _fallback_notion_confidence(
     return None
 
 
+def _tool_name_from_fields(fields: object) -> str | None:
+    if not isinstance(fields, dict):
+        return None
+    raw = fields.get("tool_name")
+    return raw if isinstance(raw, str) and raw else None
+
+
+def _dense_usage_rows(
+    rows: list[tuple[datetime, str, int]],
+    start: datetime,
+    end: datetime,
+    bucket: str,
+) -> list[dict[str, object]]:
+    if not rows:
+        return []
+
+    bucket_delta = _bucket_to_timedelta(bucket)
+    tool_names = sorted({tool_name for _, tool_name, _ in rows})
+    by_ts: dict[str, dict[str, object]] = {}
+    for bucket_ts, tool_name, count in rows:
+        aware = bucket_ts if bucket_ts.tzinfo is not None else bucket_ts.replace(tzinfo=UTC)
+        key = aware.astimezone(UTC).isoformat()
+        row = by_ts.get(key)
+        if row is None:
+            row = {"ts": key}
+            by_ts[key] = row
+        row[tool_name] = int(count)
+
+    first_bucket = _bucket_floor(start, bucket_delta)
+    last_bucket = _bucket_floor(end, bucket_delta)
+    cursor = first_bucket
+    dense_rows: list[dict[str, object]] = []
+    while cursor <= last_bucket:
+        key = cursor.isoformat()
+        row = dict(by_ts.get(key, {"ts": key}))
+        for tool_name in tool_names:
+            value = row.get(tool_name, 0)
+            row[tool_name] = int(value) if isinstance(value, (int, float)) else 0
+        dense_rows.append(row)
+        cursor += bucket_delta
+    return dense_rows
+
+
 class SqlTelemetryStore:
     def __init__(self, database_url: str, redis_url: str) -> None:
         self._db_url = database_url
@@ -72,14 +116,25 @@ class SqlTelemetryStore:
                       string_metrics JSONB NOT NULL,
                       params JSONB NOT NULL,
                       private BOOLEAN NOT NULL,
-                      message TEXT
+                      message TEXT,
+                      dedupe_key TEXT
                     )
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE tool_events
+                    ADD COLUMN IF NOT EXISTS dedupe_key TEXT
                     """
                 )
                 cur.execute("SELECT create_hypertable('tool_events', 'ts', if_not_exists => TRUE)")
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_tool_events_tool_name_ts "
                     "ON tool_events (tool_name, ts DESC)"
+                )
+                cur.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_events_ts_dedupe "
+                    "ON tool_events (ts, dedupe_key) WHERE dedupe_key IS NOT NULL"
                 )
                 cur.execute(
                     """
@@ -89,7 +144,8 @@ class SqlTelemetryStore:
                       logger TEXT NOT NULL,
                       message TEXT NOT NULL,
                       private BOOLEAN NOT NULL,
-                      fields JSONB NOT NULL DEFAULT '{}'::jsonb
+                      fields JSONB NOT NULL DEFAULT '{}'::jsonb,
+                      dedupe_key TEXT
                     )
                     """
                 )
@@ -99,18 +155,43 @@ class SqlTelemetryStore:
                     ADD COLUMN IF NOT EXISTS fields JSONB NOT NULL DEFAULT '{}'::jsonb
                     """
                 )
+                cur.execute(
+                    """
+                    ALTER TABLE log_events
+                    ADD COLUMN IF NOT EXISTS dedupe_key TEXT
+                    """
+                )
                 cur.execute("SELECT create_hypertable('log_events', 'ts', if_not_exists => TRUE)")
+                cur.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_log_events_ts_dedupe "
+                    "ON log_events (ts, dedupe_key) WHERE dedupe_key IS NOT NULL"
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ingestion_checkpoints (
+                      path TEXT PRIMARY KEY,
+                      inode BIGINT NOT NULL,
+                      byte_offset BIGINT NOT NULL,
+                      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                    """
+                )
             conn.commit()
 
     def ingest(self, event: DashboardEvent) -> None:
+        dedupe_key = dashboard_event_dedupe_key(event)
         with psycopg.connect(self._db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO tool_events (
                       ts, event_type, tool_name, ok, duration_ms, emotion_primary,
-                      emotion_intensity, numeric_metrics, string_metrics, params, private, message
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s)
+                      emotion_intensity, numeric_metrics, string_metrics, params, private,
+                      message, dedupe_key
+                    ) VALUES (
+                      %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s, %s
+                    )
+                    ON CONFLICT (ts, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
                     """,
                     (
                         event.ts,
@@ -125,6 +206,7 @@ class SqlTelemetryStore:
                         json.dumps(event.params),
                         event.private,
                         event.message,
+                        dedupe_key,
                     ),
                 )
             conn.commit()
@@ -132,12 +214,23 @@ class SqlTelemetryStore:
 
     def ingest_log(self, event: LogEvent) -> None:
         masked = "REDACTED" if event.private else event.message
+        dedupe_key = log_event_dedupe_key(
+            LogEvent(
+                ts=event.ts,
+                level=event.level,
+                logger=event.logger,
+                message=masked,
+                private=event.private,
+                fields=event.fields,
+            )
+        )
         with psycopg.connect(self._db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO log_events (ts, level, logger, message, private, fields)
-                    VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                    INSERT INTO log_events (ts, level, logger, message, private, fields, dedupe_key)
+                    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)
+                    ON CONFLICT (ts, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
                     """,
                     (
                         event.ts,
@@ -146,53 +239,91 @@ class SqlTelemetryStore:
                         masked,
                         event.private,
                         json.dumps(event.fields),
+                        dedupe_key,
                     ),
+                )
+            conn.commit()
+
+    def load_checkpoint(self, path: str) -> tuple[int, int] | None:
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT inode, byte_offset
+                    FROM ingestion_checkpoints
+                    WHERE path = %s
+                    """,
+                    (path,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return None
+        inode, offset = row
+        if not isinstance(inode, int) or not isinstance(offset, int):
+            return None
+        return (inode, offset)
+
+    def save_checkpoint(self, path: str, inode: int, offset: int) -> None:
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ingestion_checkpoints (path, inode, byte_offset, updated_at)
+                    VALUES (%s, %s, %s, now())
+                    ON CONFLICT (path) DO UPDATE
+                    SET inode = EXCLUDED.inode,
+                        byte_offset = EXCLUDED.byte_offset,
+                        updated_at = EXCLUDED.updated_at
+                    """,
+                    (path, inode, offset),
                 )
             conn.commit()
 
     def tool_usage(self, start: datetime, end: datetime, bucket: str) -> list[dict[str, object]]:
         bucket_size = _bucket_to_sql(bucket)
-        bucket_delta = _bucket_to_timedelta(bucket)
         with psycopg.connect(self._db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT time_bucket(%s::interval, ts) AS b, tool_name, count(*)
-                    FROM tool_events
+                    SELECT time_bucket(%s::interval, ts) AS b,
+                           fields ->> 'tool_name' AS tool_name,
+                           count(*)
+                    FROM log_events
                     WHERE ts >= %s AND ts <= %s
+                      AND message = 'Tool invocation'
+                      AND fields ? 'tool_name'
                     GROUP BY b, tool_name
                     ORDER BY b ASC
                     """,
                     (bucket_size, start, end),
                 )
                 rows = cur.fetchall()
-        if not rows:
-            return []
+                if rows:
+                    log_rows = [
+                        (bucket_ts, str(tool_name), int(count))
+                        for bucket_ts, tool_name, count in rows
+                        if isinstance(bucket_ts, datetime) and isinstance(tool_name, str)
+                    ]
+                    return _dense_usage_rows(log_rows, start, end, bucket)
 
-        tool_names = sorted({str(tool_name) for _, tool_name, _ in rows})
-        by_ts: dict[str, dict[str, object]] = {}
-        for b, tool_name, count in rows:
-            bucket_ts = b if b.tzinfo is not None else b.replace(tzinfo=UTC)
-            key = bucket_ts.astimezone(UTC).isoformat()
-            row = by_ts.get(key)
-            if row is None:
-                row = {"ts": key}
-                by_ts[key] = row
-            row[str(tool_name)] = int(count)
-
-        first_bucket = _bucket_floor(start, bucket_delta)
-        last_bucket = _bucket_floor(end, bucket_delta)
-        cursor = first_bucket
-        dense_rows: list[dict[str, object]] = []
-        while cursor <= last_bucket:
-            key = cursor.isoformat()
-            row = dict(by_ts.get(key, {"ts": key}))
-            for tool_name in tool_names:
-                value = row.get(tool_name, 0)
-                row[tool_name] = int(value) if isinstance(value, (int, float)) else 0
-            dense_rows.append(row)
-            cursor += bucket_delta
-        return dense_rows
+                cur.execute(
+                    """
+                    SELECT time_bucket(%s::interval, ts) AS b, tool_name, count(*)
+                    FROM tool_events
+                    WHERE ts >= %s AND ts <= %s
+                      AND event_type IN ('tool_call_completed', 'tool_call_failed')
+                    GROUP BY b, tool_name
+                    ORDER BY b ASC
+                    """,
+                    (bucket_size, start, end),
+                )
+                fallback_rows = cur.fetchall()
+        typed_rows = [
+            (bucket_ts, str(tool_name), int(count))
+            for bucket_ts, tool_name, count in fallback_rows
+            if isinstance(bucket_ts, datetime) and isinstance(tool_name, str)
+        ]
+        return _dense_usage_rows(typed_rows, start, end, bucket)
 
     def metric_history(
         self, key: str, start: datetime, end: datetime, bucket: str
@@ -484,6 +615,7 @@ class SqlTelemetryStore:
                            sum(CASE WHEN ok = false THEN 1 ELSE 0 END)
                     FROM tool_events
                     WHERE ts >= %s - interval '1 minute' AND ts <= %s
+                      AND event_type IN ('tool_call_completed', 'tool_call_failed')
                     """,
                     (latest_ts, latest_ts),
                 )
@@ -494,6 +626,7 @@ class SqlTelemetryStore:
                            sum(CASE WHEN ok = false THEN 1 ELSE 0 END)
                     FROM tool_events
                     WHERE ts >= %s - interval '24 hours' AND ts <= %s
+                      AND event_type IN ('tool_call_completed', 'tool_call_failed')
                     """,
                     (latest_ts, latest_ts),
                 )

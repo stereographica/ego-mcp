@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
+import threading
+import time
 from pathlib import Path
 
 from ego_dashboard.ingestor import EgoMcpLogProjector, normalize_event
@@ -423,3 +426,127 @@ def test_ingest_jsonl_line_only_stores_ego_mcp_server_logs() -> None:
 
     assert len(store.events) == 0
     assert len(store.logs) == 1
+
+
+class _CheckpointCaptureStore:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+        self.logs: list[object] = []
+        self.checkpoints: dict[str, tuple[int, int]] = {}
+
+    def ingest(self, event: object) -> None:
+        self.events.append(event)
+
+    def ingest_log(self, event: object) -> None:
+        self.logs.append(event)
+
+    def load_checkpoint(self, path: str) -> tuple[int, int] | None:
+        return self.checkpoints.get(path)
+
+    def save_checkpoint(self, path: str, inode: int, offset: int) -> None:
+        self.checkpoints[path] = (inode, offset)
+
+
+def _append_json_line(path: Path, payload: dict[str, object]) -> None:
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload))
+        handle.write("\n")
+
+
+def _wait_until(predicate: object, timeout: float = 1.0) -> bool:
+    if not callable(predicate):
+        return False
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def _run_tail_once(
+    path: str,
+    store: _CheckpointCaptureStore,
+    *,
+    wait_for: object | None = None,
+) -> None:
+    from ego_dashboard.ingestor import tail_jsonl_file
+
+    stop_event = threading.Event()
+    thread = threading.Thread(
+        target=tail_jsonl_file,
+        args=(path, store),
+        kwargs={"poll_seconds": 0.01, "stop_event": stop_event},
+    )
+    thread.start()
+    try:
+        if wait_for is not None:
+            assert _wait_until(wait_for)
+        else:
+            time.sleep(0.05)
+    finally:
+        stop_event.set()
+        thread.join(timeout=1.0)
+        assert thread.is_alive() is False
+
+
+def test_tail_jsonl_file_resumes_from_saved_checkpoint(tmp_path: Path) -> None:
+    log_path = tmp_path / "ego-mcp-2026-01-01.log"
+    _append_json_line(
+        log_path,
+        {
+            "ts": "2026-01-01T12:00:00Z",
+            "event_type": "tool_call_completed",
+            "tool_name": "remember",
+        },
+    )
+    store = _CheckpointCaptureStore()
+
+    _run_tail_once(str(log_path), store, wait_for=lambda: len(store.events) == 1)
+    first_checkpoint = store.checkpoints[str(log_path)]
+
+    _run_tail_once(str(log_path), store)
+
+    assert len(store.events) == 1
+    assert store.checkpoints[str(log_path)] == first_checkpoint
+    assert first_checkpoint[1] == log_path.stat().st_size
+
+
+def test_tail_jsonl_file_tracks_checkpoints_per_globbed_file(tmp_path: Path) -> None:
+    first = tmp_path / "ego-mcp-2026-01-01.log"
+    second = tmp_path / "ego-mcp-2026-01-02.log"
+    _append_json_line(
+        first,
+        {
+            "ts": "2026-01-01T12:00:00Z",
+            "event_type": "tool_call_completed",
+            "tool_name": "remember",
+        },
+    )
+    _append_json_line(
+        second,
+        {
+            "ts": "2026-01-02T12:00:00Z",
+            "event_type": "tool_call_completed",
+            "tool_name": "wake_up",
+        },
+    )
+    store = _CheckpointCaptureStore()
+
+    _run_tail_once(str(tmp_path / "ego-mcp-*.log"), store, wait_for=lambda: len(store.events) == 2)
+    first_checkpoint = store.checkpoints[str(first)]
+    second_checkpoint = store.checkpoints[str(second)]
+
+    _append_json_line(
+        first,
+        {
+            "ts": "2026-01-01T12:05:00Z",
+            "event_type": "tool_call_completed",
+            "tool_name": "consider_them",
+        },
+    )
+    _run_tail_once(str(tmp_path / "ego-mcp-*.log"), store, wait_for=lambda: len(store.events) == 3)
+
+    assert len(store.events) == 3
+    assert store.checkpoints[str(first)][1] > first_checkpoint[1]
+    assert store.checkpoints[str(second)] == second_checkpoint

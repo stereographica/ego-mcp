@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import pytest
@@ -80,6 +80,110 @@ def _patch_store(
         lambda *_args, **_kwargs: _FakeConnection(rows),
     )
     return SqlTelemetryStore("postgresql://unused", "redis://unused")
+
+
+def test_tool_usage_prefers_log_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
+    bucket_ts = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    executed: list[str] = []
+
+    class _Cursor:
+        def __init__(self) -> None:
+            self._sql = ""
+
+        def execute(self, query: object, _params: object | None = None) -> None:
+            self._sql = str(query)
+            executed.append(self._sql)
+
+        def fetchall(self) -> list[tuple[Any, ...]]:
+            if "FROM log_events" in self._sql:
+                return [(bucket_ts, "remember", 1)]
+            if "FROM tool_events" in self._sql:
+                return [(bucket_ts, "remember", 2)]
+            return []
+
+        def __enter__(self) -> _Cursor:
+            return self
+
+        def __exit__(self, *_args: object) -> Literal[False]:
+            return False
+
+    class _Connection:
+        def cursor(self) -> _Cursor:
+            return _Cursor()
+
+        def __enter__(self) -> _Connection:
+            return self
+
+        def __exit__(self, *_args: object) -> Literal[False]:
+            return False
+
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(None),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _Connection(),
+    )
+
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+    rows = store.tool_usage(bucket_ts, bucket_ts + timedelta(seconds=59), bucket="1m")
+
+    assert rows == [{"ts": bucket_ts.isoformat(), "remember": 1}]
+    assert sum("FROM tool_events" in sql for sql in executed) == 0
+
+
+def test_tool_usage_falls_back_to_terminal_events_when_logs_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bucket_ts = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    executed: list[str] = []
+
+    class _Cursor:
+        def __init__(self) -> None:
+            self._sql = ""
+
+        def execute(self, query: object, _params: object | None = None) -> None:
+            self._sql = str(query)
+            executed.append(self._sql)
+
+        def fetchall(self) -> list[tuple[Any, ...]]:
+            if "FROM log_events" in self._sql:
+                return []
+            if "FROM tool_events" in self._sql:
+                return [(bucket_ts, "remember", 1)]
+            return []
+
+        def __enter__(self) -> _Cursor:
+            return self
+
+        def __exit__(self, *_args: object) -> Literal[False]:
+            return False
+
+    class _Connection:
+        def cursor(self) -> _Cursor:
+            return _Cursor()
+
+        def __enter__(self) -> _Connection:
+            return self
+
+        def __exit__(self, *_args: object) -> Literal[False]:
+            return False
+
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(None),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _Connection(),
+    )
+
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+    rows = store.tool_usage(bucket_ts, bucket_ts + timedelta(seconds=59), bucket="1m")
+
+    assert rows == [{"ts": bucket_ts.isoformat(), "remember": 1}]
+    assert sum("FROM tool_events" in sql for sql in executed) == 1
 
 
 def test_current_includes_latest_emotion_and_backfills_latest(

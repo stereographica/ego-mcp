@@ -28,6 +28,8 @@ docker compose up --build
 - db (TimescaleDB): `localhost:5432`
 - redis: `localhost:6379`
 - ingestor: `DASHBOARD_LOG_PATH`（file または glob）を tail して DB/Redis に反映
+  - `ingestion_checkpoints` に file ごとの inode/offset を保持し、再起動後は前回位置から再開
+  - `dedupe_key` により replay された既存 JSONL は二重計上しない
 
 `ego-mcp` は `EGO_MCP_LOG_DIR`（既定 `/tmp`）配下に
 `ego-mcp-YYYY-MM-DD.log` を出力します。dashboard 側はこの仕様に合わせて、
@@ -56,6 +58,15 @@ uv run pytest -v
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run mypy src tests
+```
+
+### メンテナンス
+
+既存データの replay 重複を補正しつつ、現在のログ終端を checkpoint 化したい場合:
+
+```bash
+cd dashboard
+uv run python -m ego_dashboard.dedupe_telemetry --log-path "${DASHBOARD_LOG_PATH}"
 ```
 
 ### frontend
