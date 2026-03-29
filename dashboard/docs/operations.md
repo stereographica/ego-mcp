@@ -29,13 +29,15 @@
 
 ### ログローテーション
 
-- ingestor は inode 変更 / truncate を検知して再追従し、glob 指定時は最新一致ファイルに切替
+- ingestor は inode 変更 / truncate を検知して再追従し、glob 指定時も file ごとの checkpoint を保持する
 - ローテーション方式は `copytruncate` より rename + reopen 推奨
 
 ### 障害対応（よくある事象）
 
 - 画面は開くが数値が増えない:
   - ingestor が停止している、または `DASHBOARD_LOG_PATH` / `DASHBOARD_LOG_MOUNT_SOURCE` が誤っている
+- ingestor 再起動後に tool calls が急増した:
+  - `uv run python -m ego_dashboard.dedupe_telemetry --log-path "$DASHBOARD_LOG_PATH"` を実行して既存 replay 重複を除去し、checkpoint を現在 EOF に初期化する
 - Logs タブが空:
   - 取り込み元 JSONL に log event が含まれていない
 - compose 起動時に frontend から API 接続できない:

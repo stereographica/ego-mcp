@@ -47,6 +47,57 @@ def test_tool_usage_and_metric_history() -> None:
     assert intensity[1]["value"] == 0.7
 
 
+def test_tool_usage_prefers_invocation_logs_over_projected_events() -> None:
+    from ego_dashboard.models import LogEvent
+
+    store = TelemetryStore()
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    end = start + timedelta(minutes=2)
+    store.ingest(
+        DashboardEvent(
+            ts=start,
+            event_type="tool_call_invoked",
+            tool_name="remember",
+            ok=True,
+            duration_ms=None,
+            numeric_metrics={},
+            string_metrics={},
+            params={},
+            private=False,
+            message="invoked",
+        )
+    )
+    store.ingest(
+        DashboardEvent(
+            ts=start + timedelta(seconds=1),
+            event_type="tool_call_completed",
+            tool_name="remember",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={},
+            string_metrics={},
+            params={},
+            private=False,
+            message="completed",
+        )
+    )
+    store.ingest_log(
+        LogEvent(
+            ts=start,
+            level="INFO",
+            logger="ego_mcp.server",
+            message="Tool invocation",
+            private=False,
+            fields={"tool_name": "remember"},
+        )
+    )
+
+    usage = store.tool_usage(start, end, bucket="1m")
+
+    assert usage[0]["remember"] == 1
+    assert usage[1]["remember"] == 0
+
+
 def test_string_visualization_and_anomaly_detection() -> None:
     store = TelemetryStore()
     for minute in range(5):
@@ -297,6 +348,44 @@ def test_current_prefers_log_derived_counts_and_error_rate() -> None:
             logger="ego_mcp.server",
             message="Tool execution failed",
             private=False,
+        )
+    )
+
+    current = store.current()
+
+    assert current["tool_calls_per_min"] == 1
+    assert current["error_rate"] == 1.0
+
+
+def test_current_falls_back_to_terminal_events_without_double_counting() -> None:
+    store = TelemetryStore()
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store.ingest(
+        DashboardEvent(
+            ts=base,
+            event_type="tool_call_invoked",
+            tool_name="remember",
+            ok=True,
+            duration_ms=None,
+            numeric_metrics={},
+            string_metrics={},
+            params={},
+            private=False,
+            message="invoked",
+        )
+    )
+    store.ingest(
+        DashboardEvent(
+            ts=base + timedelta(seconds=2),
+            event_type="tool_call_failed",
+            tool_name="remember",
+            ok=False,
+            duration_ms=10,
+            numeric_metrics={},
+            string_metrics={},
+            params={},
+            private=False,
+            message="failed",
         )
     )
 

@@ -23,6 +23,8 @@
 
 - `DASHBOARD_DATABASE_URL` と `DASHBOARD_REDIS_URL` の両方が設定されると `SqlTelemetryStore` を使用
 - どちらか欠ける場合は `TelemetryStore`（in-memory）へフォールバック
+- `SqlTelemetryStore` は `tool_events` / `log_events` に `dedupe_key` を保持し、同一 `(ts, dedupe_key)` の再投入を無視する
+- 再起動 resume 用の offset は `ingestion_checkpoints` テーブルに保存する
 
 ### CORS 設定（AllowedOrigin）
 
@@ -39,7 +41,8 @@
 - `ego-mcp` は `ego-mcp-YYYY-MM-DD.log` 形式の日付付き JSONL ログを出力
 - `dashboard` の `DASHBOARD_LOG_PATH` は単一ファイルだけでなく glob も受け付ける
 - compose ではホストの `DASHBOARD_LOG_MOUNT_SOURCE`（既定 `/tmp`）をコンテナに read-only mount
-- ingestor は inode 変更 / truncate と、glob の最新一致ファイルへの切替（日次ローテーション相当）に対応
+- ingestor は inode 変更 / truncate と、glob に一致した全ファイルの個別 checkpoint に対応する
+- 再起動時は `ingestion_checkpoints` の inode/offset が一致する file をその位置から再開し、一致しない場合は先頭から再読込する
 - `DASHBOARD_EGO_MCP_DATA_DIR` を設定した場合、compose はその絶対パスを backend コンテナ内の同じパスへ read-only mount する
 
 ## 運用者向け
@@ -59,3 +62,4 @@
 - `DASHBOARD_LOG_PATH=/host-tmp/ego-mcp-*.log`（compose）
 - `DASHBOARD_INGEST_POLL_SECONDS=1.0`（通常）
 - 高負荷時は `1.5-2.0` 秒へ調整
+- 補正用途: `uv run python -m ego_dashboard.dedupe_telemetry --log-path "$DASHBOARD_LOG_PATH"`

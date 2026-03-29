@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 from ego_dashboard.constants import DESIRE_METRIC_KEYS
 from ego_dashboard.models import DashboardEvent, LogEvent
+from ego_dashboard.telemetry_identity import dashboard_event_dedupe_key, log_event_dedupe_key
 
 _BUCKETS = {"1m": timedelta(minutes=1), "5m": timedelta(minutes=5), "15m": timedelta(minutes=15)}
 
@@ -15,20 +16,50 @@ class TelemetryStore:
     def __init__(self) -> None:
         self._events: list[DashboardEvent] = []
         self._logs: list[LogEvent] = []
+        self._event_keys: set[tuple[datetime, str]] = set()
+        self._log_keys: set[tuple[datetime, str]] = set()
+        self._checkpoints: dict[str, tuple[int, int]] = {}
 
     def ingest(self, event: DashboardEvent) -> None:
+        key = (event.ts, dashboard_event_dedupe_key(event))
+        if key in self._event_keys:
+            return
+        self._event_keys.add(key)
         self._events.append(event)
         self._events.sort(key=lambda item: item.ts)
 
     def ingest_log(self, event: LogEvent) -> None:
+        key = (event.ts, log_event_dedupe_key(event))
+        if key in self._log_keys:
+            return
+        self._log_keys.add(key)
         self._logs.append(event)
         self._logs.sort(key=lambda item: item.ts)
+
+    def load_checkpoint(self, path: str) -> tuple[int, int] | None:
+        return self._checkpoints.get(path)
+
+    def save_checkpoint(self, path: str, inode: int, offset: int) -> None:
+        self._checkpoints[path] = (inode, offset)
 
     def _bucket_delta(self, bucket: str) -> timedelta:
         return _BUCKETS.get(bucket, timedelta(minutes=1))
 
     def _filtered(self, start: datetime, end: datetime) -> list[DashboardEvent]:
         return [item for item in self._events if start <= item.ts <= end]
+
+    def _terminal_events(self, start: datetime, end: datetime) -> list[DashboardEvent]:
+        return [
+            item
+            for item in self._events
+            if start <= item.ts <= end
+            and item.event_type in {"tool_call_completed", "tool_call_failed"}
+        ]
+
+    @staticmethod
+    def _invocation_tool_name(log: LogEvent) -> str | None:
+        raw = log.fields.get("tool_name")
+        return raw if isinstance(raw, str) and raw else None
 
     def _latest_numeric_metrics(self, keys: tuple[str, ...]) -> dict[str, float]:
         if not self._events:
@@ -79,16 +110,49 @@ class TelemetryStore:
         return rows
 
     def tool_usage(self, start: datetime, end: datetime, bucket: str) -> list[dict[str, object]]:
-        events = self._filtered(start, end)
+        invocations = [
+            log
+            for log in self._logs
+            if start <= log.ts <= end
+            and log.message == "Tool invocation"
+            and self._invocation_tool_name(log) is not None
+        ]
+        if invocations:
+            tool_names = sorted(
+                {
+                    tool_name
+                    for log in invocations
+                    if (tool_name := self._invocation_tool_name(log)) is not None
+                }
+            )
+            log_usage_rows: list[dict[str, object]] = []
+            delta = self._bucket_delta(bucket)
+            cursor = start
+            while cursor < end:
+                bucket_end = cursor + delta
+                log_counts: Counter[str] = Counter(
+                    tool_name
+                    for log in invocations
+                    if cursor <= log.ts < bucket_end
+                    if (tool_name := self._invocation_tool_name(log)) is not None
+                )
+                row: dict[str, object] = {"ts": cursor.isoformat()}
+                for tool_name in tool_names:
+                    row[tool_name] = int(log_counts.get(tool_name, 0))
+                log_usage_rows.append(row)
+                cursor = bucket_end
+            return log_usage_rows
+
+        events = self._terminal_events(start, end)
         tool_names = sorted({ev.tool_name for ev in events})
-        rows: list[dict[str, object]] = []
+        event_usage_rows: list[dict[str, object]] = []
         for at, grouped in self._bucket_events(events, start, end, bucket):
-            counts: dict[str, int] = Counter(ev.tool_name for ev in grouped)
-            row: dict[str, object] = {"ts": at.isoformat()}
+            event_counts: dict[str, int] = Counter(ev.tool_name for ev in grouped)
+            row = {"ts": at.isoformat()}
             for tool_name in tool_names:
-                row[tool_name] = int(counts.get(tool_name, 0))
-            rows.append(row)
-        return rows
+                row[tool_name] = int(event_counts.get(tool_name, 0))
+            event_usage_rows.append(row)
+        return event_usage_rows
 
     def metric_history(
         self, key: str, start: datetime, end: datetime, bucket: str
@@ -221,8 +285,12 @@ class TelemetryStore:
         window_24h_start = latest.ts - timedelta(hours=24)
         recent = [ev for ev in self._events if ev.ts >= window_start]
         recent_24h = [ev for ev in self._events if ev.ts >= window_24h_start]
-        errors = [ev for ev in recent if not ev.ok]
-        errors_24h = [ev for ev in recent_24h if not ev.ok]
+        terminal_recent = [
+            ev for ev in recent if ev.event_type in {"tool_call_completed", "tool_call_failed"}
+        ]
+        terminal_recent_24h = [
+            ev for ev in recent_24h if ev.event_type in {"tool_call_completed", "tool_call_failed"}
+        ]
         latest_payload = latest.model_dump(mode="json")
         if latest.private:
             latest_payload["message"] = "REDACTED"
@@ -273,28 +341,38 @@ class TelemetryStore:
         invocation_count = sum(
             1
             for log in log_window
-            if log.message == "Tool invocation" and "tool_name" in log.fields
+            if log.message == "Tool invocation" and self._invocation_tool_name(log) is not None
         )
         failure_count = sum(1 for log in log_window if log.message == "Tool execution failed")
         invocation_count_24h = sum(
             1
             for log in log_window_24h
-            if log.message == "Tool invocation" and "tool_name" in log.fields
+            if log.message == "Tool invocation" and self._invocation_tool_name(log) is not None
         )
         failure_count_24h = sum(
             1 for log in log_window_24h if log.message == "Tool execution failed"
         )
-        tool_calls_per_min = invocation_count if invocation_count > 0 else len(recent)
+        tool_calls_per_min = invocation_count if invocation_count > 0 else len(terminal_recent)
         error_rate = (
             (failure_count / invocation_count)
             if invocation_count > 0
-            else (len(errors) / len(recent) if recent else 0.0)
+            else (
+                sum(1 for ev in terminal_recent if not ev.ok) / len(terminal_recent)
+                if terminal_recent
+                else 0.0
+            )
         )
-        tool_calls_24h = invocation_count_24h if invocation_count_24h > 0 else len(recent_24h)
+        tool_calls_24h = (
+            invocation_count_24h if invocation_count_24h > 0 else len(terminal_recent_24h)
+        )
         error_rate_24h = (
             (failure_count_24h / invocation_count_24h)
             if invocation_count_24h > 0
-            else (len(errors_24h) / len(recent_24h) if recent_24h else 0.0)
+            else (
+                sum(1 for ev in terminal_recent_24h if not ev.ok) / len(terminal_recent_24h)
+                if terminal_recent_24h
+                else 0.0
+            )
         )
         desire_metrics = self._latest_desire_metrics()
         latest_fixed_desires = {
