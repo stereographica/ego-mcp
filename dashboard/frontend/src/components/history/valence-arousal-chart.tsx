@@ -11,7 +11,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
 import type { SeriesPoint } from '@/types'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 type ValenceArousalChartProps = {
   valence: SeriesPoint[]
@@ -28,6 +28,7 @@ export const ValenceArousalChart = ({
   arousal,
 }: ValenceArousalChartProps) => {
   const { formatTs } = useTimestampFormatter()
+  const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set())
 
   const data = useMemo(() => {
     const byTs = new Map<
@@ -46,6 +47,22 @@ export const ValenceArousalChart = ({
     }
     return Array.from(byTs.values()).sort((a, b) => a.ts.localeCompare(b.ts))
   }, [valence, arousal])
+  const visibleKeys = useMemo(
+    () => ['valence', 'arousal'].filter((key) => !hiddenKeys.has(key)),
+    [hiddenKeys],
+  )
+
+  const toggleSeries = (key: string) => {
+    setHiddenKeys((current) => {
+      const next = new Set(current)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
 
   if (data.length === 0) return null
 
@@ -66,16 +83,20 @@ export const ValenceArousalChart = ({
                   labelFormatter={formatTs}
                   showAllSeries
                   missingValueLabel="-"
+                  visibleKeys={visibleKeys}
                 />
               }
             />
-            <ChartLegend content={<ChartLegendContent />} />
+            <ChartLegend
+              content={<ChartLegendContent onSeriesToggle={toggleSeries} />}
+            />
             <Line
               type="monotone"
               dataKey="valence"
               stroke="var(--color-valence)"
               dot={false}
               connectNulls
+              hide={hiddenKeys.has('valence')}
             />
             <Line
               type="monotone"
@@ -83,6 +104,7 @@ export const ValenceArousalChart = ({
               stroke="var(--color-arousal)"
               dot={false}
               connectNulls
+              hide={hiddenKeys.has('arousal')}
             />
           </LineChart>
         </ChartContainer>

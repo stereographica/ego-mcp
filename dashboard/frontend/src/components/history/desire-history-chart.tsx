@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import {
   CartesianGrid,
   Line,
@@ -40,6 +40,7 @@ export const DesireHistoryChart = ({
   markers = [],
 }: DesireHistoryChartProps) => {
   const { formatTs } = useTimestampFormatter()
+  const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set())
   const { chartConfig, dynamicKeys } = useMemo(() => {
     const fixedKeySet = new Set<string>(DESIRE_METRIC_KEYS)
     const dynamicKeys = desireKeys.filter((key) => !fixedKeySet.has(key))
@@ -70,6 +71,26 @@ export const DesireHistoryChart = ({
       ),
     [markers],
   )
+  const allSeriesKeys = useMemo(
+    () => [...DESIRE_METRIC_KEYS, ...dynamicKeys],
+    [dynamicKeys],
+  )
+  const visibleKeys = useMemo(
+    () => allSeriesKeys.filter((key) => !hiddenKeys.has(key)),
+    [allSeriesKeys, hiddenKeys],
+  )
+
+  const toggleSeries = (key: string) => {
+    setHiddenKeys((current) => {
+      const next = new Set(current)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
 
   return (
     <Card>
@@ -88,10 +109,13 @@ export const DesireHistoryChart = ({
                   labelFormatter={formatTs}
                   showAllSeries
                   missingValueLabel="-"
+                  visibleKeys={visibleKeys}
                 />
               }
             />
-            <ChartLegend content={<ChartLegendContent />} />
+            <ChartLegend
+              content={<ChartLegendContent onSeriesToggle={toggleSeries} />}
+            />
             {desireMarkers.map((marker) => (
               <ReferenceLine
                 key={`${marker.kind}-${marker.ts}-${marker.desire_key ?? marker.detail ?? ''}`}
@@ -126,6 +150,7 @@ export const DesireHistoryChart = ({
                 stroke={resolveDesireSeriesColor(key, chartConfig, 0)}
                 dot={false}
                 connectNulls
+                hide={hiddenKeys.has(key)}
               />
             ))}
             {dynamicKeys.map((key, index) => (
@@ -138,6 +163,7 @@ export const DesireHistoryChart = ({
                 strokeDasharray="4 2"
                 dot={false}
                 connectNulls
+                hide={hiddenKeys.has(key)}
               />
             ))}
           </LineChart>

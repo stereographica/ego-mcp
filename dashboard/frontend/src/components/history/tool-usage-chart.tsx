@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Area,
   AreaChart,
@@ -17,6 +17,7 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { shouldShowToolUsageTooltip } from '@/components/history/tool-usage-chart-utils'
 import { TOOL_CHART_COLORS } from '@/constants'
 import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
 import type { StringPoint, UsagePoint } from '@/types'
@@ -38,12 +39,19 @@ const PHASE_COLORS: Record<string, string> = {
 
 type PhaseSpan = { x1: string; x2: string; phase: string }
 
+type TooltipPayloadItem = {
+  dataKey?: string | number
+  type?: string
+  value?: unknown
+}
+
 export const ToolUsageChart = ({
   usage,
   toolSeriesKeys,
   timeline,
 }: ToolUsageChartProps) => {
   const { formatTs } = useTimestampFormatter()
+  const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set())
 
   const config: ChartConfig = Object.fromEntries(
     toolSeriesKeys.map((key, i) => [
@@ -73,6 +81,22 @@ export const ToolUsageChart = ({
     })
     return spans
   }, [timeline])
+  const visibleKeys = useMemo(
+    () => toolSeriesKeys.filter((key) => !hiddenKeys.has(key)),
+    [toolSeriesKeys, hiddenKeys],
+  )
+
+  const toggleSeries = (key: string) => {
+    setHiddenKeys((current) => {
+      const next = new Set(current)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
 
   return (
     <Card>
@@ -101,11 +125,31 @@ export const ToolUsageChart = ({
             <XAxis dataKey="ts" hide />
             <YAxis />
             <ChartTooltip
-              content={
-                <ChartTooltipContent labelFormatter={formatTs} showAllSeries />
-              }
+              content={({ active, label, payload }) => {
+                if (
+                  !shouldShowToolUsageTooltip(
+                    payload as TooltipPayloadItem[] | undefined,
+                    visibleKeys,
+                  )
+                ) {
+                  return null
+                }
+
+                return (
+                  <ChartTooltipContent
+                    active={active}
+                    label={label}
+                    payload={payload}
+                    labelFormatter={formatTs}
+                    showAllSeries
+                    visibleKeys={visibleKeys}
+                  />
+                )
+              }}
             />
-            <ChartLegend content={<ChartLegendContent />} />
+            <ChartLegend
+              content={<ChartLegendContent onSeriesToggle={toggleSeries} />}
+            />
             {toolSeriesKeys.map((toolName) => (
               <Area
                 key={toolName}
@@ -115,6 +159,7 @@ export const ToolUsageChart = ({
                 stroke={`var(--color-${toolName})`}
                 fill={`var(--color-${toolName})`}
                 fillOpacity={0.4}
+                hide={hiddenKeys.has(toolName)}
               />
             ))}
           </AreaChart>

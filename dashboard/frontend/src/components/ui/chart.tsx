@@ -130,6 +130,7 @@ function ChartTooltipContent({
   labelKey,
   showAllSeries = false,
   missingValueLabel = '-',
+  visibleKeys,
 }: React.ComponentProps<typeof RechartsPrimitive.Tooltip> &
   React.ComponentProps<'div'> & {
     hideLabel?: boolean
@@ -139,6 +140,7 @@ function ChartTooltipContent({
     labelKey?: string
     showAllSeries?: boolean
     missingValueLabel?: string
+    visibleKeys?: string[]
   }) {
   const { config } = useChart()
   const filteredPayload = React.useMemo(
@@ -157,7 +159,9 @@ function ChartTooltipContent({
       byKey.set(key, item)
     }
 
-    return Object.keys(config).map(
+    const keysToRender = visibleKeys ?? Object.keys(config)
+
+    return keysToRender.map(
       (key) =>
         byKey.get(key) ?? {
           name: key,
@@ -167,7 +171,7 @@ function ChartTooltipContent({
           payload: {},
         },
     )
-  }, [config, filteredPayload, nameKey, showAllSeries])
+  }, [config, filteredPayload, nameKey, showAllSeries, visibleKeys])
 
   const tooltipLabel = React.useMemo(() => {
     if (hideLabel || !payload?.length) {
@@ -320,10 +324,12 @@ function ChartLegendContent({
   payload,
   verticalAlign = 'bottom',
   nameKey,
+  onSeriesToggle,
 }: React.ComponentProps<'div'> &
   Pick<RechartsPrimitive.LegendProps, 'payload' | 'verticalAlign'> & {
     hideIcon?: boolean
     nameKey?: string
+    onSeriesToggle?: (key: string) => void
   }) {
   const { config } = useChart()
 
@@ -344,13 +350,25 @@ function ChartLegendContent({
         .map((item) => {
           const key = `${nameKey || item.dataKey || 'value'}`
           const itemConfig = getPayloadConfigFromPayload(config, item, key)
+          const label = itemConfig?.label || String(item.value ?? key)
+          const isInactive = item.inactive === true
+          const classes = cn(
+            '[&>svg]:text-muted-foreground flex min-w-0 max-w-full items-center gap-1.5 [&>svg]:h-3 [&>svg]:w-3',
+            isInactive && 'opacity-50',
+          )
 
           return (
-            <div
-              key={item.value}
+            <button
+              key={String(item.dataKey ?? item.value)}
+              type="button"
               className={cn(
-                '[&>svg]:text-muted-foreground flex min-w-0 max-w-full items-center gap-1.5 [&>svg]:h-3 [&>svg]:w-3',
+                classes,
+                onSeriesToggle &&
+                  'hover:bg-muted/50 focus-visible:ring-ring/50 rounded-sm px-1 py-0.5 text-left outline-none focus-visible:ring-[3px]',
               )}
+              onClick={() => onSeriesToggle?.(key)}
+              aria-pressed={!isInactive}
+              disabled={!onSeriesToggle}
             >
               {itemConfig?.icon && !hideIcon ? (
                 <itemConfig.icon />
@@ -363,9 +381,9 @@ function ChartLegendContent({
                 />
               )}
               <span className="min-w-0 break-words whitespace-normal leading-tight">
-                {itemConfig?.label}
+                {label}
               </span>
-            </div>
+            </button>
           )
         })}
     </div>
