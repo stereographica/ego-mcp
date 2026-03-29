@@ -126,28 +126,37 @@ def _apply_backfill_updates(
     table: str,
     updates: list[tuple[str, object, str]],
 ) -> tuple[int, int]:
+    if table not in {"tool_events", "log_events"}:
+        raise ValueError(f"unsupported table: {table}")
+
     updated_rows = 0
     deleted_duplicates = 0
 
     for ctid, ts, dedupe_key in updates:
         cursor.execute(
             f"""
-            DELETE FROM {table}
-            WHERE ctid = %s::tid
-              AND EXISTS (
-                SELECT 1
-                FROM {table} AS existing
-                WHERE existing.ts = %s
-                  AND existing.dedupe_key = %s
-              )
+            SELECT 1
+            FROM {table}
+            WHERE ts = %s
+              AND dedupe_key = %s
+            LIMIT 1
             """,
-            (ctid, ts, dedupe_key),
+            (ts, dedupe_key),
         )
-        deleted_now = getattr(cursor, "rowcount", 0)
-        if isinstance(deleted_now, int) and deleted_now > 0:
-            deleted_duplicates += deleted_now
+        if cursor.fetchone() is not None:
+            cursor.execute(
+                f"""
+                DELETE FROM {table}
+                WHERE ctid = %s::tid
+                """,
+                (ctid,),
+            )
+            deleted_now = getattr(cursor, "rowcount", 0)
+            if isinstance(deleted_now, int) and deleted_now > 0:
+                deleted_duplicates += deleted_now
             continue
 
+        cursor.execute("SAVEPOINT dedupe_backfill_row")
         try:
             cursor.execute(
                 f"""
@@ -157,7 +166,9 @@ def _apply_backfill_updates(
                 """,
                 (dedupe_key, ctid),
             )
+            updated_now = getattr(cursor, "rowcount", 0)
         except UniqueViolation:
+            cursor.execute("ROLLBACK TO SAVEPOINT dedupe_backfill_row")
             cursor.execute(
                 f"""
                 DELETE FROM {table}
@@ -166,9 +177,10 @@ def _apply_backfill_updates(
                 (ctid,),
             )
             deleted_duplicates += 1
+            cursor.execute("RELEASE SAVEPOINT dedupe_backfill_row")
             continue
+        cursor.execute("RELEASE SAVEPOINT dedupe_backfill_row")
 
-        updated_now = getattr(cursor, "rowcount", 0)
         if isinstance(updated_now, int) and updated_now > 0:
             updated_rows += updated_now
 

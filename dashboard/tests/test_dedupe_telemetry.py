@@ -114,15 +114,21 @@ def test_apply_backfill_updates_deletes_rows_that_conflict_during_update() -> No
             self.rowcount = 0
             self.updated: list[str] = []
             self.deleted: list[str] = []
+            self.last_select_result: tuple[int] | None = None
 
         def execute(self, query: object, params: object | None = None) -> None:
             sql = str(query)
             tuple_params = params if isinstance(params, tuple) else ()
-            if sql.lstrip().startswith("DELETE FROM tool_events") and "EXISTS" in sql:
-                ctid = str(tuple_params[0])
-                self.rowcount = 1 if ctid == "(0,1)" else 0
-                if self.rowcount == 1:
-                    self.deleted.append(ctid)
+            if sql.lstrip().startswith("SELECT 1"):
+                dedupe_key = str(tuple_params[1])
+                self.last_select_result = (1,) if dedupe_key == "existing" else None
+                self.rowcount = 1 if self.last_select_result is not None else 0
+                return
+            if sql.lstrip().startswith("SAVEPOINT") or sql.lstrip().startswith("RELEASE SAVEPOINT"):
+                self.rowcount = 0
+                return
+            if sql.lstrip().startswith("ROLLBACK TO SAVEPOINT"):
+                self.rowcount = 0
                 return
             if sql.lstrip().startswith("UPDATE tool_events"):
                 ctid = str(tuple_params[1])
@@ -137,6 +143,9 @@ def test_apply_backfill_updates_deletes_rows_that_conflict_during_update() -> No
                 self.deleted.append(ctid)
                 return
             self.rowcount = 0
+
+        def fetchone(self) -> tuple[int] | None:
+            return self.last_select_result
 
     cursor = _Cursor()
     ts = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
