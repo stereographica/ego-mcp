@@ -14,11 +14,12 @@ import {
   fetchUsage,
   fetchValence,
 } from '@/api'
-import { DESIRE_METRIC_KEYS } from '@/constants'
+import { buildDesireHistorySeriesKeys, sortDesireCatalogItems } from '@/desires'
 import type {
   DateRange,
   EmotionTrendPoint,
   HeatmapPoint,
+  DesireCatalogItem,
   HistoryMarker,
   IntensityPoint,
   LogPoint,
@@ -32,12 +33,12 @@ import type {
 
 type DesireMetricSeriesMap = Record<string, SeriesPoint[]>
 
-const makeEmptyDesireMetricSeriesMap = (): DesireMetricSeriesMap =>
-  Object.fromEntries(DESIRE_METRIC_KEYS.map((key) => [key, []])) as Record<
-    string,
-    SeriesPoint[]
-  >
-const FIXED_DESIRE_KEY_SET = new Set<string>(DESIRE_METRIC_KEYS)
+const makeEmptyDesireMetricSeriesMap = (
+  catalog: DesireCatalogItem[],
+): DesireMetricSeriesMap =>
+  Object.fromEntries(
+    sortDesireCatalogItems(catalog).map((item) => [item.id, []]),
+  ) as Record<string, SeriesPoint[]>
 
 const bucketFor = (preset: TimeRangePreset) =>
   preset === '15m' || preset === '1h' ? '1m' : '5m'
@@ -148,6 +149,7 @@ export const useHistoryData = (
   activeTab: string,
   range: DateRange,
   preset: TimeRangePreset,
+  desireCatalog: DesireCatalogItem[],
 ) => {
   const [intensity, setIntensity] = useState<IntensityPoint[]>([])
   const [usage, setUsage] = useState<UsagePoint[]>([])
@@ -163,11 +165,11 @@ export const useHistoryData = (
   })
   const [notions, setNotions] = useState<Notion[]>([])
   const [desireMetrics, setDesireMetrics] = useState<DesireMetricSeriesMap>(
-    makeEmptyDesireMetricSeriesMap,
+    () => makeEmptyDesireMetricSeriesMap(desireCatalog),
   )
-  const [desireKeys, setDesireKeys] = useState<string[]>([
-    ...DESIRE_METRIC_KEYS,
-  ])
+  const [desireKeys, setDesireKeys] = useState<string[]>(() =>
+    buildDesireHistorySeriesKeys(desireCatalog, []),
+  )
 
   useEffect(() => {
     if (activeTab !== 'history') return
@@ -180,10 +182,10 @@ export const useHistoryData = (
       const discoveredDesireKeys = await fetchDesireKeys(effectiveRange)
       if (disposed) return
 
-      const nextDesireKeys = [
-        ...DESIRE_METRIC_KEYS,
-        ...discoveredDesireKeys.filter((key) => !FIXED_DESIRE_KEY_SET.has(key)),
-      ]
+      const nextDesireKeys = buildDesireHistorySeriesKeys(
+        desireCatalog,
+        discoveredDesireKeys,
+      )
       setDesireKeys(nextDesireKeys)
 
       const [i, u, t, v, a, emotionTimeline, heatmap, logs, ...desireSeries] =
@@ -258,7 +260,7 @@ export const useHistoryData = (
       disposed = true
       clearInterval(timer)
     }
-  }, [activeTab, range, preset])
+  }, [activeTab, desireCatalog, range, preset])
 
   useEffect(() => {
     if (activeTab !== 'history') return

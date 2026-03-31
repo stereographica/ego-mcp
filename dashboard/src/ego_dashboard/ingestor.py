@@ -11,14 +11,13 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
-from ego_dashboard.constants import DESIRE_METRIC_KEYS
+from ego_dashboard.desire_catalog import DesireCatalog, default_desire_catalog, load_desire_catalog
 from ego_dashboard.models import DashboardEvent, LogEvent
 from ego_dashboard.settings import load_settings
 from ego_dashboard.sql_store import SqlTelemetryStore
 from ego_dashboard.store import TelemetryStore
 
 ALLOWED_STRING_PARAMS = {"time_phase", "emotion_primary", "mode", "state"}
-_DESIRE_METRIC_KEY_SET = frozenset(DESIRE_METRIC_KEYS)
 _FEEL_DESIRES_LEVEL_RE = re.compile(
     r"(?P<name>[a-z_]+)\[(?P<value>[0-9]+(?:\.[0-9]+)?)/(?:high|mid|low)\]"
 )
@@ -130,6 +129,9 @@ class CheckpointStoreProtocol(Protocol):
 class EgoMcpLogProjector:
     """Project ego-mcp structured logs into dashboard telemetry events."""
 
+    def __init__(self, desire_catalog: DesireCatalog | None = None) -> None:
+        self._desire_catalog = desire_catalog or default_desire_catalog()
+
     def project(self, raw: Mapping[str, object]) -> DashboardEvent | None:
         message = raw.get("message")
         tool_name = raw.get("tool_name")
@@ -199,7 +201,7 @@ class EgoMcpLogProjector:
                 or isinstance(value, bool)
             ):
                 continue
-            if key in _DESIRE_METRIC_KEY_SET or "want" in key.lower():
+            if self._desire_catalog.is_visible_desire_metric(key):
                 levels[key] = float(value)
 
         if levels:
@@ -213,7 +215,7 @@ class EgoMcpLogProjector:
         first_section = tool_output.split("\n\n---\n", 1)[0]
         for match in _FEEL_DESIRES_LEVEL_RE.finditer(first_section):
             name = match.group("name")
-            if name not in _DESIRE_METRIC_KEY_SET:
+            if not self._desire_catalog.is_visible_desire_metric(name):
                 continue
             try:
                 levels[name] = float(match.group("value"))
@@ -286,6 +288,12 @@ class EgoMcpLogProjector:
             if isinstance(value, bool):
                 params[key] = value
             elif isinstance(value, (int, float)):
+                if tool_name == "feel_desires":
+                    if key == "impulse_boost_amount" or (
+                        self._desire_catalog.is_visible_desire_metric(key)
+                    ):
+                        params[key] = value
+                    continue
                 params[key] = value
             elif isinstance(value, str) and (key in ALLOWED_STRING_PARAMS or "_" in key):
                 params[key] = value
@@ -332,11 +340,16 @@ class EgoMcpLogProjector:
 
 def _default_store() -> IngestStoreProtocol:
     settings = load_settings()
+    desire_catalog = load_desire_catalog(settings.ego_mcp_data_dir)
     if settings.use_external_store and settings.database_url and settings.redis_url:
-        store = SqlTelemetryStore(settings.database_url, settings.redis_url)
+        store = SqlTelemetryStore(
+            settings.database_url,
+            settings.redis_url,
+            desire_catalog=desire_catalog,
+        )
         store.initialize()
         return store
-    return TelemetryStore()
+    return TelemetryStore(desire_catalog=desire_catalog)
 
 
 def ingest_jsonl_line(
@@ -409,6 +422,7 @@ def tail_jsonl_file(
     positions: dict[str, int] = {}
     projectors: dict[str, EgoMcpLogProjector] = {}
     announced_resumes: set[str] = set()
+    desire_catalog = getattr(store, "desire_catalog", default_desire_catalog())
 
     while stop_event is None or not stop_event.is_set():
         selected_paths = _resolve_source_files(path)
@@ -445,14 +459,14 @@ def tail_jsonl_file(
             stat = os.stat(selected_path)
             current_inode = inodes.get(selected_path)
             position = positions.get(selected_path, 0)
-            projector = projectors.setdefault(selected_path, EgoMcpLogProjector())
+            projector = projectors.setdefault(selected_path, EgoMcpLogProjector(desire_catalog))
             checkpoint_changed = False
 
             if current_inode != stat.st_ino or stat.st_size < position:
                 inodes[selected_path] = stat.st_ino
                 position = 0
                 positions[selected_path] = 0
-                projectors[selected_path] = EgoMcpLogProjector()
+                projectors[selected_path] = EgoMcpLogProjector(desire_catalog)
                 projector = projectors[selected_path]
                 announced_resumes.discard(selected_path)
                 checkpoint_changed = True

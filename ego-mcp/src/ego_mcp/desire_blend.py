@@ -4,51 +4,21 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-_TEMPLATES: dict[str, tuple[str, str]] = {
-    "curiosity": (
-        "Something catches your attention.",
-        "You need to know something.",
-    ),
-    "social_thirst": (
-        "You want some company.",
-        "You need to talk to someone.",
-    ),
-    "expression": (
-        "Something wants to come out.",
-        "You need to put something out there.",
-    ),
-    "cognitive_coherence": (
-        "Something doesn't quite fit.",
-        "You need things to make sense.",
-    ),
-    "information_hunger": (
-        "You want to take something in.",
-        "You're starving for input.",
-    ),
-    "pattern_seeking": (
-        "You sense a pattern forming.",
-        "There's a shape here you need to see.",
-    ),
-    "predictability": (
-        "You want to know what comes next.",
-        "You need to know what's coming.",
-    ),
-    "recognition": (
-        "You want to be seen.",
-        "You need someone to notice.",
-    ),
-    "resonance": (
-        "You want to understand someone.",
-        "You need to feel what they feel.",
-    ),
-}
+from ego_mcp.desire_catalog import DesireCatalog, default_desire_catalog
+
+_TEMPLATES: dict[str, tuple[str, str]] = default_desire_catalog().template_map()
 
 _DEFAULT_LOW_SIGNAL = "Nothing in particular pulls at you."
 _AMBIGUOUS_TAIL = "Something else stirs, but you can't name it."
 
 
-def _render_sentence(name: str, level: float) -> str:
-    templates = _TEMPLATES.get(name)
+def _render_sentence(
+    name: str,
+    level: float,
+    catalog: DesireCatalog | None = None,
+) -> str:
+    template_map = catalog.template_map() if catalog is not None else _TEMPLATES
+    templates = template_map.get(name)
     if templates is None:
         return name if name.endswith(".") else f"{name}."
     return templates[1] if level >= 0.7 else templates[0]
@@ -71,14 +41,20 @@ def _has_ambiguous_tail(active: Sequence[tuple[str, float]]) -> bool:
     return has_high and medium_count >= 2
 
 
-def blend_desires(levels: dict[str, float]) -> str:
+def blend_desires(
+    levels: dict[str, float],
+    *,
+    catalog: DesireCatalog | None = None,
+) -> str:
     """Blend top desire signals into opaque, directional language."""
     active = _sorted_active(levels)
     if not active:
         return _DEFAULT_LOW_SIGNAL
 
     top = active[:3]
-    sentences = [_render_sentence(name, float(level)) for name, level in top]
+    sentences = [
+        _render_sentence(name, float(level), catalog=catalog) for name, level in top
+    ]
     if _has_ambiguous_tail(active):
         sentences.append(_AMBIGUOUS_TAIL)
     return " ".join(sentences)

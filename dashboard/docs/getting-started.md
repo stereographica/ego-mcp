@@ -1,10 +1,10 @@
 # Getting Started
 
-- 更新責任者: ego-mcp dashboard maintainers
+- Maintainer: ego-mcp dashboard maintainers
 
-## 開発者向け
+## For Developers
 
-### ローカル起動（backend 単体 / in-memory）
+### Local Startup (Backend Only / In Memory)
 
 ```bash
 cd dashboard
@@ -12,7 +12,7 @@ uv sync --group dev
 uv run uvicorn ego_dashboard.__main__:app --reload
 ```
 
-別ターミナルで frontend:
+In a separate terminal, start the frontend:
 
 ```bash
 cd dashboard/frontend
@@ -20,38 +20,42 @@ npm ci
 npm run dev
 ```
 
-### docker-compose 起動（推奨）
+### Docker Compose Startup (Recommended)
 
 ```bash
 cd dashboard
 cp .env.example .env
-# Memory Network / Notions を compose で有効化する場合は
-# DASHBOARD_EGO_MCP_DATA_DIR に ego-mcp の data dir を設定
+# To enable Memory Network / Notions in compose,
+# set DASHBOARD_EGO_MCP_DATA_DIR to the ego-mcp data dir
 docker compose up --build
 ```
 
-起動先:
+Endpoints:
 - frontend: `http://localhost:4173`
 - backend API: `http://localhost:8000`
+- The fixed desire catalog is loaded from `${DASHBOARD_EGO_MCP_DATA_DIR}/settings/desires.json`, so if you use an ego-mcp data dir, pass that same absolute path to the backend
+- Checking that `GET /api/v1/desires/catalog` returns `status=ok` is the easiest way to confirm fixed desire sync is working
 
-### 動作確認チェックリスト
+### Quick Verification Checklist
 
-- `Now` タブが初期表示される
-- `History` タブに tool usage / string 可視化が表示される
-- `Logs` タブで level / search フィルタが動作する
+- The `Now` tab is shown by default
+- The `History` tab shows tool usage and string visualizations
+- The `Logs` tab responds to level and search filters
 
-## 運用者向け
+## For Operators
 
-### 初回導入時の最小手順
+### Minimum First-Time Setup
 
-1. `.env` を作成して DB/Redis/ログパスを設定する
-2. Memory Network / Notions を使う場合は `.env` の `DASHBOARD_EGO_MCP_DATA_DIR` に ego-mcp data dir の絶対パスを設定する
-3. `ego-mcp` の `EGO_MCP_LOG_DIR`（既定 `/tmp`）配下に `ego-mcp-YYYY-MM-DD.log` が出力されることを確認する
-4. `.env` の `DASHBOARD_LOG_MOUNT_SOURCE` / `DASHBOARD_LOG_PATH` を必要に応じて合わせる
-5. `docker compose up -d` を実行する
-6. `docker compose logs -f ingestor` で取り込みログを確認する
+1. Create `.env` and set the DB, Redis, and log path values
+2. If you use Memory Network / Notions, set `.env` `DASHBOARD_EGO_MCP_DATA_DIR` to the absolute ego-mcp data dir
+3. If you want fixed desire catalog rendering, use the same `DASHBOARD_EGO_MCP_DATA_DIR` and confirm `${DASHBOARD_EGO_MCP_DATA_DIR}/settings/desires.json` exists
+4. Confirm `curl http://localhost:8000/api/v1/desires/catalog` returns `status=ok` and `fixed_desires`
+5. Confirm `ego-mcp` writes `ego-mcp-YYYY-MM-DD.log` under `EGO_MCP_LOG_DIR` (default: `/tmp`)
+6. Align `.env` `DASHBOARD_LOG_MOUNT_SOURCE` / `DASHBOARD_LOG_PATH` as needed
+7. Run `docker compose up -d`
+8. Check ingestion logs with `docker compose logs -f ingestor`
 
-### 画面簡易図（Now / History / Logs）
+### Simple Screen Map (Now / History / Logs)
 
 ```mermaid
 flowchart LR

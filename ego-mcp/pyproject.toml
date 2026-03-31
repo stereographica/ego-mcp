@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ego-mcp"
-version = "0.5.0"
+version = "0.6.0"
 description = "Cognitive scaffolding MCP server for LLM personality continuity"
 requires-python = ">=3.14"
 dependencies = [
@@ -31,14 +31,17 @@ packages = ["src/ego_mcp"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore:'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16.*:DeprecationWarning:chromadb\\..*",
+]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 strict = true
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py314"
 
 [tool.ruff.lint]
 extend-ignore = ["I"]

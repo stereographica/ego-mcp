@@ -140,6 +140,76 @@ def _format_associated_from_map(
     return " → " + ", ".join(f'"{item.label}"' for item in associated[:limit])
 
 
+def _catalog_fixed_ids(desire: DesireEngine | None) -> set[str] | None:
+    if desire is None:
+        return None
+    try:
+        return set(desire.catalog.fixed_desires)
+    except Exception:
+        return None
+
+
+def _adjust_existing_level(
+    levels: dict[str, float],
+    name: str,
+    fn: Callable[[float], float],
+) -> None:
+    if name not in levels:
+        return
+    levels[name] = round(min(1.0, max(0.0, fn(float(levels[name])))), 3)
+
+
+def _sanitize_impulse_event(
+    event: dict[str, object],
+    *,
+    visible_boosts: dict[str, float],
+) -> dict[str, object]:
+    if not event or not visible_boosts:
+        return {"impulse_boost_triggered": False}
+
+    filtered = dict(event)
+    filtered_desires = [
+        desire_name
+        for desire_name in str(event.get("impulse_boosted_desires", "")).split(",")
+        if desire_name and desire_name in visible_boosts
+    ]
+    if filtered_desires:
+        filtered["impulse_boosted_desires"] = ",".join(filtered_desires)
+        filtered["impulse_event_count"] = len(filtered_desires)
+        filtered["impulse_boost_amounts"] = ",".join(
+            f"{visible_boosts[desire_name]:.2f}" for desire_name in filtered_desires
+        )
+
+    boosted_desire = event.get("impulse_boosted_desire")
+    if isinstance(boosted_desire, str) and boosted_desire in visible_boosts:
+        filtered["impulse_boosted_desire"] = boosted_desire
+        filtered["impulse_boost_amount"] = visible_boosts[boosted_desire]
+        return filtered
+
+    if filtered_desires:
+        first_visible = filtered_desires[0]
+        filtered["impulse_boosted_desire"] = first_visible
+        filtered["impulse_boost_amount"] = visible_boosts[first_visible]
+        return filtered
+
+    return {"impulse_boost_triggered": False}
+
+
+def _filter_desire_scaffold(scaffold: str, desire: DesireEngine | None) -> str:
+    fixed_ids = _catalog_fixed_ids(desire)
+    if fixed_ids is None or "predictability" in fixed_ids:
+        return scaffold
+
+    lines = scaffold.splitlines()
+    filtered_lines = [
+        line
+        for line in lines
+        if "consider satisfying predictability" not in line
+        and "sense of predictability is being confirmed" not in line
+    ]
+    return "\n".join(filtered_lines)
+
+
 async def _handle_wake_up(
     config: EgoConfig, memory: MemoryStore, desire: DesireEngine
 ) -> str:
@@ -168,7 +238,10 @@ async def _handle_wake_up(
         else:
             intro_line = "No introspection yet."
 
-    desire_summary = blend_desires(desire.compute_levels_with_modulation())
+    desire_summary = blend_desires(
+        desire.compute_levels_with_modulation(),
+        catalog=getattr(desire, "catalog", None),
+    )
     relationship_line = await _call_relationship_snapshot(
         config, memory, config.companion_name
     )
@@ -220,19 +293,24 @@ async def _handle_feel_desires(
     )
     impulse_event = get_impulse_manager().consume_event()
     impulse_boosts = get_impulse_manager().consume_boosts()
-    for name, amount in impulse_boosts.items():
+    visible_impulse_boosts = {
+        name: amount for name, amount in impulse_boosts.items() if name in levels
+    }
+    for name, amount in visible_impulse_boosts.items():
         levels[name] = round(min(1.0, max(0.0, levels.get(name, 0.0) + amount)), 3)
     body_state = _call_get_body_state()
     phase = body_state.get("time_phase", "unknown")
     load = body_state.get("system_load", "unknown")
 
     if phase == "late_night":
-        levels["cognitive_coherence"] = min(
-            1.0, levels.get("cognitive_coherence", 0.0) + 0.1
+        _adjust_existing_level(
+            levels,
+            "cognitive_coherence",
+            lambda value: value + 0.1,
         )
-        levels["social_thirst"] = max(0.0, levels.get("social_thirst", 0.0) - 0.1)
+        _adjust_existing_level(levels, "social_thirst", lambda value: value - 0.1)
     elif phase == "morning":
-        levels["curiosity"] = min(1.0, levels.get("curiosity", 0.0) + 0.05)
+        _adjust_existing_level(levels, "curiosity", lambda value: value + 0.05)
 
     if load == "high":
         levels = {
@@ -240,12 +318,15 @@ async def _handle_feel_desires(
             for name, level in levels.items()
         }
 
-    data = blend_desires(levels)
+    data = blend_desires(levels, catalog=getattr(desire, "catalog", None))
     update_tool_metadata(
         desire_levels=levels,
         emergent_desire_created=",".join(created_emergent) if created_emergent else None,
         emergent_desire_expired=",".join(expired_emergent) if expired_emergent else None,
-        **(impulse_event or {"impulse_boost_triggered": False}),
+        **_sanitize_impulse_event(
+            impulse_event,
+            visible_boosts=visible_impulse_boosts,
+        ),
     )
 
     scaffold = render(SCAFFOLD_FEEL_DESIRES, config.companion_name)
@@ -290,7 +371,10 @@ async def _handle_introspect(
         emotional_modulation=introspect_emotional_modulation,
         prediction_error=introspect_prediction_error,
     )
-    desire_summary = blend_desires(introspect_levels)
+    desire_summary = blend_desires(
+        introspect_levels,
+        catalog=getattr(desire, "catalog", None),
+    )
     coherence_level = float(introspect_levels.get("cognitive_coherence", 0.0))
     self_model = self_store.get()
     goals = (
@@ -394,11 +478,18 @@ async def _handle_introspect(
     ]
     data = "\n".join(part for part in parts if part)
 
-    return render_with_data(data, SCAFFOLD_INTROSPECT, config.companion_name)
+    return render_with_data(
+        data,
+        _filter_desire_scaffold(SCAFFOLD_INTROSPECT, desire),
+        config.companion_name,
+    )
 
 
 async def _handle_consider_them(
-    config: EgoConfig, memory: MemoryStore, args: dict[str, Any]
+    config: EgoConfig,
+    memory: MemoryStore,
+    args: dict[str, Any],
+    desire: DesireEngine | None = None,
 ) -> str:
     """ToM: relationship summary + scaffold."""
     person = args.get("person", config.companion_name)
@@ -467,7 +558,11 @@ async def _handle_consider_them(
                 f'  - "{notion.label}" confidence: {notion.confidence:.1f}'
             )
         data = f"{data}\n" + "\n".join(impression_lines)
-    return render_with_data(data, SCAFFOLD_CONSIDER_THEM, config.companion_name)
+    return render_with_data(
+        data,
+        _filter_desire_scaffold(SCAFFOLD_CONSIDER_THEM, desire),
+        config.companion_name,
+    )
 
 
 def _handle_am_i_genuine() -> str:

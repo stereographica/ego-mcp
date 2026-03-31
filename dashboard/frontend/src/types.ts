@@ -31,6 +31,16 @@ export type CurrentResponse = {
   } | null
 }
 
+export type DesireCatalogItem = {
+  id: string
+  display_name: string
+  maslow_level: number
+}
+
+export type DesireCatalogResponse = {
+  items: DesireCatalogItem[]
+}
+
 export type AnomalyAlert = {
   kind: 'usage_spike' | 'intensity_spike'
   ts: string

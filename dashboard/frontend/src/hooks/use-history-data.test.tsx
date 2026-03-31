@@ -29,8 +29,30 @@ describe('useHistoryData', () => {
       from: '2026-01-01T12:00:00Z',
       to: '2026-01-01T12:10:00Z',
     }
+    const desireCatalog = [
+      {
+        id: 'information_hunger',
+        display_name: 'information hunger',
+        maslow_level: 1,
+      },
+      {
+        id: 'social_thirst',
+        display_name: 'social thirst',
+        maslow_level: 1,
+      },
+      {
+        id: 'curiosity',
+        display_name: 'curiosity',
+        maslow_level: 2,
+      },
+    ]
 
-    vi.mocked(api.fetchDesireKeys).mockResolvedValue(['novelty', 'momentum'])
+    vi.mocked(api.fetchDesireKeys).mockResolvedValue([
+      'novelty',
+      'momentum',
+      'social_thirst',
+      'cognitive_coherence',
+    ])
     vi.mocked(api.fetchIntensity).mockResolvedValue([
       { ts: '2026-01-01T12:01:00Z', value: 0.7 },
     ])
@@ -64,7 +86,7 @@ describe('useHistoryData', () => {
           impulse_boost_triggered: true,
           impulse_boosted_desire: 'curiosity',
           impulse_boost_amount: 0.2,
-          emergent_desire_created: 'novelty',
+          emergent_desire_created: 'novelty,momentum',
         },
       },
     ])
@@ -99,7 +121,7 @@ describe('useHistoryData', () => {
     ])
 
     const { result } = renderHook(() =>
-      useHistoryData('history', range, 'custom'),
+      useHistoryData('history', range, 'custom', desireCatalog),
     )
 
     await waitFor(() => {
@@ -120,11 +142,17 @@ describe('useHistoryData', () => {
     ])
     expect(
       result.current.historyMarkers.map((marker) => marker.kind).sort(),
-    ).toEqual(['emergent', 'impulse', 'proust'])
+    ).toEqual(['emergent', 'emergent', 'impulse', 'proust'])
     expect(result.current.memoryNetwork.nodes).toHaveLength(1)
     expect(result.current.notions).toHaveLength(1)
-    expect(result.current.desireKeys).toContain('novelty')
-    expect(result.current.desireKeys).toContain('momentum')
+    expect(result.current.desireKeys).toEqual([
+      'information_hunger',
+      'social_thirst',
+      'curiosity',
+      'momentum',
+      'novelty',
+    ])
+    expect(result.current.desireKeys).not.toContain('cognitive_coherence')
     expect(result.current.desireChartData).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ novelty: 0.8 }),
@@ -141,8 +169,40 @@ describe('useHistoryData', () => {
       '5m',
     )
     expect(api.fetchDesireKeys).toHaveBeenCalledWith(range)
+    expect(api.fetchMetric).toHaveBeenCalledWith(
+      'information_hunger',
+      range,
+      '5m',
+    )
+    expect(api.fetchMetric).toHaveBeenCalledWith('social_thirst', range, '5m')
+    expect(api.fetchMetric).toHaveBeenCalledWith('curiosity', range, '5m')
     expect(api.fetchMetric).toHaveBeenCalledWith('novelty', range, '5m')
     expect(api.fetchMetric).toHaveBeenCalledWith('momentum', range, '5m')
+  })
+
+  it('does nothing when the active tab is not history', async () => {
+    const range = {
+      from: '2026-01-01T12:00:00Z',
+      to: '2026-01-01T12:10:00Z',
+    }
+    const desireCatalog = [
+      {
+        id: 'information_hunger',
+        display_name: 'information hunger',
+        maslow_level: 1,
+      },
+    ]
+
+    const { result } = renderHook(() =>
+      useHistoryData('now', range, '1h', desireCatalog),
+    )
+
+    expect(api.fetchDesireKeys).not.toHaveBeenCalled()
+    expect(api.fetchIntensity).not.toHaveBeenCalled()
+    expect(result.current.desireKeys).toEqual(['information_hunger'])
+    expect(result.current.desireMetrics).toEqual({
+      information_hunger: [],
+    })
   })
 
   it('keeps memory network and notions on a slower refresh cadence', async () => {
@@ -156,6 +216,13 @@ describe('useHistoryData', () => {
       from: '2026-01-01T11:55:00.000Z',
       to: '2026-01-01T12:10:00.000Z',
     }
+    const desireCatalog = [
+      {
+        id: 'information_hunger',
+        display_name: 'information hunger',
+        maslow_level: 1,
+      },
+    ]
 
     vi.mocked(api.fetchDesireKeys).mockResolvedValue([])
     vi.mocked(api.fetchIntensity).mockResolvedValue([])
@@ -173,7 +240,9 @@ describe('useHistoryData', () => {
     vi.mocked(api.fetchNotions).mockResolvedValue({ items: [] })
     vi.mocked(api.fetchMetric).mockResolvedValue([])
 
-    const { result } = renderHook(() => useHistoryData('history', range, '15m'))
+    const { result } = renderHook(() =>
+      useHistoryData('history', range, '15m', desireCatalog),
+    )
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)

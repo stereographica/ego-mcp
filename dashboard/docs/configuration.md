@@ -1,65 +1,74 @@
 # Configuration
 
-- 更新責任者: ego-mcp dashboard maintainers
+- Maintainer: ego-mcp dashboard maintainers
 
-## 開発者向け
+## For Developers
 
-### 環境変数一覧
+### Environment Variables
 
-| 変数名 | 既定値 | 用途 |
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `DASHBOARD_DATABASE_URL` | なし | TimescaleDB 接続先。backend/ingestor 共通 |
-| `DASHBOARD_REDIS_URL` | なし | Redis 接続先。backend/ingestor 共通 |
-| `DASHBOARD_CORS_ALLOWED_ORIGINS` | `http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173` | backend API の CORS allow origins（カンマ区切り） |
-| `DASHBOARD_LOG_MOUNT_SOURCE` | `/tmp` | (compose) ホスト側ログディレクトリ |
-| `DASHBOARD_LOG_MOUNT_TARGET` | `/host-tmp` | (compose) ingestor コンテナ側 mount 先 |
-| `DASHBOARD_LOG_PATH` | `/tmp/ego-mcp-*.log` (ローカル) / `/host-tmp/ego-mcp-*.log` (compose) | ingestor が tail する JSONL ログファイル / glob |
-| `DASHBOARD_INGEST_POLL_SECONDS` | `1.0` | ingestor のファイルポーリング間隔（秒） |
-| `DASHBOARD_EGO_MCP_DATA_DIR` | なし | ego-mcp のデータディレクトリ。Memory Network / Notions API が ChromaDB と notions.json を読み取る際に使用。compose では同じ絶対パスを backend コンテナへ read-only mount する |
-| `VITE_DASHBOARD_API_BASE` | `http://localhost:8000` | ブラウザから参照する API URL |
-| `VITE_DASHBOARD_WS_BASE` | `ws://localhost:8000` | ブラウザから参照する WS URL |
+| `DASHBOARD_DATABASE_URL` | none | TimescaleDB connection URL shared by backend and ingestor |
+| `DASHBOARD_REDIS_URL` | none | Redis connection URL shared by backend and ingestor |
+| `DASHBOARD_CORS_ALLOWED_ORIGINS` | `http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173` | Backend API CORS allow-origins, comma-separated |
+| `DASHBOARD_LOG_MOUNT_SOURCE` | `/tmp` | Host log directory for compose |
+| `DASHBOARD_LOG_MOUNT_TARGET` | `/host-tmp` | Ingestor-side mount target for compose |
+| `DASHBOARD_LOG_PATH` | `/tmp/ego-mcp-*.log` (local) / `/host-tmp/ego-mcp-*.log` (compose) | JSONL log file or glob tailed by the ingestor |
+| `DASHBOARD_INGEST_POLL_SECONDS` | `1.0` | Ingestor file polling interval in seconds |
+| `DASHBOARD_EGO_MCP_DATA_DIR` | none | ego-mcp data directory. Used by the Memory Network / Notions API to read ChromaDB and `notions.json`, and by the desire catalog loader to read `settings/desires.json`. In compose, the same absolute path is mounted read-only into the backend container |
+| `VITE_DASHBOARD_API_BASE` | `http://localhost:8000` | API base URL used by the browser |
+| `VITE_DASHBOARD_WS_BASE` | `ws://localhost:8000` | WebSocket base URL used by the browser |
 
-### ストア切替条件
+### Store Selection
 
-- `DASHBOARD_DATABASE_URL` と `DASHBOARD_REDIS_URL` の両方が設定されると `SqlTelemetryStore` を使用
-- どちらか欠ける場合は `TelemetryStore`（in-memory）へフォールバック
-- `SqlTelemetryStore` は `tool_events` / `log_events` に `dedupe_key` を保持し、同一 `(ts, dedupe_key)` の再投入を無視する
-- 再起動 resume 用の offset は `ingestion_checkpoints` テーブルに保存する
+- If both `DASHBOARD_DATABASE_URL` and `DASHBOARD_REDIS_URL` are set, the app uses `SqlTelemetryStore`
+- If either is missing, it falls back to `TelemetryStore` in memory
+- `SqlTelemetryStore` keeps `dedupe_key` in `tool_events` and `log_events` and ignores duplicate `(ts, dedupe_key)` inserts
+- Resume offsets are stored in the `ingestion_checkpoints` table
 
-### CORS 設定（AllowedOrigin）
+### CORS Settings
 
-- backend API は `DASHBOARD_CORS_ALLOWED_ORIGINS` をカンマ区切りで解釈する
-- docker-compose の既定値は `http://localhost:4173,http://127.0.0.1:4173`
-- Vite をローカル単体起動する場合（既定 `5173`）は、必要に応じて `5173` を追加する
-- 例:
+- The backend parses `DASHBOARD_CORS_ALLOWED_ORIGINS` as a comma-separated list
+- The default docker-compose value is `http://localhost:4173,http://127.0.0.1:4173`
+- If you run Vite locally on its default `5173` port, add the `5173` origins as needed
+- Examples:
   - `DASHBOARD_CORS_ALLOWED_ORIGINS=http://localhost:4173,http://127.0.0.1:4173`
   - `DASHBOARD_CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`
 
-### ログパス設定（ego-mcp 仕様との整合）
+### Log Path Settings
 
-- `ego-mcp` のログ出力先は `EGO_MCP_LOG_DIR`（既定 `/tmp`）で変更可能
-- `ego-mcp` は `ego-mcp-YYYY-MM-DD.log` 形式の日付付き JSONL ログを出力
-- `dashboard` の `DASHBOARD_LOG_PATH` は単一ファイルだけでなく glob も受け付ける
-- compose ではホストの `DASHBOARD_LOG_MOUNT_SOURCE`（既定 `/tmp`）をコンテナに read-only mount
-- ingestor は inode 変更 / truncate と、glob に一致した全ファイルの個別 checkpoint に対応する
-- 再起動時は `ingestion_checkpoints` の inode/offset が一致する file をその位置から再開し、一致しない場合は先頭から再読込する
-- `DASHBOARD_EGO_MCP_DATA_DIR` を設定した場合、compose はその絶対パスを backend コンテナ内の同じパスへ read-only mount する
+- `ego-mcp` log output can be moved with `EGO_MCP_LOG_DIR` (default: `/tmp`)
+- `ego-mcp` writes date-stamped JSONL logs in the `ego-mcp-YYYY-MM-DD.log` format
+- `dashboard` accepts both a single file path and a glob in `DASHBOARD_LOG_PATH`
+- In compose, the host `DASHBOARD_LOG_MOUNT_SOURCE` (default: `/tmp`) is mounted read-only into the container
+- The ingestor handles inode changes, truncation, and per-file checkpoints for all files matched by the glob
+- On restart, if the inode/offset in `ingestion_checkpoints` still matches a file, ingest resumes from that offset; otherwise it rereads from the beginning
+- If `DASHBOARD_EGO_MCP_DATA_DIR` is set, compose mounts that same absolute path read-only into the backend container
 
-## 運用者向け
+### Desire Catalog Settings
 
-### private マスキング設定
+- The dashboard frontend uses `GET /api/v1/desires/catalog` as the source of truth for fixed desires
+- The backend reads `DASHBOARD_EGO_MCP_DATA_DIR/settings/desires.json` directly
+- The catalog API response includes `version`, `status`, `errors`, `source_path`, `fixed_desires`, `implicit_rules`, and `emergent`
+- The frontend uses `display_name` for labels and `(maslow_level, id)` for ordering
+- Legacy fixed desires that do not exist in `settings/desires.json` are hidden in the frontend
+- If `status=missing` or `status=invalid`, fixed desires are treated as an empty list
 
-- 収集時:
-  - `private=true` のイベント/ログは `message` を `REDACTED` に変換
-  - event の string params は allow-list (`time_phase`, `emotion_primary`, `mode`, `state`) のみ保持
-- 配信時:
-  - `/api/v1/logs` は `private=true` の行を再度 `REDACTED` 化（防御的マスク）
-  - `/api/v1/current` も `private=true` の `latest.message` を再マスク
+## For Operators
 
-### 推奨設定値（本番/常設）
+### Private Data Masking
 
-- `DASHBOARD_LOG_MOUNT_SOURCE=/tmp`（compose）
-- `DASHBOARD_LOG_PATH=/host-tmp/ego-mcp-*.log`（compose）
-- `DASHBOARD_INGEST_POLL_SECONDS=1.0`（通常）
-- 高負荷時は `1.5-2.0` 秒へ調整
-- 補正用途: `uv run python -m ego_dashboard.dedupe_telemetry --log-path "$DASHBOARD_LOG_PATH"`
+- During ingestion:
+  - Events/logs with `private=true` have `message` rewritten to `REDACTED`
+  - String params in events keep only the allow-list: `time_phase`, `emotion_primary`, `mode`, `state`
+- During delivery:
+  - `/api/v1/logs` defensively re-masks `private=true` rows as `REDACTED`
+  - `/api/v1/current` also re-masks `latest.message` when `private=true`
+
+### Recommended Persistent Settings
+
+- `DASHBOARD_LOG_MOUNT_SOURCE=/tmp` for compose
+- `DASHBOARD_LOG_PATH=/host-tmp/ego-mcp-*.log` for compose
+- `DASHBOARD_INGEST_POLL_SECONDS=1.0` for normal operation
+- Under heavier load, consider increasing it to `1.5-2.0`
+- For cleanup/reconciliation: `uv run python -m ego_dashboard.dedupe_telemetry --log-path "$DASHBOARD_LOG_PATH"`

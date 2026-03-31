@@ -15,6 +15,49 @@ from ego_dashboard.settings import DashboardSettings
 from ego_dashboard.store import TelemetryStore
 
 
+def _write_desire_catalog(tmp_path: Path) -> None:
+    settings_dir = tmp_path / "settings"
+    settings_dir.mkdir()
+    (settings_dir / "desires.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "fixed_desires": {
+                    "social_thirst": {
+                        "display_name": "Social Thirst",
+                        "satisfaction_hours": 24,
+                        "maslow_level": 1,
+                        "sentence": {
+                            "medium": "You want some company.",
+                            "high": "You need to talk to someone.",
+                        },
+                        "implicit_satisfaction": {
+                            "consider_them": 0.4,
+                        },
+                    },
+                    "custom_focus": {
+                        "display_name": "Custom Focus",
+                        "satisfaction_hours": 8,
+                        "maslow_level": 2,
+                        "sentence": {
+                            "medium": "You want to focus.",
+                            "high": "You urgently need to focus.",
+                        },
+                        "implicit_satisfaction": {
+                            "recall": 0.2,
+                        },
+                    },
+                },
+                "implicit_rules": [],
+                "emergent": {
+                    "satisfaction_hours": 24,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_history_endpoints() -> None:
     store = TelemetryStore()
     store.ingest(
@@ -44,6 +87,167 @@ def test_history_endpoints() -> None:
     assert client.get(f"/api/v1/desires/keys?{query}").status_code == 200
     assert client.get(f"/api/v1/logs?{query}&level=INFO&search=hello").status_code == 200
     assert client.get(f"/api/v1/alerts/anomalies?{query}&bucket=1m").status_code == 200
+
+
+def test_desire_catalog_endpoint_reads_fixed_desires_from_settings(tmp_path: Path) -> None:
+    _write_desire_catalog(tmp_path)
+
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/desires/catalog")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert [item["id"] for item in payload["fixed_desires"]] == [
+        "social_thirst",
+        "custom_focus",
+    ]
+    assert payload["fixed_desires"][0]["display_name"] == "Social Thirst"
+
+
+def test_desire_catalog_endpoint_reports_invalid_json(tmp_path: Path) -> None:
+    settings_dir = tmp_path / "settings"
+    settings_dir.mkdir()
+    (settings_dir / "desires.json").write_text("{broken", encoding="utf-8")
+
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/desires/catalog")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "invalid"
+    assert payload["fixed_desires"] == []
+    assert payload["errors"]
+
+
+def test_desire_catalog_endpoint_uses_default_catalog_without_data_dir() -> None:
+    app = create_app(TelemetryStore(), settings=DashboardSettings())
+    client = TestClient(app)
+
+    response = client.get("/api/v1/desires/catalog")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "unconfigured"
+    assert payload["source_path"] is None
+    assert payload["fixed_desires"]
+
+
+def test_api_helpers_handle_edge_cases() -> None:
+    from ego_dashboard.api import (
+        _calculate_memory_decay,
+        _clamp_float,
+        _coerce_int,
+        _load_link_metadata,
+        _memory_label,
+        _parse_iso_timestamp,
+    )
+
+    assert _clamp_float(True) == 1.0
+    assert _clamp_float("2.5") == 1.0
+    assert _clamp_float("bad", default=0.25) == 0.25
+    assert _coerce_int(True) == 1
+    assert _coerce_int(3.9) == 3
+    assert _coerce_int("bad", default=7) == 7
+    assert _memory_label("alpha beta", {"is_private": True}) == "REDACTED"
+    assert _memory_label("alpha beta", {}) == "alpha beta"
+    assert _memory_label(123, {}) is None
+    assert _memory_label("alpha beta gamma", {}, limit=8) == "alpha..."
+
+    parsed = _parse_iso_timestamp("2026-01-01T12:00:00")
+    assert parsed is not None
+    assert parsed.tzinfo == UTC
+    assert parsed.isoformat() == "2026-01-01T12:00:00+00:00"
+    assert _parse_iso_timestamp("") is None
+    assert _parse_iso_timestamp("bad") is None
+
+    now = datetime(2026, 1, 10, 12, 0, tzinfo=UTC)
+    assert _calculate_memory_decay("bad", now=now) == 1.0
+    assert _calculate_memory_decay("2026-01-11T12:00:00Z", now=now) == 1.0
+    decay = _calculate_memory_decay(
+        "2026-01-01T12:00:00Z",
+        link_confidence_max=1.2,
+        access_count=20,
+        now=now,
+    )
+    assert 0.0 <= decay <= 1.0
+
+    assert _load_link_metadata("bad-json") == []
+    assert _load_link_metadata(
+        json.dumps(
+            [
+                {"target_id": "mem_1", "confidence": "bad"},
+                {"target_id": "", "link_type": "related"},
+                "skip",
+            ]
+        )
+    ) == [{"target_id": "mem_1", "link_type": "related", "confidence": 0.5}]
+
+
+def test_load_memory_network_returns_empty_without_data_dir() -> None:
+    assert _load_memory_network(DashboardSettings()) == {"nodes": [], "edges": []}
+
+
+def test_load_notion_rows_handles_missing_invalid_and_valid_files(tmp_path: Path) -> None:
+    from ego_dashboard.api import _load_notion_rows
+
+    assert _load_notion_rows(DashboardSettings()) == []
+    assert _load_notion_rows(DashboardSettings(ego_mcp_data_dir=str(tmp_path))) == []
+
+    notion_file = tmp_path / "notions.json"
+    notion_file.write_text("{broken", encoding="utf-8")
+    assert _load_notion_rows(DashboardSettings(ego_mcp_data_dir=str(tmp_path))) == []
+
+    notion_file.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    assert _load_notion_rows(DashboardSettings(ego_mcp_data_dir=str(tmp_path))) == []
+
+    notion_file.write_text(
+        json.dumps(
+            {
+                "notion_a": {
+                    "label": "A",
+                    "emotion_tone": "curious",
+                    "confidence": 0.6,
+                    "source_memory_ids": ["mem_1"],
+                    "related_notion_ids": ["notion_b"],
+                    "reinforcement_count": 2,
+                    "person_id": "Alice",
+                    "created": "2026-01-02T12:00:00+00:00",
+                    "last_reinforced": "2026-01-03T12:00:00+00:00",
+                },
+                "notion_b": {
+                    "label": "B",
+                    "emotion_tone": "calm",
+                    "confidence": 0.9,
+                    "source_memory_ids": ["mem_2"],
+                    "related_notion_ids": [],
+                    "reinforcement_count": 5,
+                    "person_id": "Bob",
+                    "created": "2026-01-01T12:00:00+00:00",
+                    "last_reinforced": "2026-01-02T12:00:00+00:00",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = _load_notion_rows(DashboardSettings(ego_mcp_data_dir=str(tmp_path)))
+
+    assert [row["id"] for row in rows] == ["notion_a", "notion_b"]
+    assert rows[0]["source_count"] == 1
+    assert rows[0]["related_count"] == 1
+    assert rows[0]["person_id"] == "Alice"
+    assert rows[1]["is_conviction"] is True
 
 
 def test_logs_endpoint_search_filter_returns_partial_matches() -> None:
@@ -446,3 +650,113 @@ def test_notion_history_endpoint_returns_bucketed_items() -> None:
 
     assert response.status_code == 200
     assert response.json()["items"] == [{"ts": "2026-01-01T12:00:00+00:00", "value": 0.7}]
+
+
+def test_ws_current_stream_sends_snapshot_deduped_logs_and_ping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _WsStore:
+        def tool_usage(
+            self, start: datetime, end: datetime, bucket: str
+        ) -> list[dict[str, object]]:
+            del start, end, bucket
+            return []
+
+        def metric_history(
+            self, key: str, start: datetime, end: datetime, bucket: str
+        ) -> list[dict[str, object]]:
+            del key, start, end, bucket
+            return []
+
+        def string_timeline(self, key: str, start: datetime, end: datetime) -> list[dict[str, str]]:
+            del key, start, end
+            return []
+
+        def string_heatmap(
+            self, key: str, start: datetime, end: datetime, bucket: str
+        ) -> list[dict[str, object]]:
+            del key, start, end, bucket
+            return []
+
+        def anomaly_alerts(
+            self, start: datetime, end: datetime, bucket: str
+        ) -> list[dict[str, object]]:
+            del start, end, bucket
+            return []
+
+        def current(self) -> dict[str, object]:
+            return {
+                "latest": {"tool_name": "feel_desires"},
+                "latest_desires": {"social_thirst": 0.4},
+                "latest_emergent_desires": {},
+            }
+
+        def logs(
+            self,
+            start: datetime,
+            end: datetime,
+            level: str | None = None,
+            *,
+            search: str | None = None,
+        ) -> list[dict[str, object]]:
+            del start, end, level, search
+            return [
+                {
+                    "ts": "2026-01-01T12:00:00+00:00",
+                    "level": "INFO",
+                    "logger": "ego_mcp.server",
+                    "message": "Tool invocation",
+                    "fields": {"tool_name": "remember"},
+                },
+                {
+                    "ts": "2026-01-01T12:00:00+00:00",
+                    "level": "INFO",
+                    "logger": "ego_mcp.server",
+                    "message": "Tool invocation",
+                    "fields": {"tool_name": "remember"},
+                },
+                {
+                    "ts": "2026-01-01T12:00:01+00:00",
+                    "level": "ERROR",
+                    "logger": "ego_mcp.server",
+                    "message": "Tool execution failed",
+                    "fields": {},
+                },
+            ]
+
+        def notion_history(
+            self, notion_id: str, start: datetime, end: datetime, bucket: str
+        ) -> list[dict[str, object]]:
+            del notion_id, start, end, bucket
+            return []
+
+        def desire_metric_keys(self, start: datetime, end: datetime) -> list[str]:
+            del start, end
+            return []
+
+    async def fake_sleep(_seconds: float) -> None:
+        raise RuntimeError("stop websocket loop")
+
+    monkeypatch.setattr("ego_dashboard.api.asyncio.sleep", fake_sleep)
+
+    app = create_app(_WsStore())
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws/current") as websocket:
+        snapshot = websocket.receive_json()
+        first_log = websocket.receive_json()
+        second_log = websocket.receive_json()
+        ping = websocket.receive_json()
+
+        assert snapshot["type"] == "current_snapshot"
+        assert snapshot["data"]["latest_desires"] == {"social_thirst": 0.4}
+
+        assert first_log["type"] == "log_line"
+        assert first_log["data"]["tool_name"] == "remember"
+        assert first_log["data"]["ok"] is True
+
+        assert second_log["type"] == "log_line"
+        assert second_log["data"]["message"] == "Tool execution failed"
+        assert second_log["data"]["ok"] is False
+
+        assert ping == {"type": "ping"}

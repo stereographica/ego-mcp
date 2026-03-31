@@ -6,6 +6,7 @@ import { TimeRangeControls } from '@/components/layout/time-range-controls'
 import { LogsTab } from '@/components/logs/logs-tab'
 import { NowTab } from '@/components/now/now-tab'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useDesireCatalog } from '@/hooks/use-desire-catalog'
 import { useDashboardSocket } from '@/hooks/use-dashboard-socket'
 import type { DateRange, TimeRangePreset } from '@/types'
 
@@ -32,6 +33,7 @@ const App = () => {
   const [customTo, setCustomTo] = useState('')
 
   const { current, logLines, connected } = useDashboardSocket()
+  const desireCatalog = useDesireCatalog()
 
   const range = useMemo<DateRange>(() => {
     if (preset !== 'custom') return makeRange(preset)
@@ -70,11 +72,20 @@ const App = () => {
         )}
 
         <TabsContent value="now">
-          <NowTab current={current} logLines={logLines} connected={connected} />
+          <NowTab
+            current={current}
+            logLines={logLines}
+            connected={connected}
+            desireCatalog={desireCatalog}
+          />
         </TabsContent>
 
         <TabsContent value="history">
-          <HistoryTab range={range} preset={preset} />
+          <HistoryTab
+            range={range}
+            preset={preset}
+            desireCatalog={desireCatalog}
+          />
         </TabsContent>
 
         <TabsContent value="logs">

@@ -5,6 +5,8 @@ import json
 import logging
 import threading
 from collections import deque
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol, TypedDict
@@ -13,6 +15,7 @@ import chromadb
 from fastapi import FastAPI, Query, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
+from ego_dashboard.desire_catalog import load_desire_catalog
 from ego_dashboard.ingestor import tail_jsonl_file
 from ego_dashboard.settings import DashboardSettings, load_settings
 from ego_dashboard.sql_store import SqlTelemetryStore
@@ -149,7 +152,7 @@ def _load_link_metadata(value: object) -> list[_MemoryLinkPayload]:
         return []
     try:
         payload = json.loads(value)
-    except (TypeError, json.JSONDecodeError):
+    except TypeError, json.JSONDecodeError:
         return []
     if not isinstance(payload, list):
         return []
@@ -180,7 +183,7 @@ def _load_notion_rows(settings: DashboardSettings) -> list[dict[str, object]]:
         return []
     try:
         payload = json.loads(notion_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         return []
     if not isinstance(payload, dict):
         return []
@@ -359,13 +362,18 @@ def _load_memory_network(settings: DashboardSettings) -> dict[str, object]:
     return {"nodes": nodes, "edges": edges}
 
 
-def _default_store() -> StoreProtocol:
-    settings = load_settings()
-    if settings.use_external_store and settings.database_url and settings.redis_url:
-        sql_store = SqlTelemetryStore(settings.database_url, settings.redis_url)
+def _default_store(settings: DashboardSettings | None = None) -> StoreProtocol:
+    app_settings = settings or load_settings()
+    desire_catalog = load_desire_catalog(app_settings.ego_mcp_data_dir)
+    if app_settings.use_external_store and app_settings.database_url and app_settings.redis_url:
+        sql_store = SqlTelemetryStore(
+            app_settings.database_url,
+            app_settings.redis_url,
+            desire_catalog=desire_catalog,
+        )
         sql_store.initialize()
         return sql_store
-    return TelemetryStore()
+    return TelemetryStore(desire_catalog=desire_catalog)
 
 
 def create_app(
@@ -373,7 +381,7 @@ def create_app(
     settings: DashboardSettings | None = None,
 ) -> FastAPI:
     app_settings = settings or load_settings()
-    telemetry = store or _default_store()
+    telemetry = store or _default_store(app_settings)
     use_local_inmemory_ingestor = (
         store is None
         and not app_settings.use_external_store
@@ -381,7 +389,39 @@ def create_app(
     )
     local_ingestor_thread: threading.Thread | None = None
     local_ingestor_stop_event: threading.Event | None = None
-    app = FastAPI(title="ego-mcp dashboard api")
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        nonlocal local_ingestor_thread, local_ingestor_stop_event
+        if use_local_inmemory_ingestor:
+            if local_ingestor_thread is None or not local_ingestor_thread.is_alive():
+                local_ingestor_stop_event = threading.Event()
+                local_ingestor_thread = threading.Thread(
+                    target=tail_jsonl_file,
+                    kwargs={
+                        "path": app_settings.log_path,
+                        "store": telemetry,
+                        "poll_seconds": app_settings.ingest_poll_seconds,
+                        "stop_event": local_ingestor_stop_event,
+                    },
+                    name="ego-dashboard-local-ingestor",
+                    daemon=True,
+                )
+                local_ingestor_thread.start()
+        try:
+            yield
+        finally:
+            if use_local_inmemory_ingestor:
+                if local_ingestor_stop_event is not None:
+                    local_ingestor_stop_event.set()
+                if local_ingestor_thread is not None and local_ingestor_thread.is_alive():
+                    local_ingestor_thread.join(
+                        timeout=max(1.0, app_settings.ingest_poll_seconds * 2)
+                    )
+                local_ingestor_thread = None
+                local_ingestor_stop_event = None
+
+    app = FastAPI(title="ego-mcp dashboard api", lifespan=lifespan)
     if app_settings.cors_allowed_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -390,37 +430,6 @@ def create_app(
             allow_methods=["*"],
             allow_headers=["*"],
         )
-
-    if use_local_inmemory_ingestor:
-
-        @app.on_event("startup")
-        async def _start_local_ingestor() -> None:
-            nonlocal local_ingestor_thread, local_ingestor_stop_event
-            if local_ingestor_thread is not None and local_ingestor_thread.is_alive():
-                return
-            local_ingestor_stop_event = threading.Event()
-            local_ingestor_thread = threading.Thread(
-                target=tail_jsonl_file,
-                kwargs={
-                    "path": app_settings.log_path,
-                    "store": telemetry,
-                    "poll_seconds": app_settings.ingest_poll_seconds,
-                    "stop_event": local_ingestor_stop_event,
-                },
-                name="ego-dashboard-local-ingestor",
-                daemon=True,
-            )
-            local_ingestor_thread.start()
-
-        @app.on_event("shutdown")
-        async def _stop_local_ingestor() -> None:
-            nonlocal local_ingestor_thread, local_ingestor_stop_event
-            if local_ingestor_stop_event is not None:
-                local_ingestor_stop_event.set()
-            if local_ingestor_thread is not None and local_ingestor_thread.is_alive():
-                local_ingestor_thread.join(timeout=max(1.0, app_settings.ingest_poll_seconds * 2))
-            local_ingestor_thread = None
-            local_ingestor_stop_event = None
 
     @app.get("/api/v1/current")
     def get_current() -> dict[str, object]:
@@ -466,6 +475,10 @@ def create_app(
         to_ts: datetime = Query(alias="to"),
     ) -> dict[str, object]:
         return {"items": telemetry.desire_metric_keys(from_ts, to_ts)}
+
+    @app.get("/api/v1/desires/catalog")
+    def get_desire_catalog() -> dict[str, object]:
+        return load_desire_catalog(app_settings.ego_mcp_data_dir).to_response()
 
     @app.get("/api/v1/logs")
     def get_logs(

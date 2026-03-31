@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -95,3 +96,19 @@ async def test_sdk_wake_up_smoke(tmp_path: Path) -> None:
         assert len(texts) == 1
         assert "No introspection yet." in texts[0]
         assert "Desires:" in texts[0]
+
+
+@pytest.mark.anyio
+async def test_sdk_returns_tool_error_for_invalid_desire_catalog(tmp_path: Path) -> None:
+    data_dir = tmp_path / "ego-data"
+    settings_path = data_dir / "settings" / "desires.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(
+        json.dumps({"version": 1, "fixed_desires": {}, "implicit_rules": [], "emergent": {}}),
+        encoding="utf-8",
+    )
+
+    async with _open_session(tmp_path) as (session, _init):
+        result = await session.call_tool("wake_up", {})
+        assert result.isError is True
+        assert "Invalid desire catalog" in _extract_texts(result)[0]

@@ -74,7 +74,7 @@ def memory(
 
 @pytest.fixture
 def desire(config: EgoConfig) -> DesireEngine:
-    return DesireEngine(config.data_dir / "desires.json")
+    return DesireEngine.from_data_dir(config.data_dir)
 
 
 @pytest.fixture

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
 from ego_dashboard.constants import DESIRE_METRIC_KEYS
+from ego_dashboard.desire_catalog import DesireCatalog, DesireCatalogItem
 from ego_dashboard.sql_store import SqlTelemetryStore
 
 
@@ -69,6 +70,8 @@ def _patch_store(
     monkeypatch: pytest.MonkeyPatch,
     latest_payload: dict[str, object],
     rows: list[tuple[Any, ...] | None],
+    *,
+    desire_catalog: DesireCatalog | None = None,
 ) -> SqlTelemetryStore:
     fake_redis = _FakeRedis(json.dumps(latest_payload))
     monkeypatch.setattr(
@@ -79,7 +82,30 @@ def _patch_store(
         "ego_dashboard.sql_store.psycopg.connect",
         lambda *_args, **_kwargs: _FakeConnection(rows),
     )
-    return SqlTelemetryStore("postgresql://unused", "redis://unused")
+    return SqlTelemetryStore(
+        "postgresql://unused",
+        "redis://unused",
+        desire_catalog=desire_catalog,
+    )
+
+
+def _catalog(*fixed_ids: tuple[str, str, int] | tuple[str, str]) -> DesireCatalog:
+    items = []
+    for raw in fixed_ids:
+        if len(raw) == 3:
+            desire_id, display_name, maslow_level = raw
+        else:
+            desire_id, display_name = raw
+            maslow_level = 1
+        items.append(
+            DesireCatalogItem(
+                id=desire_id,
+                display_name=display_name,
+                satisfaction_hours=24.0,
+                maslow_level=maslow_level,
+            )
+        )
+    return DesireCatalog(version=1, fixed_desires=tuple(items))
 
 
 def test_tool_usage_prefers_log_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -131,6 +157,112 @@ def test_tool_usage_prefers_log_invocations(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert rows == [{"ts": bucket_ts.isoformat(), "remember": 1}]
     assert sum("FROM tool_events" in sql for sql in executed) == 0
+
+
+def test_sql_store_initialize_ingest_and_checkpoint_methods(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ego_dashboard.models import DashboardEvent, LogEvent
+
+    statements: list[tuple[str, tuple[Any, ...] | None]] = []
+    commits = 0
+    redis_values: dict[str, str] = {}
+
+    class _RecordingRedis:
+        def set(self, key: str, value: str) -> None:
+            redis_values[key] = value
+
+    class _RecordingCursor:
+        def __init__(self) -> None:
+            self._sql = ""
+
+        def execute(self, query: object, params: object | None = None) -> None:
+            self._sql = str(query)
+            tuple_params: tuple[Any, ...] | None = None
+            if isinstance(params, tuple):
+                tuple_params = params
+            statements.append((self._sql, tuple_params))
+
+        def fetchone(self) -> tuple[Any, ...] | None:
+            if "SELECT inode, byte_offset" in self._sql:
+                return (42, 7)
+            return None
+
+        def fetchall(self) -> list[tuple[Any, ...]]:
+            return []
+
+        def __enter__(self) -> _RecordingCursor:
+            return self
+
+        def __exit__(self, *_args: object) -> Literal[False]:
+            return False
+
+    class _RecordingConnection:
+        def cursor(self) -> _RecordingCursor:
+            return _RecordingCursor()
+
+        def commit(self) -> None:
+            nonlocal commits
+            commits += 1
+
+        def __enter__(self) -> _RecordingConnection:
+            return self
+
+        def __exit__(self, *_args: object) -> Literal[False]:
+            return False
+
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _RecordingRedis(),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _RecordingConnection(),
+    )
+
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+    store.initialize()
+    store.ingest(
+        DashboardEvent(
+            ts=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+            event_type="tool_call_completed",
+            tool_name="remember",
+            ok=True,
+            duration_ms=10,
+            emotion_primary="curious",
+            emotion_intensity=0.4,
+            numeric_metrics={"intensity": 0.4},
+            string_metrics={"time_phase": "night"},
+            params={"time_phase": "night"},
+            private=False,
+            message="ok",
+        )
+    )
+    store.ingest_log(
+        LogEvent(
+            ts=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+            level="INFO",
+            logger="ego_mcp.server",
+            message="secret",
+            private=True,
+            fields={"tool_name": "remember"},
+        )
+    )
+
+    assert "dashboard:current" in redis_values
+    assert any("CREATE EXTENSION IF NOT EXISTS timescaledb" in sql for sql, _ in statements)
+    assert any("INSERT INTO tool_events" in sql for sql, _ in statements)
+    assert any("INSERT INTO log_events" in sql for sql, _ in statements)
+    assert any(
+        "INSERT INTO log_events" in sql and params is not None and params[3] == "REDACTED"
+        for sql, params in statements
+    )
+    assert commits >= 3
+    assert store.load_checkpoint("/tmp/ego.log") == (42, 7)
+
+    store.save_checkpoint("/tmp/ego.log", 99, 123)
+
+    assert any("INSERT INTO ingestion_checkpoints" in sql for sql, _ in statements)
 
 
 def test_tool_usage_falls_back_to_terminal_events_when_logs_are_missing(
@@ -225,6 +357,33 @@ def test_current_includes_latest_emotion_and_backfills_latest(
     assert latest_emotion["emotion_intensity"] == 0.7
     assert latest_emotion["valence"] == 0.2
     assert latest_emotion["arousal"] == 0.8
+
+
+def test_current_returns_default_payload_when_no_latest_event_is_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(None),
+    )
+
+    def _unexpected_connect(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("database should not be queried when dashboard:current is missing")
+
+    monkeypatch.setattr("ego_dashboard.sql_store.psycopg.connect", _unexpected_connect)
+
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+
+    assert store.current() == {
+        "latest": None,
+        "latest_emotion": None,
+        "latest_relationship": None,
+        "tool_calls_per_min": 0,
+        "error_rate": 0.0,
+        "window_24h": {"tool_calls": 0, "error_rate": 0.0},
+        "latest_desires": {},
+        "latest_emergent_desires": {},
+    }
 
 
 def test_current_latest_emotion_null_when_query_has_no_rows(
@@ -349,6 +508,36 @@ def test_current_includes_latest_relationship(
     assert latest_relationship["shared_episodes_count"] == 3.0
 
 
+def test_current_redacts_private_latest_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest_ts = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store = _patch_store(
+        monkeypatch,
+        latest_payload={
+            "ts": latest_ts.isoformat(),
+            "tool_name": "remember",
+            "private": True,
+            "message": "secret",
+        },
+        rows=[
+            (1, 0),
+            (5, 1),
+            (0, 0),
+            (0, 0),
+            None,
+            None,
+            ({"curiosity": 0.8},),
+        ],
+    )
+
+    current = store.current()
+    latest = cast(dict[str, object], current["latest"])
+
+    assert latest["message"] == "REDACTED"
+    assert current["latest_desires"] == {"curiosity": 0.8}
+
+
 def test_current_latest_relationship_query_filters_trust_level_metric(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -440,6 +629,74 @@ def test_desire_metric_keys_reads_dynamic_keys_from_feel_desires_events(
     )
 
     assert keys == ["You want to feel safe.", "curiosity"]
+
+
+def test_current_and_desire_keys_follow_catalog_and_hide_removed_legacy_fixed_desires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest_ts = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store = _patch_store(
+        monkeypatch,
+        latest_payload={
+            "ts": latest_ts.isoformat(),
+            "tool_name": "feel_desires",
+            "private": False,
+        },
+        rows=[
+            (1, 0),
+            (5, 1),
+            (0, 0),
+            (0, 0),
+            None,
+            None,
+            (
+                {
+                    "social_thirst": 0.4,
+                    "custom_focus": 0.9,
+                    "predictability": 0.6,
+                    "You want to feel safe.": 0.5,
+                    "impulse_boost_amount": 0.2,
+                },
+            ),
+        ],
+        desire_catalog=_catalog(
+            ("social_thirst", "Social Thirst"),
+            ("custom_focus", "Custom Focus", 2),
+        ),
+    )
+
+    current = store.current()
+    assert current["latest_desires"] == {
+        "social_thirst": 0.4,
+        "custom_focus": 0.9,
+    }
+    assert current["latest_emergent_desires"] == {
+        "You want to feel safe.": 0.5,
+    }
+
+    class _KeyConnection(_FakeConnection):
+        def __init__(self) -> None:
+            self._cursor = _FakeCursor(
+                [],
+                all_rows=[
+                    (
+                        {
+                            "social_thirst": 0.4,
+                            "custom_focus": 0.9,
+                            "predictability": 0.6,
+                            "You want to feel safe.": 0.5,
+                            "impulse_boost_amount": 0.2,
+                        },
+                    )
+                ],
+            )
+
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _KeyConnection(),
+    )
+    keys = store.desire_metric_keys(latest_ts - timedelta(minutes=5), latest_ts)
+    assert keys == ["You want to feel safe.", "custom_focus", "social_thirst"]
 
 
 def test_notion_history_prefers_per_notion_confidence_mapping(

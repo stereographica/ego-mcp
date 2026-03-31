@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ from ego_mcp._server_runtime import (
 from ego_mcp.config import EgoConfig
 from ego_mcp.consolidation import ConsolidationStats, MergeCandidate
 from ego_mcp.desire import DesireEngine
+from ego_mcp.desire_catalog import default_desire_catalog, desire_catalog_settings_path
 from ego_mcp.embedding import EgoEmbeddingFunction, EmbeddingProvider
 from ego_mcp.memory import MemoryStore
 from ego_mcp.notion import NotionStore
@@ -45,7 +47,7 @@ def _seed_high_desire(desire: DesireEngine, name: str) -> float:
 
 @pytest.fixture
 def desire(tmp_path: Path) -> DesireEngine:
-    return DesireEngine(tmp_path / "desires.json")
+    return DesireEngine.from_data_dir(tmp_path)
 
 
 @pytest.fixture(autouse=True)
@@ -90,6 +92,38 @@ class TestImplicitSatisfactionFromServer:
         assert after < before
 
     @pytest.mark.asyncio
+    async def test_remember_succeeds_when_catalog_is_invalid(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        catalog_path = desire_catalog_settings_path(tmp_path)
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text('{"version": 1, "fixed_desires": {}}', encoding="utf-8")
+        invalid_desire = DesireEngine.from_data_dir(tmp_path)
+
+        async def fake_handle_remember(
+            _config: object,
+            _memory: object,
+            _args: dict[str, object],
+        ) -> str:
+            return "saved despite invalid desires"
+
+        monkeypatch.setattr(server_mod, "_handle_remember", fake_handle_remember)
+
+        result = await server_mod._dispatch(
+            "remember",
+            {"content": "note", "category": "daily"},
+            cast(Any, SimpleNamespace(companion_name="Master")),
+            cast(Any, object()),
+            invalid_desire,
+            cast(Any, object()),
+            cast(Any, object()),
+        )
+
+        assert result == "saved despite invalid desires"
+
+    @pytest.mark.asyncio
     async def test_consider_them_lowers_social_thirst_after_tool_call(
         self,
         desire: DesireEngine,
@@ -101,6 +135,7 @@ class TestImplicitSatisfactionFromServer:
             _config: object,
             _memory: object,
             _args: dict[str, object],
+            _desire: object | None = None,
         ) -> str:
             return "considered"
 
@@ -403,6 +438,44 @@ class TestImplicitSatisfactionFromServer:
 
         assert "Impressions of Master:" in text
         assert "Working together feels easy" in text
+
+    @pytest.mark.asyncio
+    async def test_handle_consider_them_hides_predictability_scaffold_when_removed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        config = EgoConfig(
+            embedding_provider="gemini",
+            embedding_model="gemini-embedding-001",
+            api_key="test-key",
+            data_dir=tmp_path,
+            companion_name="Master",
+            workspace_dir=None,
+            timezone="UTC",
+        )
+        settings_path = tmp_path / "settings" / "desires.json"
+        payload = default_desire_catalog().model_dump(mode="json")
+        del payload["fixed_desires"]["predictability"]
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        desire = DesireEngine.from_data_dir(tmp_path)
+
+        class FakeMemoryStore:
+            async def list_recent(
+                self,
+                n: int = 200,
+                category_filter: str | None = None,
+            ) -> list[Memory]:
+                return []
+
+        text = await core_surface_mod._handle_consider_them(
+            config,
+            cast(Any, FakeMemoryStore()),
+            {"person": "Master"},
+            desire,
+        )
+
+        assert "predictability" not in text
 
     @pytest.mark.asyncio
     async def test_handle_consider_them_omits_impressions_without_matching_notions(
@@ -749,6 +822,65 @@ class TestImplicitSatisfactionFromServer:
         assert desire_levels["curiosity"] == 0.8
 
     @pytest.mark.asyncio
+    async def test_handle_feel_desires_does_not_reintroduce_removed_fixed_desires(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        settings_path = tmp_path / "settings" / "desires.json"
+        payload = default_desire_catalog().model_dump(mode="json")
+        del payload["fixed_desires"]["curiosity"]
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        desire = DesireEngine.from_data_dir(tmp_path)
+
+        class FakeNotionStore:
+            def list_all(self) -> list[Notion]:
+                return []
+
+        class FakeImpulseManager:
+            def consume_event(self) -> dict[str, object]:
+                return {
+                    "impulse_boost_triggered": True,
+                    "impulse_source_memory_id": "mem_proust",
+                    "impulse_boosted_desire": "curiosity",
+                    "impulse_boost_amount": 0.15,
+                }
+
+            def consume_boosts(self) -> dict[str, float]:
+                return {"curiosity": 0.15}
+
+        async def fake_derive_desire_modulation(
+            _memory: object,
+        ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+            return {}, {}, {}
+
+        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
+        monkeypatch.setattr(
+            core_surface_mod,
+            "get_impulse_manager",
+            lambda: FakeImpulseManager(),
+        )
+        monkeypatch.setattr(server_mod, "_derive_desire_modulation", fake_derive_desire_modulation)
+        monkeypatch.setattr(
+            server_mod,
+            "get_body_state",
+            lambda: {"time_phase": "morning", "system_load": "low"},
+        )
+
+        text = await server_mod._handle_feel_desires(
+            cast(Any, SimpleNamespace(companion_name="Master", data_dir=tmp_path)),
+            cast(Any, object()),
+            desire,
+        )
+
+        metadata = get_tool_metadata()
+        desire_levels = cast(dict[str, float], metadata["desire_levels"])
+        assert "curiosity" not in desire_levels
+        assert metadata["impulse_boost_triggered"] is False
+        assert "You need to know something." not in text
+
+    @pytest.mark.asyncio
     async def test_call_tool_registers_proust_impulse_event(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1057,6 +1189,46 @@ class TestWakeUpServerHandler:
         assert "[high]" not in text
         assert "[mid]" not in text
         assert "[low]" not in text
+
+    @pytest.mark.asyncio
+    async def test_handle_introspect_hides_predictability_scaffold_when_removed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        settings_path = tmp_path / "settings" / "desires.json"
+        payload = default_desire_catalog().model_dump(mode="json")
+        del payload["fixed_desires"]["predictability"]
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        desire = DesireEngine.from_data_dir(tmp_path)
+
+        class FakeMemoryStore:
+            async def list_recent(self, n: int = 10) -> list[Memory]:
+                return []
+
+        async def fake_relationship_snapshot(
+            _config: object, _memory: object, _person: str
+        ) -> str:
+            return "relationship snapshot"
+
+        async def fake_derive_desire_modulation(
+            _memory: object,
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+            return {}, {}, {}
+
+        monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
+        monkeypatch.setattr(server_mod, "_derive_desire_modulation", fake_derive_desire_modulation)
+
+        text = await server_mod._handle_introspect(
+            cast(Any, SimpleNamespace(companion_name="Master", data_dir=tmp_path)),
+            cast(Any, FakeMemoryStore()),
+            desire,
+        )
+
+        assert "consider satisfying predictability" not in text
 
     @pytest.mark.asyncio
     async def test_handle_introspect_includes_conceptual_framework(

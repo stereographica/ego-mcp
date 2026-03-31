@@ -193,3 +193,121 @@ def up(data_dir: Path) -> None:
 
         assert applied == []
         assert not (data_dir / "helper.txt").exists()
+
+
+class TestDesireStateSplitMigration:
+    def test_0005_copies_legacy_state_to_new_location_and_filters_unknown_fixed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        migration_mod = __import__(
+            "ego_mcp.migrations.0005_desire_state_split",
+            fromlist=["up"],
+        )
+        legacy_path = tmp_path / "desires.json"
+        legacy_path.write_text(
+            json.dumps(
+                {
+                    "curiosity": {
+                        "last_satisfied": "2024-01-01T00:00:00+00:00",
+                        "satisfaction_quality": 0.8,
+                        "boost": 0.1,
+                        "is_emergent": False,
+                        "created": "",
+                    },
+                    "legacy_fixed": {
+                        "last_satisfied": "2024-01-01T00:00:00+00:00",
+                        "satisfaction_quality": 0.5,
+                        "boost": 0.0,
+                        "is_emergent": False,
+                        "created": "",
+                    },
+                    "You want to feel safe.": {
+                        "last_satisfied": "",
+                        "satisfaction_quality": 0.5,
+                        "boost": 0.0,
+                        "is_emergent": True,
+                        "created": "2024-01-01T00:00:00+00:00",
+                        "satisfaction_hours": 24.0,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        migration_mod.up(tmp_path)
+
+        new_payload = json.loads((tmp_path / "desire_state.json").read_text(encoding="utf-8"))
+        assert "curiosity" in new_payload
+        assert "legacy_fixed" not in new_payload
+        assert "You want to feel safe." in new_payload
+        assert json.loads(legacy_path.read_text(encoding="utf-8"))["curiosity"][
+            "satisfaction_quality"
+        ] == 0.8
+
+    def test_0005_is_idempotent_when_new_state_already_exists(self, tmp_path: Path) -> None:
+        migration_mod = __import__(
+            "ego_mcp.migrations.0005_desire_state_split",
+            fromlist=["up"],
+        )
+        (tmp_path / "desires.json").write_text(
+            json.dumps({"curiosity": {"satisfaction_quality": 0.2}}),
+            encoding="utf-8",
+        )
+        (tmp_path / "desire_state.json").write_text(
+            json.dumps({"curiosity": {"satisfaction_quality": 0.9}}),
+            encoding="utf-8",
+        )
+
+        migration_mod.up(tmp_path)
+
+        payload = json.loads((tmp_path / "desire_state.json").read_text(encoding="utf-8"))
+        assert payload["curiosity"]["satisfaction_quality"] == 0.9
+
+    def test_0005_noops_for_invalid_legacy_json(self, tmp_path: Path) -> None:
+        migration_mod = __import__(
+            "ego_mcp.migrations.0005_desire_state_split",
+            fromlist=["up"],
+        )
+        (tmp_path / "desires.json").write_text("{broken", encoding="utf-8")
+
+        migration_mod.up(tmp_path)
+
+        assert not (tmp_path / "desire_state.json").exists()
+
+    def test_0005_noops_for_non_object_legacy_payload(self, tmp_path: Path) -> None:
+        migration_mod = __import__(
+            "ego_mcp.migrations.0005_desire_state_split",
+            fromlist=["up"],
+        )
+        (tmp_path / "desires.json").write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+
+        migration_mod.up(tmp_path)
+
+        assert not (tmp_path / "desire_state.json").exists()
+
+    def test_0005_skips_non_string_or_non_object_entries(self, tmp_path: Path) -> None:
+        migration_mod = __import__(
+            "ego_mcp.migrations.0005_desire_state_split",
+            fromlist=["up"],
+        )
+        (tmp_path / "desires.json").write_text(
+            json.dumps(
+                {
+                    "curiosity": {"satisfaction_quality": 0.8, "is_emergent": False},
+                    "bad_raw": "not-an-object",
+                    "You want to feel safe.": {
+                        "satisfaction_quality": 0.5,
+                        "is_emergent": True,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        migration_mod.up(tmp_path)
+
+        payload = json.loads((tmp_path / "desire_state.json").read_text(encoding="utf-8"))
+        assert set(payload.keys()) == {"curiosity", "You want to feel safe."}

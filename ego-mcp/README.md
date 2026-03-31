@@ -44,9 +44,65 @@ export EGO_MCP_WORKSPACE_DIR="/path/to/openclaw-workspace"
 ### 3. Verify
 
 ```bash
-uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 0.4.3
+uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 0.6.0
 uv run python -m ego_mcp  # Starts the server
 ```
+
+### 4. Desire Catalog
+
+Starting with `ego-mcp` v0.6.0, fixed desire definitions are stored in `${EGO_MCP_DATA_DIR}/settings/desires.json`.
+If `settings/` or `settings/desires.json` does not exist at startup, the server generates the current default file directly from the Python schema.
+
+State is now stored separately in `${EGO_MCP_DATA_DIR}/desire_state.json`.
+The old `${EGO_MCP_DATA_DIR}/desires.json` from v0.5.x and earlier is treated as legacy state and safely copied into `desire_state.json` on first startup.
+
+`settings/desires.json` overview:
+
+```json
+{
+  "version": 1,
+  "fixed_desires": {
+    "information_hunger": {
+      "display_name": "information hunger",
+      "satisfaction_hours": 12,
+      "maslow_level": 1,
+      "sentence": {
+        "medium": "You want to take something in.",
+        "high": "You're starving for input."
+      },
+      "implicit_satisfaction": {
+        "recall": 0.3
+      }
+    }
+  },
+  "implicit_rules": [
+    {
+      "tool": "remember",
+      "when": {"category": "introspection"},
+      "effects": [{"id": "cognitive_coherence", "quality": 0.4}]
+    }
+  ],
+  "emergent": {
+    "satisfaction_hours": 24,
+    "expiry_hours": 72,
+    "satisfied_ttl_hours": 168
+  }
+}
+```
+
+Editing rules:
+
+- Only desires that remain in `fixed_desires` are treated as existing.
+- If you omit a built-in desire, it is hidden in both `ego-mcp` and the dashboard, and any historical state for it is treated as nonexistent.
+- You can adjust the wording, `satisfaction_hours`, and `implicit_satisfaction` of built-in desires.
+- You can add custom fixed desires under `fixed_desires`.
+- `sentence.medium` and `sentence.high` are reflected in the blended language used by the dashboard, `wake_up`, `feel_desires`, and `introspect`.
+
+If the settings violate the schema:
+
+- The server still starts.
+- `wake_up`, `feel_desires`, `introspect`, and `satisfy_desire` return an MCP tool error so the LLM can see the configuration problem.
+- Tools such as `remember`, where desire updates are only a side effect, continue their main work and skip only the implicit desire update.
 
 ## Connecting to OpenClaw (via mcporter)
 
@@ -168,6 +224,12 @@ uv run mypy src/ego_mcp/
 ```
 
 ## Troubleshooting
+
+### Upgrading from v0.5.x
+
+When upgrading from v0.5.x or earlier, you do not need to delete the existing `${EGO_MCP_DATA_DIR}/desires.json`.
+v0.6.0 reads that file as legacy state and migrates it into `${EGO_MCP_DATA_DIR}/desire_state.json`.
+The dashboard also reads `${EGO_MCP_DATA_DIR}/settings/desires.json` as the source of truth for the fixed desire catalog.
 
 ### `hashlib blake2*` error when running `uv`
 

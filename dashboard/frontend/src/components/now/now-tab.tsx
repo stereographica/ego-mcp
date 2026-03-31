@@ -5,15 +5,21 @@ import { DesireRadar } from '@/components/now/desire-radar'
 import { EmotionStatus } from '@/components/now/emotion-status'
 import { RelationshipStatus } from '@/components/now/relationship-status'
 import { SessionSummary } from '@/components/now/session-summary'
-import type { CurrentResponse, LogLine } from '@/types'
+import type { CurrentResponse, DesireCatalogItem, LogLine } from '@/types'
 
 type NowTabProps = {
   current: CurrentResponse | null
   logLines: LogLine[]
   connected: boolean
+  desireCatalog: DesireCatalogItem[]
 }
 
-export const NowTab = ({ current, logLines, connected }: NowTabProps) => (
+export const NowTab = ({
+  current,
+  logLines,
+  connected,
+  desireCatalog,
+}: NowTabProps) => (
   <div className="space-y-4">
     <SessionSummary />
     <div className="grid gap-4 lg:grid-cols-2">
@@ -21,7 +27,7 @@ export const NowTab = ({ current, logLines, connected }: NowTabProps) => (
       <RelationshipStatus current={current} />
     </div>
     <div className="grid gap-4 lg:grid-cols-2">
-      <DesireRadar current={current} />
+      <DesireRadar current={current} desireCatalog={desireCatalog} />
       <CircumplexCard current={current} />
     </div>
     <div className="grid gap-4 lg:grid-cols-2">

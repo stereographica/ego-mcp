@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import psycopg
 from redis import Redis
 
-from ego_dashboard.constants import DESIRE_METRIC_KEYS
+from ego_dashboard.desire_catalog import DesireCatalog, default_desire_catalog
 from ego_dashboard.models import DashboardEvent, LogEvent
 from ego_dashboard.telemetry_identity import dashboard_event_dedupe_key, log_event_dedupe_key
 
@@ -21,7 +21,7 @@ def _parse_notion_confidences(value: object) -> dict[str, float]:
         return {}
     try:
         payload = json.loads(value)
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except TypeError, ValueError, json.JSONDecodeError:
         return {}
     if not isinstance(payload, dict):
         return {}
@@ -94,9 +94,20 @@ def _dense_usage_rows(
 
 
 class SqlTelemetryStore:
-    def __init__(self, database_url: str, redis_url: str) -> None:
+    def __init__(
+        self,
+        database_url: str,
+        redis_url: str,
+        *,
+        desire_catalog: DesireCatalog | None = None,
+    ) -> None:
         self._db_url = database_url
         self._redis = Redis.from_url(redis_url, decode_responses=True)
+        self._desire_catalog = desire_catalog or default_desire_catalog()
+
+    @property
+    def desire_catalog(self) -> DesireCatalog:
+        return self._desire_catalog
 
     def initialize(self) -> None:
         with psycopg.connect(self._db_url) as conn:
@@ -366,7 +377,7 @@ class SqlTelemetryStore:
             if not isinstance(numeric_metrics, dict):
                 continue
             for key in numeric_metrics:
-                if isinstance(key, str) and (key in DESIRE_METRIC_KEYS or "want" in key.lower()):
+                if isinstance(key, str) and self._desire_catalog.is_visible_desire_metric(key):
                     keys.add(key)
         return sorted(keys)
 
@@ -707,13 +718,10 @@ class SqlTelemetryStore:
                 latest_desire_row = cur.fetchone()
                 latest_desires: dict[str, float] = {}
                 if latest_desire_row is not None and isinstance(latest_desire_row[0], dict):
-                    excluded = {"intensity", "valence", "arousal", "impulse_boost_amount"}
                     for key, value in latest_desire_row[0].items():
-                        if key in excluded:
-                            continue
                         if (
                             isinstance(key, str)
-                            and (key in DESIRE_METRIC_KEYS or "want" in key.lower())
+                            and self._desire_catalog.is_visible_desire_metric(key)
                             and isinstance(value, (int, float))
                         ):
                             latest_desires[key] = float(value)
@@ -775,12 +783,9 @@ class SqlTelemetryStore:
                     else None
                 ),
             }
-        latest_fixed_desires = {
-            key: value for key, value in latest_desires.items() if key in DESIRE_METRIC_KEYS
-        }
-        latest_emergent_desires = {
-            key: value for key, value in latest_desires.items() if key not in DESIRE_METRIC_KEYS
-        }
+        latest_fixed_desires, latest_emergent_desires = self._desire_catalog.split_desire_metrics(
+            latest_desires
+        )
         return {
             "latest": latest,
             "latest_emotion": latest_emotion,

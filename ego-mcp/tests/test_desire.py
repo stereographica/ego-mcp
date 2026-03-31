@@ -11,6 +11,13 @@ from pathlib import Path
 import pytest
 
 from ego_mcp.desire import DESIRES, DesireEngine, _calculate_sigmoid_level
+from ego_mcp.desire_blend import blend_desires
+from ego_mcp.desire_catalog import (
+    DesireConfigurationError,
+    default_desire_catalog,
+    desire_catalog_settings_path,
+    load_desire_catalog,
+)
 from ego_mcp.types import Emotion, Notion
 
 
@@ -61,8 +68,7 @@ class TestDesireEngine:
 
     @pytest.fixture
     def engine(self, tmp_path: Path) -> DesireEngine:
-        state_path = tmp_path / "desires.json"
-        return DesireEngine(state_path)
+        return DesireEngine.from_data_dir(tmp_path)
 
     def test_compute_levels_returns_all_desires(self, engine: DesireEngine) -> None:
         levels = engine.compute_levels()
@@ -201,27 +207,181 @@ class TestDesirePersistence:
     """Test save/load state."""
 
     def test_save_and_load(self, tmp_path: Path) -> None:
-        state_path = tmp_path / "desires.json"
+        state_path = tmp_path / "desire_state.json"
 
-        engine1 = DesireEngine(state_path)
+        engine1 = DesireEngine.from_data_dir(tmp_path)
         engine1.satisfy("curiosity", quality=0.9)
 
         # New engine loads the saved state
-        engine2 = DesireEngine(state_path)
+        engine2 = DesireEngine.from_data_dir(tmp_path)
         state = engine2._state
         assert state["curiosity"]["satisfaction_quality"] == 0.9
-
-    def test_state_file_created(self, tmp_path: Path) -> None:
-        state_path = tmp_path / "desires.json"
-        DesireEngine(state_path)
         assert state_path.exists()
 
+    def test_state_file_created(self, tmp_path: Path) -> None:
+        DesireEngine.from_data_dir(tmp_path)
+        assert (tmp_path / "desire_state.json").exists()
+        assert desire_catalog_settings_path(tmp_path).exists()
+
     def test_corrupt_file_reinits(self, tmp_path: Path) -> None:
-        state_path = tmp_path / "desires.json"
+        state_path = tmp_path / "desire_state.json"
         state_path.write_text("corrupt json{{{")
-        engine = DesireEngine(state_path)
+        engine = DesireEngine.from_data_dir(tmp_path)
         # Should have reinitialized
         assert set(engine._state.keys()) == set(DESIRES.keys())
+
+    def test_load_state_drops_unknown_fixed_desires_and_keeps_emergent(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        catalog_path = desire_catalog_settings_path(tmp_path)
+        payload = default_desire_catalog().model_dump(mode="json")
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        state_path = tmp_path / "desire_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "legacy_fixed_desire": {
+                        "last_satisfied": "2024-01-01T00:00:00+00:00",
+                        "satisfaction_quality": 0.9,
+                        "boost": 0.0,
+                        "is_emergent": False,
+                        "created": "",
+                    },
+                    "You want to feel safe.": {
+                        "last_satisfied": "",
+                        "satisfaction_quality": 0.5,
+                        "boost": 0.0,
+                        "is_emergent": True,
+                        "created": "2024-01-01T00:00:00+00:00",
+                        "satisfaction_hours": 24.0,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        engine = DesireEngine(state_path, catalog_path=catalog_path)
+
+        assert "legacy_fixed_desire" not in engine._state
+        assert "You want to feel safe." in engine._state
+
+
+class TestDesireCatalog:
+    def test_default_catalog_matches_legacy_defaults(self) -> None:
+        catalog = default_desire_catalog()
+        assert catalog.legacy_desires() == DESIRES
+
+    def test_catalog_allows_omitted_builtin_desires(self, tmp_path: Path) -> None:
+        path = desire_catalog_settings_path(tmp_path)
+        payload = default_desire_catalog().model_dump(mode="json")
+        del payload["fixed_desires"]["social_thirst"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        catalog = load_desire_catalog(path)
+        engine = DesireEngine.from_data_dir(tmp_path)
+
+        assert "social_thirst" not in catalog.fixed_desires
+        assert "social_thirst" not in engine.compute_levels()
+        with pytest.raises(ValueError, match="Unknown desire: social_thirst"):
+            engine.satisfy("social_thirst")
+
+    def test_load_catalog_reports_json_decode_error_with_location(self, tmp_path: Path) -> None:
+        path = desire_catalog_settings_path(tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{broken", encoding="utf-8")
+
+        with pytest.raises(DesireConfigurationError, match="JSON decode error at line 1 column 2"):
+            load_desire_catalog(path)
+
+    def test_load_catalog_reports_validation_paths(self, tmp_path: Path) -> None:
+        path = desire_catalog_settings_path(tmp_path)
+        payload = default_desire_catalog().model_dump(mode="json")
+        payload["fixed_desires"]["curiosity"]["implicit_satisfaction"]["recall"] = 1.5
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        with pytest.raises(
+            DesireConfigurationError,
+            match="fixed_desires.curiosity: Value error, implicit_satisfaction.recall",
+        ):
+            load_desire_catalog(path)
+
+    def test_load_catalog_raises_when_file_cannot_be_read(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        path = desire_catalog_settings_path(tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+
+        def raise_os_error(*_args: object, **_kwargs: object) -> object:
+            raise OSError("permission denied")
+
+        monkeypatch.setattr("builtins.open", raise_os_error)
+
+        with pytest.raises(DesireConfigurationError, match="Failed to read desire catalog"):
+            load_desire_catalog(path)
+
+    def test_custom_fixed_desire_participates_in_levels_and_blending(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        path = desire_catalog_settings_path(tmp_path)
+        payload = default_desire_catalog().model_dump(mode="json")
+        payload["fixed_desires"]["novelty_drive"] = {
+            "display_name": "novelty drive",
+            "satisfaction_hours": 10,
+            "maslow_level": 2,
+            "sentence": {
+                "medium": "Something new keeps tugging at you.",
+                "high": "You need something unfamiliar.",
+            },
+            "implicit_satisfaction": {"recall": 0.25},
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        engine = DesireEngine.from_data_dir(tmp_path)
+        engine._state["novelty_drive"]["last_satisfied"] = (
+            datetime.now(timezone.utc) - timedelta(days=10)
+        ).isoformat()
+
+        levels = engine.compute_levels()
+        assert "novelty_drive" in levels
+        assert engine.satisfy("novelty_drive", quality=0.8) < 1.0
+        assert (
+            blend_desires(
+                {"novelty_drive": 0.75},
+                catalog=engine.catalog,
+            )
+            == "You need something unfamiliar."
+        )
+
+    def test_omitted_builtin_does_not_break_stale_implicit_rules(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        path = desire_catalog_settings_path(tmp_path)
+        payload = default_desire_catalog().model_dump(mode="json")
+        del payload["fixed_desires"]["cognitive_coherence"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        engine = DesireEngine.from_data_dir(tmp_path)
+        old_time = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        engine._state["expression"]["last_satisfied"] = old_time
+
+        engine.satisfy_implicit("remember", category="introspection")
+
+        assert "cognitive_coherence" not in engine.compute_levels()
+        assert engine._state["expression"]["last_satisfied"] != old_time
 
 
 class TestImplicitSatisfaction:
@@ -229,7 +389,7 @@ class TestImplicitSatisfaction:
 
     @pytest.fixture
     def engine(self, tmp_path: Path) -> DesireEngine:
-        return DesireEngine(tmp_path / "desires.json")
+        return DesireEngine.from_data_dir(tmp_path)
 
     def test_recall_updates_information_hunger_and_curiosity(
         self, engine: DesireEngine
@@ -293,7 +453,7 @@ class TestImplicitSatisfaction:
 class TestEmergentDesires:
     @pytest.fixture
     def engine(self, tmp_path: Path) -> DesireEngine:
-        return DesireEngine(tmp_path / "desires.json")
+        return DesireEngine.from_data_dir(tmp_path)
 
     def test_generate_emergent_desires_from_high_confidence_notion(
         self, engine: DesireEngine
