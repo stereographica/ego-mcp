@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
@@ -10,6 +11,9 @@ from redis import Redis
 from ego_dashboard.desire_catalog import DesireCatalog, default_desire_catalog
 from ego_dashboard.models import DashboardEvent, LogEvent
 from ego_dashboard.telemetry_identity import dashboard_event_dedupe_key, log_event_dedupe_key
+
+logger = logging.getLogger(__name__)
+_TOOL_OUTPUT_CHARS_CLEANUP_MIGRATION = "20260401_remove_tool_output_chars_metric"
 
 
 def _escape_ilike_pattern(value: str) -> str:
@@ -187,7 +191,59 @@ class SqlTelemetryStore:
                     )
                     """
                 )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS dashboard_migrations (
+                      name TEXT PRIMARY KEY,
+                      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                    """
+                )
+                self._apply_dashboard_migrations(cur)
             conn.commit()
+
+    def _apply_dashboard_migrations(self, cur: psycopg.Cursor[object]) -> None:
+        self._apply_tool_events_cleanup_migration(
+            cur,
+            _TOOL_OUTPUT_CHARS_CLEANUP_MIGRATION,
+            """
+            UPDATE tool_events
+            SET numeric_metrics = numeric_metrics - 'tool_output_chars',
+                params = params - 'tool_output_chars'
+            WHERE tool_name = 'feel_desires'
+              AND (
+                numeric_metrics ? 'tool_output_chars'
+                OR params ? 'tool_output_chars'
+              )
+            """,
+        )
+
+    def _apply_tool_events_cleanup_migration(
+        self,
+        cur: psycopg.Cursor[object],
+        migration_name: str,
+        sql: str,
+    ) -> None:
+        cur.execute("SELECT 1 FROM dashboard_migrations WHERE name = %s", (migration_name,))
+        if cur.fetchone() is not None:
+            return
+
+        cur.execute(sql)
+        rowcount = getattr(cur, "rowcount", 0)
+        cleaned_rows = int(rowcount) if isinstance(rowcount, int) else 0
+        cur.execute(
+            """
+            INSERT INTO dashboard_migrations (name)
+            VALUES (%s)
+            ON CONFLICT (name) DO NOTHING
+            """,
+            (migration_name,),
+        )
+        logger.info(
+            "Applied dashboard SQL migration %s and cleaned %d tool event rows",
+            migration_name,
+            cleaned_rows,
+        )
 
     def ingest(self, event: DashboardEvent) -> None:
         dedupe_key = dashboard_event_dedupe_key(event)

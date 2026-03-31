@@ -253,6 +253,11 @@ def test_sql_store_initialize_ingest_and_checkpoint_methods(
     assert any("CREATE EXTENSION IF NOT EXISTS timescaledb" in sql for sql, _ in statements)
     assert any("INSERT INTO tool_events" in sql for sql, _ in statements)
     assert any("INSERT INTO log_events" in sql for sql, _ in statements)
+    assert any("CREATE TABLE IF NOT EXISTS dashboard_migrations" in sql for sql, _ in statements)
+    assert any(
+        "numeric_metrics = numeric_metrics - 'tool_output_chars'" in sql for sql, _ in statements
+    )
+    assert any("INSERT INTO dashboard_migrations" in sql for sql, _ in statements)
     assert any(
         "INSERT INTO log_events" in sql and params is not None and params[3] == "REDACTED"
         for sql, params in statements
@@ -263,6 +268,69 @@ def test_sql_store_initialize_ingest_and_checkpoint_methods(
     store.save_checkpoint("/tmp/ego.log", 99, 123)
 
     assert any("INSERT INTO ingestion_checkpoints" in sql for sql, _ in statements)
+
+
+def test_initialize_skips_cleanup_migration_when_already_applied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[str] = []
+
+    class _RecordingRedis:
+        def set(self, key: str, value: str) -> None:
+            del key, value
+
+    class _RecordingCursor:
+        def __init__(self) -> None:
+            self._sql = ""
+
+        def execute(self, query: object, _params: object | None = None) -> None:
+            self._sql = str(query)
+            statements.append(self._sql)
+
+        def fetchone(self) -> tuple[Any, ...] | None:
+            if "SELECT 1 FROM dashboard_migrations" in self._sql:
+                return (1,)
+            return None
+
+        def fetchall(self) -> list[tuple[Any, ...]]:
+            return []
+
+        def __enter__(self) -> _RecordingCursor:
+            return self
+
+        def __exit__(self, *_args: object) -> Literal[False]:
+            return False
+
+    class _RecordingConnection:
+        def cursor(self) -> _RecordingCursor:
+            return _RecordingCursor()
+
+        def commit(self) -> None:
+            return None
+
+        def __enter__(self) -> _RecordingConnection:
+            return self
+
+        def __exit__(self, *_args: object) -> Literal[False]:
+            return False
+
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _RecordingRedis(),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _RecordingConnection(),
+    )
+
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+    store.initialize()
+
+    assert any("SELECT 1 FROM dashboard_migrations" in sql for sql in statements)
+    assert not any(
+        "numeric_metrics = numeric_metrics - 'tool_output_chars'" in sql for sql in statements
+    )
+    assert not any("INSERT INTO dashboard_migrations" in sql for sql in statements)
 
 
 def test_tool_usage_falls_back_to_terminal_events_when_logs_are_missing(
@@ -616,6 +684,7 @@ def test_desire_metric_keys_reads_dynamic_keys_from_feel_desires_events(
                         "curiosity": 0.7,
                         "You want to feel safe.": 0.4,
                         "impulse_boost_amount": 0.2,
+                        "tool_output_chars": 387,
                     },
                 )
             ],
@@ -656,6 +725,7 @@ def test_current_and_desire_keys_follow_catalog_and_hide_removed_legacy_fixed_de
                     "predictability": 0.6,
                     "You want to feel safe.": 0.5,
                     "impulse_boost_amount": 0.2,
+                    "tool_output_chars": 387,
                 },
             ),
         ],
@@ -686,6 +756,7 @@ def test_current_and_desire_keys_follow_catalog_and_hide_removed_legacy_fixed_de
                             "predictability": 0.6,
                             "You want to feel safe.": 0.5,
                             "impulse_boost_amount": 0.2,
+                            "tool_output_chars": 387,
                         },
                     )
                 ],
