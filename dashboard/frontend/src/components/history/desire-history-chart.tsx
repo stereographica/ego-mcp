@@ -17,50 +17,50 @@ import {
 } from '@/components/ui/chart'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
-  DESIRE_CHART_CONFIG,
-  DESIRE_METRIC_KEYS,
-  formatMetricLabel,
-} from '@/constants'
+  buildDesireHistoryChartConfig,
+  buildDesireHistorySeriesKeys,
+} from '@/desires'
 import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
-import type { HistoryMarker } from '@/types'
-import {
-  DYNAMIC_DESIRE_COLORS,
-  resolveDesireSeriesColor,
-} from '@/components/history/desire-history-chart-utils'
+import type { DesireCatalogItem, HistoryMarker } from '@/types'
+import { resolveDesireSeriesColor } from '@/components/history/desire-history-chart-utils'
 
 type DesireHistoryChartProps = {
   desireChartData: Record<string, number | string>[]
   desireKeys: string[]
+  desireCatalog: DesireCatalogItem[]
   markers?: HistoryMarker[]
 }
 
 export const DesireHistoryChart = ({
   desireChartData,
   desireKeys,
+  desireCatalog,
   markers = [],
 }: DesireHistoryChartProps) => {
   const { formatTs } = useTimestampFormatter()
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set())
-  const { chartConfig, dynamicKeys } = useMemo(() => {
-    const fixedKeySet = new Set<string>(DESIRE_METRIC_KEYS)
-    const dynamicKeys = desireKeys.filter((key) => !fixedKeySet.has(key))
-    const dynamicConfig = Object.fromEntries(
-      dynamicKeys.map((key, index) => [
-        key,
-        {
-          label: formatMetricLabel(key),
-          color: DYNAMIC_DESIRE_COLORS[index % DYNAMIC_DESIRE_COLORS.length],
-        },
-      ]),
-    )
-    return {
-      chartConfig: {
-        ...DESIRE_CHART_CONFIG,
-        ...dynamicConfig,
-      },
-      dynamicKeys,
-    }
-  }, [desireKeys])
+  const sortedCatalog = useMemo(
+    () =>
+      desireCatalog
+        .slice()
+        .sort(
+          (lhs, rhs) =>
+            lhs.maslow_level - rhs.maslow_level || lhs.id.localeCompare(rhs.id),
+        ),
+    [desireCatalog],
+  )
+  const chartConfig = useMemo(
+    () => buildDesireHistoryChartConfig(desireCatalog, desireKeys),
+    [desireCatalog, desireKeys],
+  )
+  const allSeriesKeys = useMemo(
+    () => buildDesireHistorySeriesKeys(desireCatalog, desireKeys),
+    [desireCatalog, desireKeys],
+  )
+  const dynamicKeys = useMemo(
+    () => allSeriesKeys.slice(sortedCatalog.length),
+    [allSeriesKeys, sortedCatalog.length],
+  )
   const desireMarkers = useMemo(
     () =>
       markers.filter(
@@ -70,10 +70,6 @@ export const DesireHistoryChart = ({
           marker.kind === 'proust',
       ),
     [markers],
-  )
-  const allSeriesKeys = useMemo(
-    () => [...DESIRE_METRIC_KEYS, ...dynamicKeys],
-    [dynamicKeys],
   )
   const visibleKeys = useMemo(
     () => allSeriesKeys.filter((key) => !hiddenKeys.has(key)),
@@ -98,80 +94,81 @@ export const DesireHistoryChart = ({
         <CardTitle className="text-sm">Desire parameter history</CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={chartConfig} className="h-[340px] w-full">
-          <LineChart data={desireChartData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="ts" hide />
-            <YAxis domain={[0, 1]} />
-            <ChartTooltip
-              content={
-                <ChartTooltipContent
-                  labelFormatter={formatTs}
-                  showAllSeries
-                  missingValueLabel="-"
-                  visibleKeys={visibleKeys}
-                />
-              }
-            />
-            <ChartLegend
-              content={<ChartLegendContent onSeriesToggle={toggleSeries} />}
-            />
-            {desireMarkers.map((marker) => (
-              <ReferenceLine
-                key={`${marker.kind}-${marker.ts}-${marker.desire_key ?? marker.detail ?? ''}`}
-                x={marker.ts}
-                stroke={
-                  marker.kind === 'impulse'
-                    ? 'var(--color-chart-1)'
-                    : marker.kind === 'proust'
-                      ? 'var(--color-chart-3)'
-                      : 'var(--color-chart-4)'
-                }
-                strokeDasharray="3 3"
-                ifOverflow="extendDomain"
-                label={{
-                  value:
-                    marker.kind === 'impulse'
-                      ? `Impulse: ${marker.detail ?? marker.desire_key ?? ''}`
-                      : marker.kind === 'proust'
-                        ? `Proust: ${marker.detail ?? marker.memory_id ?? ''}`
-                        : (marker.detail ?? 'Emergent'),
-                  position: 'top',
-                  fill: 'var(--color-muted-foreground)',
-                  fontSize: 10,
-                }}
-              />
-            ))}
-            {DESIRE_METRIC_KEYS.map((key) => (
-              <Line
-                key={key}
-                type="monotone"
-                dataKey={key}
-                stroke={resolveDesireSeriesColor(key, chartConfig, 0)}
-                dot={false}
-                connectNulls
-                hide={hiddenKeys.has(key)}
-              />
-            ))}
-            {dynamicKeys.map((key, index) => (
-              <Line
-                key={key}
-                type="monotone"
-                dataKey={key}
-                stroke={resolveDesireSeriesColor(key, chartConfig, index)}
-                strokeWidth={2}
-                strokeDasharray="4 2"
-                dot={false}
-                connectNulls
-                hide={hiddenKeys.has(key)}
-              />
-            ))}
-          </LineChart>
-        </ChartContainer>
-        {desireChartData.length === 0 && (
+        {desireChartData.length === 0 ? (
           <p className="text-muted-foreground mt-2 text-xs">
             No desire metric data in selected range.
           </p>
+        ) : (
+          <ChartContainer config={chartConfig} className="h-[340px] w-full">
+            <LineChart data={desireChartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="ts" hide />
+              <YAxis domain={[0, 1]} />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    labelFormatter={formatTs}
+                    showAllSeries
+                    missingValueLabel="-"
+                    visibleKeys={visibleKeys}
+                  />
+                }
+              />
+              <ChartLegend
+                content={<ChartLegendContent onSeriesToggle={toggleSeries} />}
+              />
+              {desireMarkers.map((marker) => (
+                <ReferenceLine
+                  key={`${marker.kind}-${marker.ts}-${marker.desire_key ?? marker.detail ?? ''}`}
+                  x={marker.ts}
+                  stroke={
+                    marker.kind === 'impulse'
+                      ? 'var(--color-chart-1)'
+                      : marker.kind === 'proust'
+                        ? 'var(--color-chart-3)'
+                        : 'var(--color-chart-4)'
+                  }
+                  strokeDasharray="3 3"
+                  ifOverflow="extendDomain"
+                  label={{
+                    value:
+                      marker.kind === 'impulse'
+                        ? `Impulse: ${marker.detail ?? marker.desire_key ?? ''}`
+                        : marker.kind === 'proust'
+                          ? `Proust: ${marker.detail ?? marker.memory_id ?? ''}`
+                          : (marker.detail ?? 'Emergent'),
+                    position: 'top',
+                    fill: 'var(--color-muted-foreground)',
+                    fontSize: 10,
+                  }}
+                />
+              ))}
+              {sortedCatalog.map((item, index) => (
+                <Line
+                  key={item.id}
+                  type="monotone"
+                  dataKey={item.id}
+                  stroke={resolveDesireSeriesColor(item.id, chartConfig, index)}
+                  dot={false}
+                  connectNulls
+                  hide={hiddenKeys.has(item.id)}
+                />
+              ))}
+              {dynamicKeys.map((key, index) => (
+                <Line
+                  key={key}
+                  type="monotone"
+                  dataKey={key}
+                  stroke={resolveDesireSeriesColor(key, chartConfig, index)}
+                  strokeWidth={2}
+                  strokeDasharray="4 2"
+                  dot={false}
+                  connectNulls
+                  hide={hiddenKeys.has(key)}
+                />
+              ))}
+            </LineChart>
+          </ChartContainer>
         )}
       </CardContent>
     </Card>

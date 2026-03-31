@@ -1,21 +1,21 @@
 # ego-mcp dashboard (Phase 1-2)
 
-`design/ego-mcp-dashboard-design.md` に基づく Phase 1-2 実装です。
+This is the Phase 1-2 implementation based on `design/ego-mcp-dashboard-design.md`.
 
-## 実装方針（重要）
+## Implementation Notes
 
-- 永続化: **TimescaleDB**
-- リアルタイム最新値キャッシュ: **Redis**
-- 起動: **docker-compose**
+- Persistence: **TimescaleDB**
+- Real-time latest-value cache: **Redis**
+- Startup: **docker compose**
 
-`DASHBOARD_DATABASE_URL` と `DASHBOARD_REDIS_URL` が設定されると、
-`SqlTelemetryStore` が有効化され、TimescaleDB/Redis を利用します。
-未設定時は `TelemetryStore`（in-memory）へフォールバックします。
+When both `DASHBOARD_DATABASE_URL` and `DASHBOARD_REDIS_URL` are set,
+`SqlTelemetryStore` is enabled and uses TimescaleDB/Redis.
+If either is missing, the app falls back to `TelemetryStore` in memory.
 
-backend の CORS は `DASHBOARD_CORS_ALLOWED_ORIGINS`（カンマ区切り）で設定します。
-例: `http://localhost:4173,http://127.0.0.1:4173`
+Backend CORS is configured with `DASHBOARD_CORS_ALLOWED_ORIGINS` as a comma-separated list.
+Example: `http://localhost:4173,http://127.0.0.1:4173`
 
-## 起動（docker-compose）
+## Startup With Docker Compose
 
 ```bash
 cd dashboard
@@ -27,13 +27,17 @@ docker compose up --build
 - frontend: `http://localhost:4173`
 - db (TimescaleDB): `localhost:5432`
 - redis: `localhost:6379`
-- ingestor: `DASHBOARD_LOG_PATH`（file または glob）を tail して DB/Redis に反映
-  - `ingestion_checkpoints` に file ごとの inode/offset を保持し、再起動後は前回位置から再開
-  - `dedupe_key` により replay された既存 JSONL は二重計上しない
+- ingestor: tails `DASHBOARD_LOG_PATH` (file or glob) and writes into DB/Redis
+- `ingestion_checkpoints` stores inode/offset per file and resumes from the last position after restart
+- `dedupe_key` prevents replayed JSONL rows from being counted twice
 
-`ego-mcp` は `EGO_MCP_LOG_DIR`（既定 `/tmp`）配下に
-`ego-mcp-YYYY-MM-DD.log` を出力します。dashboard 側はこの仕様に合わせて、
-既定で `/host-tmp/ego-mcp-*.log` を監視します。
+`ego-mcp` writes `ego-mcp-YYYY-MM-DD.log` under `EGO_MCP_LOG_DIR` (default: `/tmp`).
+The dashboard follows that convention and watches `/host-tmp/ego-mcp-*.log` by default.
+
+Desire rendering uses `${DASHBOARD_EGO_MCP_DATA_DIR}/settings/desires.json` as the source of truth.
+The frontend loads fixed desires from `GET /api/v1/desires/catalog` and renders them in `(maslow_level, id)` order.
+The catalog API also returns `status` and `errors`, so the backend can report a missing or invalid settings file.
+Legacy fixed desires that do not exist in the catalog are hidden from both Now and History.
 
 ## backend API
 
@@ -42,12 +46,19 @@ docker compose up --build
 - `/api/v1/metrics/{key}`
 - `/api/v1/metrics/{key}/string-timeline`
 - `/api/v1/metrics/{key}/heatmap`
+- `/api/v1/desires/catalog`
 - `/api/v1/logs`
 - `/api/v1/alerts/anomalies`
 
-詳細は `dashboard/docs/` 配下（`getting-started.md`, `configuration.md`, `operations.md`, `api.md`）を参照してください。
+See `dashboard/docs/` for details: `getting-started.md`, `configuration.md`, `operations.md`, and `api.md`.
 
-## 開発
+## Development
+
+Prerequisites:
+
+- Python 3.14
+- Node.js 24
+- Docker + Docker Compose
 
 ### backend
 
@@ -60,9 +71,9 @@ uv run ruff format --check src tests
 uv run mypy src tests
 ```
 
-### メンテナンス
+### Maintenance
 
-既存データの replay 重複を補正しつつ、現在のログ終端を checkpoint 化したい場合:
+If you want to remove replay duplicates from existing data and reset checkpoints to the current log tail:
 
 ```bash
 cd dashboard

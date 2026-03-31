@@ -20,6 +20,7 @@ from ego_mcp._server_tools import BACKEND_TOOLS, SURFACE_TOOLS
 from ego_mcp.config import EgoConfig
 from ego_mcp.consolidation import ConsolidationEngine
 from ego_mcp.desire import DesireEngine
+from ego_mcp.desire_catalog import DesireConfigurationError
 from ego_mcp.embedding import EgoEmbeddingFunction, create_embedding_provider
 from ego_mcp.episode import EpisodeStore
 from ego_mcp.impulse import ImpulseManager
@@ -150,10 +151,13 @@ async def _handle_introspect(
 
 
 async def _handle_consider_them(
-    config: EgoConfig, memory: MemoryStore, args: dict[str, Any]
+    config: EgoConfig,
+    memory: MemoryStore,
+    args: dict[str, Any],
+    desire: DesireEngine | None = None,
 ) -> str:
     _sync_handler_overrides()
-    return await _handlers._handle_consider_them(config, memory, args)
+    return await _handlers._handle_consider_them(config, memory, args, desire)
 
 
 async def _handle_remember(
@@ -398,28 +402,48 @@ async def _dispatch(
     safe_args = _sanitize_tool_args_for_logging(name, args)
     logger.debug("Routing tool call", extra={"tool_name": name, "tool_args": safe_args})
 
+    if name in {"wake_up", "feel_desires", "introspect", "satisfy_desire"}:
+        desire.require_valid_catalog()
+
+    def _safe_satisfy_implicit(
+        tool_name: str,
+        *,
+        category: str | None = None,
+    ) -> None:
+        try:
+            desire.satisfy_implicit(tool_name, category=category)
+        except DesireConfigurationError:
+            logger.warning(
+                "Skipped implicit desire satisfaction due to invalid desire catalog",
+                extra={
+                    "tool_name": tool_name,
+                    "tool_args": {"category": category} if category is not None else {},
+                },
+                exc_info=True,
+            )
+
     if name == "wake_up":
         result = await _handle_wake_up(config, memory, desire)
-        desire.satisfy_implicit("wake_up")
+        _safe_satisfy_implicit("wake_up")
         return result
     elif name == "feel_desires":
         return await _handle_feel_desires(config, memory, desire)
     elif name == "introspect":
         result = await _handle_introspect(config, memory, desire)
-        desire.satisfy_implicit("introspect")
+        _safe_satisfy_implicit("introspect")
         return result
     elif name == "consider_them":
-        result = await _handle_consider_them(config, memory, args)
-        desire.satisfy_implicit("consider_them")
+        result = await _handle_consider_them(config, memory, args, desire)
+        _safe_satisfy_implicit("consider_them")
         return result
     elif name == "remember":
         result = await _handle_remember(config, memory, args)
         if not result.startswith(_REMEMBER_DUPLICATE_PREFIX):
-            desire.satisfy_implicit("remember", category=args.get("category"))
+            _safe_satisfy_implicit("remember", category=args.get("category"))
         return result
     elif name == "recall":
         result = await _handle_recall(config, memory, args)
-        desire.satisfy_implicit("recall")
+        _safe_satisfy_implicit("recall")
         return result
     elif name == "am_i_being_genuine":
         return _handle_am_i_genuine()
@@ -428,7 +452,7 @@ async def _dispatch(
         return _handle_satisfy_desire(desire, args)
     elif name == "consolidate":
         result = await _handle_consolidate(memory, consolidation)
-        desire.satisfy_implicit("consolidate")
+        _safe_satisfy_implicit("consolidate")
         return result
     elif name == "forget":
         return await _handle_forget(memory, args)
@@ -436,15 +460,15 @@ async def _dispatch(
         return await _handle_link_memories(memory, args)
     elif name == "update_relationship":
         result = _handle_update_relationship(config, args)
-        desire.satisfy_implicit("update_relationship")
+        _safe_satisfy_implicit("update_relationship")
         return result
     elif name == "update_self":
         result = _handle_update_self(config, args)
-        desire.satisfy_implicit("update_self")
+        _safe_satisfy_implicit("update_self")
         return result
     elif name == "emotion_trend":
         result = await _handle_emotion_trend(memory)
-        desire.satisfy_implicit("emotion_trend")
+        _safe_satisfy_implicit("emotion_trend")
         return result
     elif name == "get_episode":
         return await _handle_get_episode(episodes, memory, args)
@@ -452,7 +476,7 @@ async def _dispatch(
         return await _handle_create_episode(episodes, args)
     elif name == "curate_notions":
         result = _handle_curate_notions(args, _get_notion_store())
-        desire.satisfy_implicit("consolidate")
+        _safe_satisfy_implicit("consolidate")
         return result
     else:
         return f"Unknown tool: {name}"
@@ -479,7 +503,7 @@ def init_server(config: EgoConfig | None = None) -> None:
     _memory = MemoryStore(config, embedding_fn)
     _memory.connect()
 
-    _desire = DesireEngine(config.data_dir / "desires.json")
+    _desire = DesireEngine.from_data_dir(config.data_dir)
 
     client = _memory.get_client()
     episodes_collection = client.get_or_create_collection(

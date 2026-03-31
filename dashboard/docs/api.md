@@ -1,64 +1,71 @@
 # API
 
-- 更新責任者: ego-mcp dashboard maintainers
+- Maintainer: ego-mcp dashboard maintainers
 
-## 開発者向け
+## For Developers
 
-### REST（履歴/現在）
+### REST (History / Current)
 
 - `GET /api/v1/current`
-  - 現在値サマリ（latest / tool_calls_per_min / error_rate）
+  - Current summary values (`latest`, `tool_calls_per_min`, `error_rate`)
 - `GET /api/v1/usage/tools?from=...&to=...&bucket=1m|5m|15m`
-  - ツール別使用回数系列。`Tool invocation` log を 1 call = 1 count として集計し、log が無い旧データのみ terminal event へフォールバック
+  - Tool usage series. Counts `Tool invocation` logs as one call each, and only falls back to terminal events for older data without logs
 - `GET /api/v1/metrics/{key}?from=...&to=...&bucket=...`
-  - 数値メトリクス平均系列
+  - Averaged numeric metric series
 - `GET /api/v1/metrics/{key}/string-timeline?from=...&to=...`
-  - string メトリクスの時系列点列
+  - Timeline points for a string metric
 - `GET /api/v1/metrics/{key}/heatmap?from=...&to=...&bucket=...`
-  - string 値ごとの出現頻度
+  - Frequency distribution of string values
+- `GET /api/v1/desires/catalog`
+  - Fixed desire catalog. The response shape is `{ version, status, errors, source_path, fixed_desires, implicit_rules, emergent }`
+  - `fixed_desires` is `[{ id, display_name, satisfaction_hours, maslow_level }]`
+  - `status` is `ok | missing | invalid | unconfigured`
+  - The frontend uses this catalog as the source of truth for fixed desire labels and ordering
 - `GET /api/v1/desires/keys?from=...&to=...`
-  - 履歴期間内に現れた固定/動的 desire key 一覧
+  - Desire keys seen during the selected history range, used for dynamic series discovery in the history chart
+  - Returns only fixed desires that exist in the catalog and dynamic desires that do not
+  - Legacy fixed desires that are not in the catalog are excluded
 - `GET /api/v1/logs?from=...&to=...&level=INFO&search=remember`
-  - live tail / 履歴表示用ログ（最大 300 行）
+  - Logs for live tail and history views (up to 300 rows)
 - `GET /api/v1/alerts/anomalies?from=...&to=...&bucket=...`
-  - usage/intensity 急増検知
+  - Usage/intensity spike detection
 - `GET /api/v1/memory/network`
-  - 記憶ネットワークグラフ（ノード: 記憶 + Notion、エッジ: リンク + notion_source）
-  - レスポンス: `{ nodes: [{id, label, category, decay, access_count, is_notion}], edges: [{source, target, link_type, confidence}] }`
-  - ego-mcp の ChromaDB + notions.json を直接読み取り（`DASHBOARD_EGO_MCP_DATA_DIR` 環境変数で指定）
+  - Memory network graph (nodes: memories + notions, edges: links + `notion_source`)
+  - Response shape: `{ nodes: [{id, label, category, decay, access_count, is_notion}], edges: [{source, target, link_type, confidence}] }`
+  - Reads ego-mcp ChromaDB + `notions.json` directly, using `DASHBOARD_EGO_MCP_DATA_DIR`
 - `GET /api/v1/notions`
-  - Notion（観念）一覧: label, emotion_tone, confidence, source_count, created, last_reinforced
+  - Notion list: `label`, `emotion_tone`, `confidence`, `source_count`, `created`, `last_reinforced`
 - `GET /api/v1/notions/{notion_id}/history?from=...&to=...&bucket=15m`
-  - Notion 個別の confidence 推移（notion 単位 confidence map を優先してテレメトリイベントから集計）
+  - Confidence history for a specific notion, preferring notion-level confidence maps when aggregating telemetry events
 
-### WebSocket（現在フォーカス）
+### WebSocket (Current View)
 
 - `WS /ws/current`
-- 送信イベント:
-  - `current_snapshot`: 現在値スナップショット
-  - `log_line`: 直近ログ（存在時）
+- Outgoing events:
+  - `current_snapshot`: current-value snapshot
+  - `log_line`: latest log line when available
   - `ping`: keepalive
 
-### 例（REST）
+### Example (REST)
 
 ```bash
 curl "http://localhost:8000/api/v1/usage/tools?from=2026-01-01T00:00:00Z&to=2026-01-01T01:00:00Z&bucket=5m"
 ```
 
-## 運用者向け
+## For Operators
 
-### 認可
+### Authorization
 
-- 現在の実装では API/WS 認可は未実装（ローカル/内部ネットワーク想定）
-- 本番公開時は reverse proxy 側で認証/認可を必須化する（Basic/OIDC/IP 制限など）
+- The current implementation does not include API/WS authorization and assumes local or internal-network usage
+- For public deployment, enforce authentication/authorization at the reverse proxy layer (Basic auth, OIDC, IP restrictions, and so on)
 
-### レート制限
+### Rate Limiting
 
-- 現在の実装ではアプリ内レート制限は未実装
-- 推奨:
-  - REST: IP 単位で burst 制限
-  - WS: 同時接続数制限 + idle timeout
+- The application currently has no built-in rate limiting
+- Recommended:
+  - REST: burst limits per IP
+  - WS: concurrent connection limits plus an idle timeout
 
-### 互換性メモ
+### Compatibility Notes
 
-- `bucket` は未対応値を指定した場合、既定バケット（`1m` または `5m`）へフォールバックする実装あり
+- If `bucket` is set to an unsupported value, the implementation falls back to a default bucket (`1m` or `5m`)

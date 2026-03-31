@@ -2,7 +2,7 @@
 name = "ego-dashboard"
 version = "0.2.4"
 description = "Dashboard backend for ego-mcp telemetry"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dependencies = [
   "fastapi>=0.116.0",
   "pydantic>=2.11.0",
@@ -31,17 +31,20 @@ packages = ["src/ego_dashboard"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+filterwarnings = [
+  "ignore:.*asyncio.iscoroutinefunction.*:DeprecationWarning:chromadb.telemetry.opentelemetry.*",
+]
 
 [tool.ruff]
 line-length = 100
 
-'target-version' = "py311"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 strict = true
 mypy_path = ["src"]
 packages = ["ego_dashboard"]

@@ -1,4 +1,4 @@
-"""Desire engine with sigmoid-based level calculation."""
+"""Desire engine with catalog-backed fixed desires and persisted state."""
 
 from __future__ import annotations
 
@@ -9,36 +9,28 @@ from pathlib import Path
 from typing import Any
 
 from ego_mcp import timezone_utils
+from ego_mcp.desire_catalog import (
+    DEFAULT_EMERGENT,
+    DesireCatalog,
+    DesireConfigurationError,
+    default_desire_catalog,
+    desire_catalog_settings_path,
+    ensure_default_desire_catalog_file,
+    load_desire_catalog,
+)
 from ego_mcp.types import Emotion, Notion
 
-# Desire definitions: name → {satisfaction_hours, level (Maslow tier)}
-DESIRES: dict[str, dict[str, Any]] = {
-    "information_hunger": {"satisfaction_hours": 12, "level": 1},
-    "social_thirst": {"satisfaction_hours": 24, "level": 1},
-    "cognitive_coherence": {"satisfaction_hours": 18, "level": 1},
-    "pattern_seeking": {"satisfaction_hours": 72, "level": 2},
-    "predictability": {"satisfaction_hours": 72, "level": 2},
-    "recognition": {"satisfaction_hours": 36, "level": 3},
-    "resonance": {"satisfaction_hours": 30, "level": 3},
-    "expression": {"satisfaction_hours": 24, "level": 4},
-    "curiosity": {"satisfaction_hours": 18, "level": 4},
-}
-
-IMPLICIT_SATISFACTION_MAP: dict[str, list[tuple[str, float]]] = {
-    "wake_up": [("predictability", 0.05)],
-    "remember": [("expression", 0.3)],
-    "recall": [("information_hunger", 0.3), ("curiosity", 0.2)],
-    "introspect": [("cognitive_coherence", 0.3), ("pattern_seeking", 0.2), ("predictability", 0.1)],
-    "consider_them": [("social_thirst", 0.4), ("resonance", 0.3), ("predictability", 0.1)],
-    "emotion_trend": [("pattern_seeking", 0.3)],
-    "consolidate": [("cognitive_coherence", 0.3)],
-    "update_self": [("cognitive_coherence", 0.3)],
-    "update_relationship": [("social_thirst", 0.2)],
-}
+DESIRES: dict[str, dict[str, Any]] = default_desire_catalog().legacy_desires()
+IMPLICIT_SATISFACTION_MAP: dict[str, list[tuple[str, float]]] = {}
+for _desire_id, _config in default_desire_catalog().fixed_desires.items():
+    for _tool_name, _quality in _config.implicit_satisfaction.items():
+        IMPLICIT_SATISFACTION_MAP.setdefault(_tool_name, []).append(
+            (_desire_id, _quality)
+        )
 REMEMBER_INTROSPECTION_IMPLICIT_SATISFACTION = ("cognitive_coherence", 0.4)
-EMERGENT_EXPIRY_HOURS = 72.0
-EMERGENT_SATISFACTION_HOURS = 24.0
-EMERGENT_SATISFIED_TTL_HOURS = 24.0 * 7
+EMERGENT_EXPIRY_HOURS = float(DEFAULT_EMERGENT["expiry_hours"])
+EMERGENT_SATISFACTION_HOURS = float(DEFAULT_EMERGENT["satisfaction_hours"])
+EMERGENT_SATISFIED_TTL_HOURS = float(DEFAULT_EMERGENT["satisfied_ttl_hours"])
 
 
 def _emergent_template_for_notion(notion: Notion) -> str | None:
@@ -64,17 +56,7 @@ def _calculate_sigmoid_level(
     satisfaction_hours: float,
     satisfaction_quality: float = 0.5,
 ) -> float:
-    """Non-linear desire level via sigmoid.
-
-    Args:
-        elapsed_hours: Hours since last satisfied.
-        satisfaction_hours: Hours for desire to reach ~0.5.
-        satisfaction_quality: Quality of last satisfaction (0.0-1.0).
-            Lower quality → faster rise.
-
-    Returns:
-        Desire level 0.0-1.0.
-    """
+    """Non-linear desire level via sigmoid."""
     adjusted_hours = satisfaction_hours * (0.5 + 0.5 * satisfaction_quality)
     if adjusted_hours <= 0:
         return 1.0
@@ -83,15 +65,56 @@ def _calculate_sigmoid_level(
 
 
 class DesireEngine:
-    """Manages abstract desire levels with sigmoid-based computation."""
+    """Manages fixed and emergent desires with catalog-backed configuration."""
 
-    def __init__(self, state_path: Path) -> None:
+    def __init__(self, state_path: Path, catalog_path: Path | None = None) -> None:
         self._state_path = state_path
+        self._catalog_path = catalog_path or state_path.parent / "settings" / "desires.json"
+        ensure_default_desire_catalog_file(self._catalog_path)
+        self._catalog: DesireCatalog | None = None
+        self._catalog_error: DesireConfigurationError | None = None
         self._state: dict[str, dict[str, Any]] = {}
+        self._refresh_catalog()
         self.load_state()
 
-    def _init_default_state(self) -> dict[str, dict[str, Any]]:
-        """Create default state for all desires."""
+    @classmethod
+    def from_data_dir(cls, data_dir: Path) -> DesireEngine:
+        """Create a desire engine using the runtime config/state file layout."""
+        return cls(
+            state_path=data_dir / "desire_state.json",
+            catalog_path=desire_catalog_settings_path(data_dir),
+        )
+
+    @property
+    def catalog(self) -> DesireCatalog:
+        """Return the validated catalog, or raise a config error."""
+        return self.require_valid_catalog()
+
+    def require_valid_catalog(self) -> DesireCatalog:
+        """Reload and validate the catalog before desire-heavy operations."""
+        self._refresh_catalog()
+        if self._catalog is None:
+            assert self._catalog_error is not None
+            raise self._catalog_error
+        if self._sync_state_to_catalog(self._catalog):
+            self.save_state()
+        return self._catalog
+
+    def _refresh_catalog(self) -> None:
+        try:
+            self._catalog = load_desire_catalog(self._catalog_path)
+            self._catalog_error = None
+        except DesireConfigurationError as exc:
+            self._catalog = None
+            self._catalog_error = exc
+
+    def _catalog_for_state(self) -> DesireCatalog:
+        return self._catalog if self._catalog is not None else default_desire_catalog()
+
+    def _default_fixed_state(
+        self,
+        catalog: DesireCatalog,
+    ) -> dict[str, dict[str, Any]]:
         now = timezone_utils.now().isoformat()
         return {
             name: {
@@ -101,22 +124,45 @@ class DesireEngine:
                 "is_emergent": False,
                 "created": "",
             }
-            for name in DESIRES
+            for name in catalog.fixed_desires
         }
 
+    def _sync_state_to_catalog(self, catalog: DesireCatalog) -> bool:
+        defaults = self._default_fixed_state(catalog)
+        merged: dict[str, dict[str, Any]] = dict(defaults)
+        changed = set(self._state) != set(defaults)
+        for name, raw in self._state.items():
+            if not isinstance(raw, dict):
+                changed = True
+                continue
+            if bool(raw.get("is_emergent", False)):
+                merged[name] = dict(raw)
+                continue
+            if name not in defaults:
+                changed = True
+                continue
+            merged[name] = {**defaults[name], **raw}
+        if merged != self._state:
+            changed = True
+        self._state = merged
+        return changed
+
     def _is_known_desire(self, name: str) -> bool:
-        if name in DESIRES:
+        catalog = self._catalog_for_state()
+        if name in catalog.fixed_desires:
             return True
         return bool(self._state.get(name, {}).get("is_emergent", False))
 
     def _desire_names(self) -> list[str]:
-        names = list(DESIRES.keys())
+        catalog = self.require_valid_catalog()
+        names = list(catalog.fixed_desires.keys())
         for name, state in self._state.items():
             if state.get("is_emergent", False):
                 names.append(name)
         return names
 
     def expire_emergent_desires(self) -> list[str]:
+        catalog = self.require_valid_catalog()
         now = timezone_utils.now()
         expired: list[str] = []
         for name, state in list(self._state.items()):
@@ -142,11 +188,11 @@ class DesireEngine:
                 except ValueError:
                     satisfied_at = created
                 age_hours = (now - satisfied_at).total_seconds() / 3600
-                if age_hours < EMERGENT_SATISFIED_TTL_HOURS:
+                if age_hours < catalog.emergent.satisfied_ttl_hours:
                     continue
             else:
                 age_hours = (now - created).total_seconds() / 3600
-                if age_hours < EMERGENT_EXPIRY_HOURS:
+                if age_hours < catalog.emergent.expiry_hours:
                     continue
             expired.append(name)
             del self._state[name]
@@ -155,6 +201,7 @@ class DesireEngine:
         return expired
 
     def generate_emergent_desires(self, notions: list[Notion]) -> list[str]:
+        catalog = self.require_valid_catalog()
         created: list[str] = []
         for notion in notions:
             if notion.confidence < 0.7:
@@ -168,7 +215,7 @@ class DesireEngine:
                 "boost": 0.0,
                 "is_emergent": True,
                 "created": timezone_utils.now().isoformat(),
-                "satisfaction_hours": EMERGENT_SATISFACTION_HOURS,
+                "satisfaction_hours": catalog.emergent.satisfaction_hours,
             }
             created.append(label)
         if created:
@@ -184,7 +231,8 @@ class DesireEngine:
         emotional_modulation: dict[str, float] | None = None,
         prediction_error: dict[str, float] | None = None,
     ) -> dict[str, float]:
-        """Compute current level for all desires with transient modulation."""
+        """Compute current levels for all fixed and emergent desires."""
+        catalog = self.require_valid_catalog()
         self.expire_emergent_desires()
         now = timezone_utils.now()
         levels: dict[str, float] = {}
@@ -194,20 +242,20 @@ class DesireEngine:
 
         for name in self._desire_names():
             desire_state = self._state.get(name, {})
-            config = DESIRES.get(
-                name,
-                {
-                    "satisfaction_hours": float(
-                        desire_state.get(
-                            "satisfaction_hours", EMERGENT_SATISFACTION_HOURS
-                        )
-                    ),
-                    "level": 1,
-                },
-            )
+            fixed = catalog.fixed_desires.get(name)
+            if fixed is not None:
+                satisfaction_hours = fixed.satisfaction_hours
+            else:
+                satisfaction_hours = float(
+                    desire_state.get(
+                        "satisfaction_hours",
+                        catalog.emergent.satisfaction_hours,
+                    )
+                )
+
             last_str = desire_state.get("last_satisfied", "")
-            quality = desire_state.get("satisfaction_quality", 0.5)
-            boost = desire_state.get("boost", 0.0)
+            quality = float(desire_state.get("satisfaction_quality", 0.5))
+            boost = float(desire_state.get("boost", 0.0))
 
             if last_str:
                 try:
@@ -216,13 +264,11 @@ class DesireEngine:
                         last = last.replace(tzinfo=timezone_utils.app_timezone())
                     elapsed = (now - last).total_seconds() / 3600
                 except ValueError:
-                    elapsed = config["satisfaction_hours"]  # assume half
+                    elapsed = satisfaction_hours
             else:
-                elapsed = config["satisfaction_hours"]
+                elapsed = satisfaction_hours
 
-            base = _calculate_sigmoid_level(
-                elapsed, config["satisfaction_hours"], quality
-            )
+            base = _calculate_sigmoid_level(elapsed, satisfaction_hours, quality)
             level = min(
                 1.0,
                 max(
@@ -235,14 +281,13 @@ class DesireEngine:
                 ),
             )
             levels[name] = round(level, 3)
-
         return levels
 
     def satisfy(self, name: str, quality: float = 0.7) -> float:
         """Mark a desire as satisfied. Returns new level."""
+        self.require_valid_catalog()
         if not self._is_known_desire(name):
             raise ValueError(f"Unknown desire: {name}")
-
         now = timezone_utils.now().isoformat()
         if name not in self._state:
             self._state[name] = {}
@@ -250,56 +295,45 @@ class DesireEngine:
         self._state[name]["satisfaction_quality"] = max(0.0, min(1.0, quality))
         self._state[name]["boost"] = 0.0
         self.save_state()
-
         return self.compute_levels().get(name, 0.0)
 
     def satisfy_implicit(self, tool_name: str, category: str | None = None) -> None:
         """Partially satisfy desires based on a tool usage pattern."""
-        entries = IMPLICIT_SATISFACTION_MAP.get(tool_name)
-        if entries is None:
-            return
-
-        to_apply = list(entries)
-        if tool_name == "remember" and category == "introspection":
-            to_apply.insert(0, REMEMBER_INTROSPECTION_IMPLICIT_SATISFACTION)
-
-        for desire_name, quality in to_apply:
+        catalog = self.require_valid_catalog()
+        for desire_name, quality in catalog.tool_implicit_effects(
+            tool_name,
+            category=category,
+        ):
             self.satisfy(desire_name, quality=quality)
 
     def boost(self, name: str, amount: float) -> float:
         """Temporarily boost a desire level. Returns new level."""
+        catalog = self.require_valid_catalog()
         if not self._is_known_desire(name):
             raise ValueError(f"Unknown desire: {name}")
-
         if name not in self._state:
             self._state[name] = {
                 "last_satisfied": timezone_utils.now().isoformat(),
                 "satisfaction_quality": 0.5,
                 "boost": 0.0,
-                "is_emergent": False,
+                "is_emergent": name not in catalog.fixed_desires,
                 "created": "",
             }
-        current_boost = self._state[name].get("boost", 0.0)
+        current_boost = float(self._state[name].get("boost", 0.0))
         self._state[name]["boost"] = min(1.0, current_boost + amount)
         self.save_state()
-
         return self.compute_levels().get(name, 0.0)
 
     def format_summary(self) -> str:
-        """Format desire levels as sorted English summary.
-
-        Returns:
-            e.g. "curiosity[high] social_thirst[mid] expression[low]"
-        """
+        """Format desire levels as sorted English summary."""
         levels = self.compute_levels()
 
         def tag(level: float) -> str:
             if level >= 0.7:
                 return "high"
-            elif level >= 0.4:
+            if level >= 0.4:
                 return "mid"
-            else:
-                return "low"
+            return "low"
 
         sorted_desires = sorted(levels.items(), key=lambda x: -x[1])
         return " ".join(f"{name}[{tag(level)}]" for name, level in sorted_desires)
@@ -312,25 +346,26 @@ class DesireEngine:
 
     def load_state(self) -> None:
         """Load state from JSON file, or initialize defaults."""
+        catalog = self._catalog_for_state()
+        defaults = self._default_fixed_state(catalog)
         if self._state_path.exists():
             try:
                 with open(self._state_path, encoding="utf-8") as f:
                     parsed = json.load(f)
                 if isinstance(parsed, dict):
-                    defaults = self._init_default_state()
                     merged = dict(defaults)
                     for name, raw in parsed.items():
                         if not isinstance(raw, dict):
                             continue
-                        if name in defaults:
+                        if bool(raw.get("is_emergent", False)):
+                            merged[name] = dict(raw)
+                        elif name in defaults:
                             merged[name] = {**defaults[name], **raw}
-                        else:
-                            merged[name] = raw
                     self._state = merged
                 else:
-                    self._state = self._init_default_state()
+                    self._state = defaults
                 return
-            except (json.JSONDecodeError, IOError):
+            except (json.JSONDecodeError, OSError):
                 pass
-        self._state = self._init_default_state()
+        self._state = defaults
         self.save_state()

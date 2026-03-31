@@ -44,9 +44,132 @@ export EGO_MCP_WORKSPACE_DIR="/path/to/openclaw-workspace"
 ### 3. Verify
 
 ```bash
-uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 0.4.3
+uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 0.6.0
 uv run python -m ego_mcp  # Starts the server
 ```
+
+### 4. Desire Catalog
+
+Starting with `ego-mcp` v0.6.0, fixed desire definitions are stored in `${EGO_MCP_DATA_DIR}/settings/desires.json`.
+If `settings/` or `settings/desires.json` does not exist at startup, the server generates the current default file directly from the Python schema.
+
+State is now stored separately in `${EGO_MCP_DATA_DIR}/desire_state.json`.
+The old `${EGO_MCP_DATA_DIR}/desires.json` from v0.5.x and earlier is treated as legacy state and safely copied into `desire_state.json` on first startup.
+
+`settings/desires.json` overview:
+
+```json
+{
+  "version": 1,
+  "fixed_desires": {
+    "information_hunger": {
+      "display_name": "information hunger",
+      "satisfaction_hours": 12,
+      "maslow_level": 1,
+      "sentence": {
+        "medium": "You want to take something in.",
+        "high": "You're starving for input."
+      },
+      "implicit_satisfaction": {
+        "recall": 0.3
+      }
+    }
+  },
+  "implicit_rules": [
+    {
+      "tool": "remember",
+      "when": {"category": "introspection"},
+      "effects": [{"id": "cognitive_coherence", "quality": 0.4}]
+    }
+  ],
+  "emergent": {
+    "satisfaction_hours": 24,
+    "expiry_hours": 72,
+    "satisfied_ttl_hours": 168
+  }
+}
+```
+
+`settings/desires.json` schema reference:
+
+Top-level keys:
+
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `version` | integer | Yes | Schema version. The current and only valid value is `1`. |
+| `fixed_desires` | object | Yes | Map of fixed desire IDs to their configuration. The object key itself is the desire ID used internally by `ego-mcp`, the dashboard, telemetry, and `satisfy_desire`. |
+| `implicit_rules` | array | Yes | Conditional implicit-satisfaction rules that apply only when a tool call matches a specific condition. Use this for cases that cannot be expressed by a simple per-tool mapping inside one desire. |
+| `emergent` | object | Yes | Timing parameters for emergent desires that are generated from notions rather than listed in `fixed_desires`. |
+
+`fixed_desires` entry keys:
+
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `fixed_desires.<desire_id>` | object | Yes | One fixed desire definition. `<desire_id>` must be a JSON object key such as `information_hunger` or `social_thirst`. This ID is the canonical identifier used in code and stored state. |
+| `display_name` | string or null | No | Human-readable label used in the dashboard. If omitted, the default catalog uses the desire ID with underscores replaced by spaces. |
+| `satisfaction_hours` | number | Yes | How long the desire takes to naturally rise back toward full pressure after being satisfied. Must be greater than `0`. Smaller values make the desire return faster. |
+| `maslow_level` | integer | Yes | Ordering/grouping level for fixed desires. Must be `>= 1`. The dashboard sorts fixed desires by `(maslow_level, id)`. |
+| `sentence` | object | Yes | Language templates used by deterministic desire blending in `wake_up`, `feel_desires`, `introspect`, and dashboard summaries. |
+| `implicit_satisfaction` | object | No | Map from tool name to implicit satisfaction quality for this desire. Each key is a tool name such as `recall` or `consider_them`; each value must be within `0 < quality <= 1`. If omitted, it defaults to an empty object. |
+
+`fixed_desires.<desire_id>.sentence` keys:
+
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `medium` | string | Yes | Sentence used when the desire is present but not at the highest pressure tier. |
+| `high` | string | Yes | Sentence used when the desire is one of the strongest current pressures. |
+
+`implicit_rules` entry keys:
+
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `tool` | string | Yes | Tool name that activates the rule, for example `remember`. |
+| `when` | object | No | Additional match conditions. If omitted, the rule applies to every call of `tool`. |
+| `effects` | array | Yes | List of desire effects applied when the rule matches. Must contain at least one item. |
+
+`implicit_rules[].when` keys:
+
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `category` | string or null | No | Restricts the rule to tool calls with the given category. The built-in default uses this to apply a `remember` rule only when `category` is `introspection`. |
+
+`implicit_rules[].effects[]` keys:
+
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | Yes | Fixed desire ID to satisfy when the rule matches. If the ID does not exist in `fixed_desires`, the effect is ignored at runtime. |
+| `quality` | number | Yes | Implicit satisfaction quality for the effect. Must be within `0 < quality <= 1`. |
+
+`emergent` keys:
+
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `satisfaction_hours` | number | Yes | Recovery time constant for emergent desires after they are satisfied. Must be greater than `0`. |
+| `expiry_hours` | number | Yes | How long an emergent desire can remain unsatisfied before it is considered stale and removed. Must be greater than `0`. |
+| `satisfied_ttl_hours` | number | Yes | How long a satisfied emergent desire is retained before being removed from state. Must be greater than `0`. |
+
+Validation and parsing rules:
+
+- All objects use a strict schema. Unknown keys are rejected.
+- `fixed_desires` IDs are free-form JSON keys, but they are treated as canonical internal IDs once chosen.
+- `implicit_satisfaction` values and `implicit_rules[].effects[].quality` must always stay within `0 < quality <= 1`.
+- `satisfaction_hours`, `expiry_hours`, and `satisfied_ttl_hours` must always be greater than `0`.
+- `maslow_level` must always be `1` or greater.
+- The file is created automatically from the Python schema when it does not exist.
+
+Editing rules:
+
+- Only desires that remain in `fixed_desires` are treated as existing.
+- If you omit a built-in desire, it is hidden in both `ego-mcp` and the dashboard, and any historical state for it is treated as nonexistent.
+- You can adjust the wording, `satisfaction_hours`, and `implicit_satisfaction` of built-in desires.
+- You can add custom fixed desires under `fixed_desires`.
+- `sentence.medium` and `sentence.high` are reflected in the blended language used by the dashboard, `wake_up`, `feel_desires`, and `introspect`.
+
+If the settings violate the schema:
+
+- The server still starts.
+- `wake_up`, `feel_desires`, `introspect`, and `satisfy_desire` return an MCP tool error so the LLM can see the configuration problem.
+- Tools such as `remember`, where desire updates are only a side effect, continue their main work and skip only the implicit desire update.
 
 ## Connecting to OpenClaw (via mcporter)
 
@@ -168,6 +291,12 @@ uv run mypy src/ego_mcp/
 ```
 
 ## Troubleshooting
+
+### Upgrading from v0.5.x
+
+When upgrading from v0.5.x or earlier, you do not need to delete the existing `${EGO_MCP_DATA_DIR}/desires.json`.
+v0.6.0 reads that file as legacy state and migrates it into `${EGO_MCP_DATA_DIR}/desire_state.json`.
+The dashboard also reads `${EGO_MCP_DATA_DIR}/settings/desires.json` as the source of truth for the fixed desire catalog.
 
 ### `hashlib blake2*` error when running `uv`
 

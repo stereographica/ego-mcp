@@ -5,7 +5,7 @@ from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-from ego_dashboard.constants import DESIRE_METRIC_KEYS
+from ego_dashboard.desire_catalog import DesireCatalog, default_desire_catalog
 from ego_dashboard.models import DashboardEvent, LogEvent
 from ego_dashboard.telemetry_identity import dashboard_event_dedupe_key, log_event_dedupe_key
 
@@ -13,12 +13,17 @@ _BUCKETS = {"1m": timedelta(minutes=1), "5m": timedelta(minutes=5), "15m": timed
 
 
 class TelemetryStore:
-    def __init__(self) -> None:
+    def __init__(self, desire_catalog: DesireCatalog | None = None) -> None:
         self._events: list[DashboardEvent] = []
         self._logs: list[LogEvent] = []
         self._event_keys: set[tuple[datetime, str]] = set()
         self._log_keys: set[tuple[datetime, str]] = set()
         self._checkpoints: dict[str, tuple[int, int]] = {}
+        self._desire_catalog = desire_catalog or default_desire_catalog()
+
+    @property
+    def desire_catalog(self) -> DesireCatalog:
+        return self._desire_catalog
 
     def ingest(self, event: DashboardEvent) -> None:
         key = (event.ts, dashboard_event_dedupe_key(event))
@@ -76,12 +81,6 @@ class TelemetryStore:
         return latest
 
     def _latest_desire_metrics(self) -> dict[str, float]:
-        excluded = {
-            "intensity",
-            "valence",
-            "arousal",
-            "impulse_boost_amount",
-        }
         source = next(
             (event for event in reversed(self._events) if event.tool_name == "feel_desires"),
             None,
@@ -90,9 +89,7 @@ class TelemetryStore:
             return {}
         desire_metrics: dict[str, float] = {}
         for key, value in source.numeric_metrics.items():
-            if key in excluded:
-                continue
-            if key in DESIRE_METRIC_KEYS or "want" in key.lower():
+            if self._desire_catalog.is_visible_desire_metric(key):
                 desire_metrics[key] = float(value)
         return desire_metrics
 
@@ -263,7 +260,7 @@ class TelemetryStore:
             if event.tool_name != "feel_desires":
                 continue
             for key in event.numeric_metrics:
-                if key in DESIRE_METRIC_KEYS or "want" in key.lower():
+                if self._desire_catalog.is_visible_desire_metric(key):
                     keys.add(key)
         return sorted(keys)
 
@@ -375,12 +372,9 @@ class TelemetryStore:
             )
         )
         desire_metrics = self._latest_desire_metrics()
-        latest_fixed_desires = {
-            key: value for key, value in desire_metrics.items() if key in DESIRE_METRIC_KEYS
-        }
-        latest_emergent_desires = {
-            key: value for key, value in desire_metrics.items() if key not in DESIRE_METRIC_KEYS
-        }
+        latest_fixed_desires, latest_emergent_desires = self._desire_catalog.split_desire_metrics(
+            desire_metrics
+        )
         return {
             "latest": latest_payload,
             "latest_emotion": latest_emotion,
@@ -420,7 +414,7 @@ class TelemetryStore:
             return {}
         try:
             payload = json.loads(value)
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except TypeError, ValueError, json.JSONDecodeError:
             return {}
         if not isinstance(payload, dict):
             return {}

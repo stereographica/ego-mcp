@@ -126,16 +126,15 @@ before finishing work.
 
 ### ego-mcp CI sequence
 
-CI runs with Python 3.11. Locally, `ego-mcp/.python-version` pins 3.14, so
-use `UV_PYTHON=3.11` to match CI exactly:
+CI runs with Python 3.14:
 
 ```bash
 cd ego-mcp
-UV_PYTHON=3.11 uv sync --extra dev
-UV_PYTHON=3.11 GEMINI_API_KEY=test-key uv run pytest tests -v
-UV_PYTHON=3.11 uv run isort --check-only src tests
-UV_PYTHON=3.11 uv run ruff check src tests
-UV_PYTHON=3.11 uv run mypy src tests
+uv sync --extra dev
+GEMINI_API_KEY=test-key uv run pytest tests -v
+uv run isort --check-only src tests
+uv run ruff check src tests
+uv run mypy src tests
 ```
 
 ### dashboard backend CI sequence
@@ -181,8 +180,8 @@ rm -rf .venv
 uv sync --dev
 ```
 
-This repo pins Python via `ego-mcp/.python-version` (`3.14`).
-CI uses Python `3.11` (the minimum supported version).
+This repo pins Python via `ego-mcp/.python-version` (`3.14`) and `dashboard/.python-version` (`3.14`).
+CI also uses Python `3.14`.
 If needed, run once with an explicit interpreter:
 
 ```bash

@@ -1,17 +1,17 @@
 # Operations
 
-- 更新責任者: ego-mcp dashboard maintainers
+- Maintainer: ego-mcp dashboard maintainers
 
-## 開発者向け
+## For Developers
 
-### 監視ポイント（ダッシュボード自身）
+### Monitoring Checklist
 
-- backend health: `GET /api/v1/current` が 200 を返すか
-- DB 接続: backend / ingestor のログに `psycopg` 接続失敗が出ていないか
-- Redis 接続: `dashboard:current` 更新が継続しているか
-- ingestor: `failed to parse jsonl line` 警告の増加有無
+- Backend health: confirm `GET /api/v1/current` returns HTTP 200.
+- Database connectivity: confirm backend and ingestor logs do not show `psycopg` connection failures.
+- Redis connectivity: confirm `dashboard:current` continues to update.
+- Ingestor: watch for increases in `failed to parse jsonl line` warnings.
 
-### 障害切り分けの順序
+### Incident Triage Order
 
 1. `docker compose ps`
 2. `docker compose logs --tail=200 backend`
@@ -19,26 +19,26 @@
 4. `docker compose logs --tail=100 db redis`
 5. `curl http://localhost:8000/api/v1/current`
 
-## 運用者向け
+## For Operators
 
-### バックアップ
+### Backups
 
-- TimescaleDB: `pg_dump` / スナップショット運用を採用
-- Redis: `dashboard:current` は再生成可能キャッシュのため優先度低
-- 取り込み元 JSONL (`DASHBOARD_LOG_PATH`, glob 対応) はダッシュボード外の主系ログ保全方針に従う
+- TimescaleDB: use `pg_dump` or your snapshot-based backup workflow.
+- Redis: `dashboard:current` is a rebuildable cache, so it has lower backup priority.
+- Source JSONL logs (`DASHBOARD_LOG_PATH`, including glob patterns) should follow the primary log retention policy outside the dashboard.
 
-### ログローテーション
+### Log Rotation
 
-- ingestor は inode 変更 / truncate を検知して再追従し、glob 指定時も file ごとの checkpoint を保持する
-- ローテーション方式は `copytruncate` より rename + reopen 推奨
+- The ingestor detects inode changes and truncation, resumes tailing automatically, and keeps checkpoints per file when glob patterns are used.
+- Prefer `rename + reopen` over `copytruncate` for log rotation.
 
-### 障害対応（よくある事象）
+### Common Operational Issues
 
-- 画面は開くが数値が増えない:
-  - ingestor が停止している、または `DASHBOARD_LOG_PATH` / `DASHBOARD_LOG_MOUNT_SOURCE` が誤っている
-- ingestor 再起動後に tool calls が急増した:
-  - `uv run python -m ego_dashboard.dedupe_telemetry --log-path "$DASHBOARD_LOG_PATH"` を実行して既存 replay 重複を除去し、checkpoint を現在 EOF に初期化する
-- Logs タブが空:
-  - 取り込み元 JSONL に log event が含まれていない
-- compose 起動時に frontend から API 接続できない:
-  - `.env` の `VITE_DASHBOARD_API_BASE` / `VITE_DASHBOARD_WS_BASE` が `localhost` になっているか確認
+- The dashboard loads, but metrics do not increase:
+  The ingestor may be stopped, or `DASHBOARD_LOG_PATH` / `DASHBOARD_LOG_MOUNT_SOURCE` may be incorrect.
+- Tool calls spike after restarting the ingestor:
+  Run `uv run python -m ego_dashboard.dedupe_telemetry --log-path "$DASHBOARD_LOG_PATH"` to remove replay duplicates and reset checkpoints to the current EOF.
+- The Logs tab is empty:
+  The source JSONL stream does not include log events.
+- The frontend cannot reach the API after `docker compose up`:
+  Confirm `.env` sets `VITE_DASHBOARD_API_BASE` and `VITE_DASHBOARD_WS_BASE` to `localhost`.

@@ -73,6 +73,7 @@ Consider running introspect to see if anything surfaces.
 
 > Desire output uses experiential blend language (e.g., "You need to know something"). Numeric values are still sent to Dashboard telemetry.
 > The "nagging feeling" scaffold appears when fading high-importance questions boost `cognitive_coherence`.
+> If `${EGO_MCP_DATA_DIR}/settings/desires.json` is invalid, this tool returns an MCP error that includes the schema error path and reason.
 
 ---
 
@@ -127,6 +128,7 @@ To resolve a question: update_self(field="resolve_question", value="<question_id
 ```
 
 > The "Resurfacing" section only appears when `cognitive_coherence` >= 0.6 or when a related memory was recently saved.
+> If `predictability` is omitted from the catalog, the scaffold line that prompts `predictability` will not be shown.
 
 ---
 
@@ -172,6 +174,7 @@ If you're sharing a meaningful moment, capture it with remember(shared_with=...)
 
 > `baseline_tone` is shown when `emotional_baseline` has been set via `update_relationship(field="dominant_tone")`. It represents the manually set tone and is not overwritten by `consider_them`.
 > `observed_tone` is derived from recent conversation memories and may change over time.
+> If `predictability` is omitted from the catalog, scaffold lines that mention `predictability` will not be shown.
 
 ---
 
@@ -454,6 +457,9 @@ Backend tools are guided by surface tool responses. They appear in the system pr
 
 **When to call:** When `feel_desires` indicates a high desire and you've acted on it.
 
+`name` can target any desire that exists under `fixed_desires` in `settings/desires.json`.
+Any desire that does not exist there, including omitted built-in desires, is treated as nonexistent.
+
 **inputSchema:**
 
 ```json
@@ -477,6 +483,8 @@ Backend tools are guided by surface tool responses. They appear in the system pr
 ```
 curiosity satisfied (quality: 0.7). New level: 0.25
 ```
+
+> If the desire catalog is invalid, this tool returns an MCP error instead of mutating state.
 
 ---
 

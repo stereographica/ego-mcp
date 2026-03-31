@@ -4,6 +4,26 @@ import userEvent from '@testing-library/user-event'
 import App from './App'
 
 vi.mock('./api', () => ({
+  fetchDesireCatalog: async () => ({
+    items: [
+      {
+        id: 'information_hunger',
+        display_name: 'information hunger',
+        maslow_level: 1,
+      },
+      {
+        id: 'social_thirst',
+        display_name: 'social thirst',
+        maslow_level: 1,
+      },
+      {
+        id: 'curiosity',
+        display_name: 'curiosity',
+        maslow_level: 2,
+      },
+    ],
+  }),
+  fetchDesireKeys: async () => ['novelty', 'cognitive_coherence'],
   fetchCurrent: async () => ({
     tool_calls_per_min: 4,
     error_rate: 0.25,
@@ -19,11 +39,15 @@ vi.mock('./api', () => ({
   }),
   fetchIntensity: async () => [{ ts: '2026-01-01T12:00:00Z', value: 0.7 }],
   fetchMetric: async () => [{ ts: '2026-01-01T12:00:00Z', value: 0.5 }],
+  fetchMemoryNetwork: async () => ({ nodes: [], edges: [] }),
+  fetchNotions: async () => ({ items: [] }),
   fetchUsage: async () => [
     { ts: '2026-01-01T12:00:00Z', feel_desires: 2, remember: 1 },
   ],
   fetchTimeline: async () => [{ ts: '2026-01-01T12:00:00Z', value: 'night' }],
   fetchHeatmap: async () => [],
+  fetchStringHeatmap: async () => [],
+  fetchStringTimeline: async () => [],
   fetchLogs: async () => [
     {
       ts: '2026-01-01T12:00:00Z',
@@ -63,5 +87,23 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('tab', { name: 'Logs' }))
     expect(await screen.findByText('Live tail')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('search logs...')).toHaveValue('')
+  })
+
+  it('shows history controls and the desire history chart when history is selected', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+
+    await user.click(screen.getByRole('tab', { name: 'History' }))
+
+    expect(
+      await screen.findByText('Desire parameter history'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'custom' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('radio', { name: 'custom' }))
+
+    expect(
+      container.querySelectorAll('input[type="datetime-local"]'),
+    ).toHaveLength(2)
   })
 })

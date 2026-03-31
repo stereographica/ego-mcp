@@ -14,79 +14,25 @@ import {
   ChartTooltipContent,
 } from '@/components/ui/chart'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  DESIRE_CHART_CONFIG,
-  DESIRE_METRIC_KEYS,
-  formatMetricLabel,
-} from '@/constants'
-import type { CurrentResponse } from '@/types'
+import { buildDesireRadarSeriesData } from '@/desires'
+import type { CurrentResponse, DesireCatalogItem } from '@/types'
 
 type DesireRadarProps = {
   current: CurrentResponse | null
+  desireCatalog: DesireCatalogItem[]
 }
 
-const DYNAMIC_COLORS = [
-  'var(--color-chart-4)',
-  'var(--color-chart-5)',
-  'var(--color-chart-6)',
-  'var(--color-chart-7)',
-  'var(--color-chart-8)',
-  'var(--color-chart-9)',
-]
-
-export const DesireRadar = ({ current }: DesireRadarProps) => {
-  const boostedDesire =
-    current?.latest?.string_metrics?.impulse_boosted_desire ?? undefined
-  const boostAmount = current?.latest?.numeric_metrics?.impulse_boost_amount
-
-  const { chartConfig, chartData, hasDynamicDesires } = useMemo(() => {
-    const fixedDesires = current?.latest_desires ?? {}
-    const emergentDesires = current?.latest_emergent_desires ?? {}
-    const fixedKeySet = new Set<string>(DESIRE_METRIC_KEYS)
-    const dynamicKeys = Object.keys(emergentDesires)
-      .filter((key) => !fixedKeySet.has(key))
-      .sort()
-    const axisKeys = [...DESIRE_METRIC_KEYS, ...dynamicKeys]
-    const dynamicConfig = Object.fromEntries(
-      dynamicKeys.map((key, index) => [
-        key,
-        {
-          label: formatMetricLabel(key),
-          color: DYNAMIC_COLORS[index % DYNAMIC_COLORS.length],
-        },
-      ]),
-    )
-    const combinedConfig = {
-      ...DESIRE_CHART_CONFIG,
-      ...dynamicConfig,
-      fixed_desires: {
-        label: 'fixed desires',
-        color: 'var(--color-chart-2)',
-      },
-      dynamic_desires: {
-        label: 'dynamic desires',
-        color: 'var(--color-chart-4)',
-      },
-      boosted_desire: {
-        label: 'impulse boost',
-        color: 'var(--color-chart-1)',
-      },
-    }
-    const data = axisKeys.map((key) => ({
-      name: formatMetricLabel(key),
-      fixed_desires: fixedDesires[key] ?? 0,
-      dynamic_desires: emergentDesires[key] ?? 0,
-      boosted_desire:
-        key === boostedDesire
-          ? (emergentDesires[key] ?? fixedDesires[key] ?? 0)
-          : 0,
-    }))
-    return {
-      chartConfig: combinedConfig,
-      chartData: data,
-      hasDynamicDesires: dynamicKeys.length > 0,
-    }
-  }, [boostedDesire, current])
+export const DesireRadar = ({ current, desireCatalog }: DesireRadarProps) => {
+  const {
+    chartConfig,
+    chartData,
+    hasDynamicDesires,
+    boostedDesire,
+    boostAmount,
+  } = useMemo(
+    () => buildDesireRadarSeriesData(desireCatalog, current),
+    [current, desireCatalog],
+  )
 
   return (
     <Card>

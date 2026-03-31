@@ -130,9 +130,9 @@ See [dashboard/README.md](dashboard/README.md) for full documentation.
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.14
 - [uv](https://docs.astral.sh/uv/)
-- Node.js (dashboard frontend)
+- Node.js 24 (dashboard frontend)
 - Docker + Docker Compose (dashboard)
 
 ### Test & Lint

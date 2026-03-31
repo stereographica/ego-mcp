@@ -1,5 +1,6 @@
 import type {
   AnomalyAlert,
+  DesireCatalogResponse,
   CurrentResponse,
   DateRange,
   HeatmapPoint,
@@ -70,6 +71,14 @@ export const fetchMemoryNetwork = async (): Promise<MemoryNetworkResponse> =>
 
 export const fetchNotions = async (): Promise<{ items: Notion[] }> =>
   get('/api/v1/notions', { items: [] })
+
+export const fetchDesireCatalog = async (): Promise<DesireCatalogResponse> =>
+  get<{
+    fixed_desires?: DesireCatalogResponse['items']
+    items?: DesireCatalogResponse['items']
+  }>('/api/v1/desires/catalog', { fixed_desires: [] }).then((response) => ({
+    items: response.items ?? response.fixed_desires ?? [],
+  }))
 
 export const fetchNotionHistory = async (
   notionId: string,

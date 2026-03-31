@@ -1,4 +1,5 @@
 import {
+  fetchDesireCatalog,
   fetchDesireKeys,
   fetchLogs,
   fetchMemoryNetwork,
@@ -108,6 +109,77 @@ describe('api string metric fetchers', () => {
 describe('api history extensions', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('fetches the desire catalog', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        fixed_desires: [
+          {
+            id: 'information_hunger',
+            display_name: 'information hunger',
+            maslow_level: 1,
+          },
+        ],
+      }),
+    } as Response)
+
+    const catalog = await fetchDesireCatalog()
+    const url = String(vi.mocked(globalThis.fetch).mock.calls[0]?.[0] ?? '')
+
+    expect(url).toContain('/api/v1/desires/catalog')
+    expect(catalog.items).toEqual([
+      {
+        id: 'information_hunger',
+        display_name: 'information hunger',
+        maslow_level: 1,
+      },
+    ])
+  })
+
+  it('falls back to the legacy items field when the catalog uses the older response shape', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [
+          {
+            id: 'social_thirst',
+            display_name: 'social thirst',
+            maslow_level: 1,
+          },
+        ],
+      }),
+    } as Response)
+
+    const catalog = await fetchDesireCatalog()
+
+    expect(catalog.items).toEqual([
+      {
+        id: 'social_thirst',
+        display_name: 'social thirst',
+        maslow_level: 1,
+      },
+    ])
+  })
+
+  it('returns an empty catalog when the endpoint responds with a failure status', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        fixed_desires: [
+          {
+            id: 'information_hunger',
+            display_name: 'information hunger',
+            maslow_level: 1,
+          },
+        ],
+      }),
+    } as Response)
+
+    const catalog = await fetchDesireCatalog()
+
+    expect(catalog.items).toEqual([])
   })
 
   it('fetches the memory network panel payload', async () => {

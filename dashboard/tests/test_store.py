@@ -3,8 +3,28 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
+from ego_dashboard.desire_catalog import DesireCatalog, DesireCatalogItem
 from ego_dashboard.models import DashboardEvent
 from ego_dashboard.store import TelemetryStore
+
+
+def _catalog(*fixed_ids: tuple[str, str, int] | tuple[str, str]) -> DesireCatalog:
+    items = []
+    for raw in fixed_ids:
+        if len(raw) == 3:
+            desire_id, display_name, maslow_level = raw
+        else:
+            desire_id, display_name = raw
+            maslow_level = 1
+        items.append(
+            DesireCatalogItem(
+                id=desire_id,
+                display_name=display_name,
+                satisfaction_hours=24.0,
+                maslow_level=maslow_level,
+            )
+        )
+    return DesireCatalog(version=1, fixed_desires=tuple(items))
 
 
 def _event(minutes: int, tool: str, intensity: float, time_phase: str) -> DashboardEvent:
@@ -230,6 +250,51 @@ def test_desire_metric_keys_include_dynamic_history_only_keys() -> None:
     ]
 
 
+def test_desire_metrics_follow_catalog_and_hide_removed_legacy_fixed_desires() -> None:
+    store = TelemetryStore(
+        desire_catalog=_catalog(
+            ("social_thirst", "Social Thirst"),
+            ("custom_focus", "Custom Focus", 2),
+        )
+    )
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    end = start + timedelta(minutes=10)
+    store.ingest(
+        DashboardEvent(
+            ts=start,
+            event_type="tool_call_completed",
+            tool_name="feel_desires",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={
+                "social_thirst": 0.4,
+                "custom_focus": 0.9,
+                "predictability": 0.6,
+                "You want to feel safe.": 0.5,
+                "impulse_boost_amount": 0.2,
+            },
+            string_metrics={},
+            params={},
+            private=False,
+        )
+    )
+
+    assert store.desire_metric_keys(start, end) == [
+        "You want to feel safe.",
+        "custom_focus",
+        "social_thirst",
+    ]
+
+    current = store.current()
+    assert current["latest_desires"] == {
+        "social_thirst": 0.4,
+        "custom_focus": 0.9,
+    }
+    assert current["latest_emergent_desires"] == {
+        "You want to feel safe.": 0.5,
+    }
+
+
 def test_notion_history_prefers_per_notion_confidence_mapping() -> None:
     store = TelemetryStore()
     start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -323,6 +388,31 @@ def test_current_returns_null_latest_relationship_when_not_present() -> None:
     current = store.current()
 
     assert current["latest_relationship"] is None
+
+
+def test_current_redacts_private_latest_message_and_keeps_empty_desire_maps() -> None:
+    store = TelemetryStore()
+    store.ingest(
+        DashboardEvent(
+            ts=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+            event_type="tool_call_completed",
+            tool_name="remember",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={},
+            string_metrics={},
+            params={},
+            private=True,
+            message="secret",
+        )
+    )
+
+    current = store.current()
+    latest = cast(dict[str, object], current["latest"])
+
+    assert latest["message"] == "REDACTED"
+    assert current["latest_desires"] == {}
+    assert current["latest_emergent_desires"] == {}
 
 
 def test_current_prefers_log_derived_counts_and_error_rate() -> None:

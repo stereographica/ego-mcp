@@ -6,7 +6,27 @@ import threading
 import time
 from pathlib import Path
 
+from ego_dashboard.desire_catalog import DesireCatalog, DesireCatalogItem
 from ego_dashboard.ingestor import EgoMcpLogProjector, normalize_event
+
+
+def _catalog(*fixed_ids: tuple[str, str, int] | tuple[str, str]) -> DesireCatalog:
+    items = []
+    for raw in fixed_ids:
+        if len(raw) == 3:
+            desire_id, display_name, maslow_level = raw
+        else:
+            desire_id, display_name = raw
+            maslow_level = 1
+        items.append(
+            DesireCatalogItem(
+                id=desire_id,
+                display_name=display_name,
+                satisfaction_hours=24.0,
+                maslow_level=maslow_level,
+            )
+        )
+    return DesireCatalog(version=1, fixed_desires=tuple(items))
 
 
 def test_normalize_private_event_is_redacted() -> None:
@@ -315,6 +335,68 @@ def test_projector_parses_top_level_dynamic_desires_and_impulse_metrics() -> Non
     assert event.string_metrics["emergent_desire_created"] == "You want to feel safe."
     assert event.string_metrics["impulse_boosted_desire"] == "curiosity"
     assert event.params["impulse_boost_triggered"] is True
+
+
+def test_projector_uses_catalog_to_keep_custom_fixed_and_hide_removed_legacy_fixed() -> None:
+    projector = EgoMcpLogProjector(
+        _catalog(
+            ("social_thirst", "Social Thirst"),
+            ("custom_focus", "Custom Focus", 2),
+        )
+    )
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "feel_desires",
+        "emotion_primary": "curious",
+        "emotion_intensity": 0.65,
+        "social_thirst": 0.4,
+        "custom_focus": 0.9,
+        "predictability": 0.6,
+        "You want to feel safe.": 0.55,
+        "impulse_boost_amount": 0.15,
+    }
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.numeric_metrics["social_thirst"] == 0.4
+    assert event.numeric_metrics["custom_focus"] == 0.9
+    assert event.numeric_metrics["You want to feel safe."] == 0.55
+    assert "predictability" not in event.numeric_metrics
+
+
+def test_projector_parses_feel_desires_levels_from_tool_output_fallback() -> None:
+    projector = EgoMcpLogProjector(
+        _catalog(
+            ("social_thirst", "Social Thirst"),
+            ("custom_focus", "Custom Focus", 2),
+        )
+    )
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "feel_desires",
+        "emotion_primary": "curious",
+        "emotion_intensity": 0.65,
+        "tool_output": (
+            "social_thirst[0.4/high] custom_focus[0.9/high] "
+            "predictability[0.5/high] novel_interest[0.7/high]\n\n"
+            "---\nBlend summary"
+        ),
+    }
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.numeric_metrics["social_thirst"] == 0.4
+    assert event.numeric_metrics["custom_focus"] == 0.9
+    assert event.numeric_metrics["novel_interest"] == 0.7
+    assert "predictability" not in event.numeric_metrics
 
 
 def test_projector_reads_top_level_time_phase_from_ego_mcp_logs() -> None:

@@ -7,14 +7,19 @@ import { NotionPanel } from '@/components/history/notion-panel'
 import { ToolUsageChart } from '@/components/history/tool-usage-chart'
 import { ValenceArousalChart } from '@/components/history/valence-arousal-chart'
 import { useHistoryData } from '@/hooks/use-history-data'
-import type { DateRange, TimeRangePreset } from '@/types'
+import type { DateRange, DesireCatalogItem, TimeRangePreset } from '@/types'
 
 type HistoryTabProps = {
   range: DateRange
   preset: TimeRangePreset
+  desireCatalog: DesireCatalogItem[]
 }
 
-export const HistoryTab = ({ range, preset }: HistoryTabProps) => {
+export const HistoryTab = ({
+  range,
+  preset,
+  desireCatalog,
+}: HistoryTabProps) => {
   const {
     intensity,
     usage,
@@ -29,7 +34,7 @@ export const HistoryTab = ({ range, preset }: HistoryTabProps) => {
     toolSeriesKeys,
     desireKeys,
     desireChartData,
-  } = useHistoryData('history', range, preset)
+  } = useHistoryData('history', range, preset, desireCatalog)
 
   return (
     <div className="space-y-4">
@@ -49,6 +54,7 @@ export const HistoryTab = ({ range, preset }: HistoryTabProps) => {
       <DesireHistoryChart
         desireChartData={desireChartData}
         desireKeys={desireKeys}
+        desireCatalog={desireCatalog}
         markers={historyMarkers}
       />
     </div>
