@@ -217,6 +217,7 @@ def test_desire_catalog_visibility_and_split_filter_reserved_and_legacy_metrics(
             "predictability": 0.6,
             "novel_interest": 0.7,
             "impulse_boost_amount": 0.15,
+            "tool_output_chars": 387.0,
             "intensity": 0.5,
         }
     )
@@ -226,5 +227,6 @@ def test_desire_catalog_visibility_and_split_filter_reserved_and_legacy_metrics(
     assert catalog.is_visible_desire_metric("predictability") is False
     assert catalog.is_visible_desire_metric("novel_interest") is True
     assert catalog.is_visible_desire_metric("impulse_boost_amount") is False
+    assert catalog.is_visible_desire_metric("tool_output_chars") is False
     assert fixed == {"social_thirst": 0.4, "custom_focus": 0.9}
     assert emergent == {"novel_interest": 0.7}

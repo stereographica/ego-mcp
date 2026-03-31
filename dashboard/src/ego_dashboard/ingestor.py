@@ -193,6 +193,19 @@ class EgoMcpLogProjector:
         return None
 
     def _parse_feel_desires_levels(self, raw: Mapping[str, object]) -> dict[str, float]:
+        raw_desire_levels = raw.get("desire_levels")
+        if isinstance(raw_desire_levels, dict):
+            structured_levels = {
+                key: float(value)
+                for key, value in raw_desire_levels.items()
+                if isinstance(key, str)
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and self._desire_catalog.is_visible_desire_metric(key)
+            }
+            if structured_levels:
+                return structured_levels
+
         levels: dict[str, float] = {}
         for key, value in raw.items():
             if (

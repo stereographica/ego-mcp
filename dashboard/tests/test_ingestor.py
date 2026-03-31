@@ -324,6 +324,7 @@ def test_projector_parses_top_level_dynamic_desires_and_impulse_metrics() -> Non
         "impulse_boost_triggered": True,
         "impulse_boosted_desire": "curiosity",
         "impulse_boost_amount": 0.15,
+        "tool_output_chars": 387,
     }
 
     event = projector.project(completion)
@@ -332,9 +333,39 @@ def test_projector_parses_top_level_dynamic_desires_and_impulse_metrics() -> Non
     assert event.numeric_metrics["curiosity"] == 0.8
     assert event.numeric_metrics["You want to feel safe."] == 0.55
     assert event.numeric_metrics["impulse_boost_amount"] == 0.15
+    assert "tool_output_chars" not in event.numeric_metrics
     assert event.string_metrics["emergent_desire_created"] == "You want to feel safe."
     assert event.string_metrics["impulse_boosted_desire"] == "curiosity"
     assert event.params["impulse_boost_triggered"] is True
+
+
+def test_projector_prefers_structured_desire_levels_and_ignores_tool_output_chars() -> None:
+    projector = EgoMcpLogProjector()
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "feel_desires",
+        "emotion_primary": "curious",
+        "emotion_intensity": 0.65,
+        "desire_levels": {
+            "curiosity": 0.8,
+            "You want to feel safe.": 0.55,
+        },
+        "curiosity": 0.1,
+        "You want to feel safe.": 0.2,
+        "impulse_boost_amount": 0.15,
+        "tool_output_chars": 387,
+    }
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.numeric_metrics["curiosity"] == 0.8
+    assert event.numeric_metrics["You want to feel safe."] == 0.55
+    assert event.numeric_metrics["impulse_boost_amount"] == 0.15
+    assert "tool_output_chars" not in event.numeric_metrics
 
 
 def test_projector_uses_catalog_to_keep_custom_fixed_and_hide_removed_legacy_fixed() -> None:

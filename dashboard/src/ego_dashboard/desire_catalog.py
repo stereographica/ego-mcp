@@ -15,6 +15,7 @@ _RESERVED_NUMERIC_METRIC_KEYS = frozenset(
         "valence",
         "arousal",
         "impulse_boost_amount",
+        "tool_output_chars",
     }
 )
 
