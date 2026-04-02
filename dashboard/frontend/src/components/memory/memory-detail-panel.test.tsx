@@ -46,6 +46,37 @@ describe('MemoryDetailPanel', () => {
     expect(screen.getByText('mem-2')).toBeInTheDocument()
     expect(screen.getByText('notion-1')).toBeInTheDocument()
   })
+
+  it('redacts private memory content', () => {
+    render(
+      <MemoryDetailPanel
+        detail={{
+          id: 'mem-private',
+          content: 'This should never appear in the detail panel.',
+          timestamp: '2026-01-01T12:00:00Z',
+          category: 'technical',
+          importance: 4,
+          tags: ['private'],
+          is_private: true,
+          access_count: 2,
+          last_accessed: '2026-01-02T12:00:00Z',
+          decay: 0.61,
+          emotional_trace: {
+            valence: 0.2,
+            arousal: 0.4,
+            intensity: 0.5,
+          },
+          linked_ids: [],
+          generated_notion_ids: [],
+        }}
+      />,
+    )
+
+    expect(screen.getByText('REDACTED')).toBeInTheDocument()
+    expect(
+      screen.queryByText('This should never appear in the detail panel.'),
+    ).not.toBeInTheDocument()
+  })
 })
 
 describe('NotionDetailPanel', () => {

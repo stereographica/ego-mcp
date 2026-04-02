@@ -802,6 +802,64 @@ def test_memory_detail_endpoint_returns_full_memory_and_generated_notions(
     }
 
 
+def test_memory_detail_endpoint_redacts_private_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_memory_collection(
+        monkeypatch,
+        tmp_path,
+        [
+            (
+                "mem_private",
+                "Top secret memory body that must not be exposed in detail view.",
+                {
+                    "category": "technical",
+                    "timestamp": "2026-01-01T12:00:00+00:00",
+                    "access_count": 2,
+                    "importance": 4,
+                    "tags": "secret",
+                    "is_private": True,
+                    "linked_ids": "[]",
+                },
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.api._calculate_memory_decay",
+        lambda timestamp, *, link_confidence_max, access_count, now=None: 0.61,
+    )
+
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/memory/mem_private")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "mem_private",
+        "content": "REDACTED",
+        "timestamp": "2026-01-01T12:00:00+00:00",
+        "category": "technical",
+        "importance": 4,
+        "tags": ["secret"],
+        "is_private": True,
+        "access_count": 2,
+        "last_accessed": "",
+        "decay": 0.61,
+        "emotional_trace": {
+            "valence": 0.0,
+            "arousal": 0.5,
+            "intensity": 0.5,
+        },
+        "linked_ids": [],
+        "generated_notion_ids": [],
+    }
+
+
 def test_memory_detail_endpoint_returns_404_when_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

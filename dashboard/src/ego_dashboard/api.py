@@ -614,14 +614,15 @@ def _load_memory_detail(settings: DashboardSettings, memory_id: str) -> dict[str
             continue
         if memory_id in source_memory_ids:
             generated_notion_ids.append(str(notion["id"]))
+    is_private = bool(memory.get("is_private", False))
     return {
         "id": memory_id,
-        "content": str(memory.get("content", "")),
+        "content": "REDACTED" if is_private else str(memory.get("content", "")),
         "timestamp": str(memory.get("timestamp", "")),
         "category": str(memory.get("category", "")),
         "importance": _coerce_int(memory.get("importance"), 3),
         "tags": memory.get("tags", []),
-        "is_private": bool(memory.get("is_private", False)),
+        "is_private": is_private,
         "access_count": _coerce_int(memory.get("access_count"), 0),
         "last_accessed": str(memory.get("last_accessed", "")),
         "decay": _coerce_float(memory.get("decay"), 0.0),
