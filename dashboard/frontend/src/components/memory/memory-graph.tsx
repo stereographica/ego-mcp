@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import {
   Background,
@@ -6,7 +6,9 @@ import {
   MarkerType,
   MiniMap,
   ReactFlow,
+  useReactFlow,
   type Edge,
+  type EdgeTypes,
   type Node,
   type NodeMouseHandler,
   type NodeTypes,
@@ -17,6 +19,14 @@ import {
   calcNotionNodeRadius,
   nodeMatchesQuery,
 } from '@/components/memory/memory-graph-utils'
+import {
+  getEdgeStroke,
+  getNodeBorderColor,
+  getNodeFillColor,
+  getNodeTextColor,
+  wasAccessedRecently,
+} from '@/components/memory/memory-graph-palette'
+import { MemoryEdge } from './memory-edge'
 import { MemoryNode } from './memory-node'
 import { NotionNode } from './notion-node'
 import { useForceLayout } from '@/hooks/use-force-layout'
@@ -31,19 +41,23 @@ type LayoutMode = 'force' | 'hierarchical' | 'radial'
 type GraphNodeData = {
   label: string
   color: string
+  textColor: string
+  borderColor: string
   radius: number
-  tooltip: string
+  tooltipLines: string[]
   highlighted: boolean
   dimmed: boolean
   faded: boolean
   conviction: boolean
   isPrivate: boolean
+  recentlyAccessed: boolean
 }
 
 type MemoryGraphProps = {
   network: MemoryNetworkResponse
   selectedNodeId?: string | null
   focusedNodeId?: string | null
+  searchFocusNodeId?: string | null
   searchQuery: string
   path: MemoryNetworkPath | null
   pinnedPositions: Record<string, { x: number; y: number }>
@@ -64,87 +78,11 @@ const nodeTypes = {
   notion: NotionNode,
 } as NodeTypes
 
-const categoryColor = (node: MemoryNetworkNode) => {
-  if (node.is_notion) {
-    if (node.is_conviction) {
-      return 'hsl(45, 90%, 50%)'
-    }
-    switch ((node.emotion_tone ?? '').toLowerCase()) {
-      case 'joy':
-      case 'excited':
-      case 'moved':
-      case 'grateful':
-      case 'proud':
-      case 'hopeful':
-        return 'hsl(48, 82%, 55%)'
-      case 'sad':
-      case 'anxious':
-      case 'frustrated':
-      case 'angry':
-      case 'lonely':
-      case 'ashamed':
-        return 'hsl(212, 62%, 50%)'
-      default:
-        return 'hsl(172, 46%, 46%)'
-    }
-  }
-  switch (node.category.toUpperCase()) {
-    case 'DAILY':
-      return 'hsl(210, 70%, 55%)'
-    case 'PHILOSOPHICAL':
-      return 'hsl(270, 60%, 55%)'
-    case 'TECHNICAL':
-      return 'hsl(145, 55%, 45%)'
-    case 'FEELING':
-      return 'hsl(0, 65%, 55%)'
-    case 'RELATIONSHIP':
-      return 'hsl(30, 70%, 55%)'
-    case 'OBSERVATION':
-      return 'hsl(185, 55%, 45%)'
-    case 'CONVERSATION':
-      return 'hsl(50, 65%, 50%)'
-    case 'INTROSPECTION':
-      return 'hsl(310, 55%, 50%)'
-    case 'SELF_DISCOVERY':
-      return 'hsl(240, 50%, 60%)'
-    case 'DREAM':
-      return 'hsl(160, 45%, 50%)'
-    case 'LESSON':
-      return 'hsl(90, 50%, 45%)'
-    default:
-      return 'hsl(0, 0%, 60%)'
-  }
-}
+const edgeTypes = { memory: MemoryEdge } as EdgeTypes
 
 const pathEdgeKey = (source: string, target: string) => `${source}->${target}`
 
-const edgeStroke = (linkType: string) => {
-  switch (linkType) {
-    case 'caused_by':
-      return 'hsl(0, 65%, 55%)'
-    case 'leads_to':
-      return 'hsl(145, 55%, 45%)'
-    case 'notion_source':
-      return 'hsl(270, 60%, 55%)'
-    case 'notion_related':
-      return 'hsl(45, 90%, 50%)'
-    default:
-      return 'hsl(0, 0%, 60%)'
-  }
-}
-
-const edgeDashArray = (linkType: string) => {
-  switch (linkType) {
-    case 'related':
-      return '4 4'
-    case 'notion_related':
-      return '6 4'
-    default:
-      return undefined
-  }
-}
-
-const buildNodeTooltip = (node: MemoryNetworkNode) => {
+const buildNodeTooltipLines = (node: MemoryNetworkNode) => {
   if (node.is_notion) {
     return [
       node.is_conviction ? '[CONVICTION]' : 'Notion',
@@ -153,9 +91,7 @@ const buildNodeTooltip = (node: MemoryNetworkNode) => {
       `Reinforced: ${node.reinforcement_count ?? 0}`,
       `Sources: ${node.source_count ?? 0}`,
       node.emotion_tone ? `Emotion: ${node.emotion_tone}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n')
+    ].filter((line): line is string => Boolean(line))
   }
 
   return [
@@ -164,18 +100,40 @@ const buildNodeTooltip = (node: MemoryNetworkNode) => {
     `Importance: ${node.importance ?? 0}`,
     `Decay: ${(node.decay ?? 0).toFixed(2)}`,
     `Access: ${node.access_count ?? 0}`,
+    `Links: ${node.degree}`,
     node.tags && node.tags.length > 0
       ? `Tags: ${node.tags.map((tag) => `#${tag}`).join(' ')}`
       : null,
-  ]
-    .filter(Boolean)
-    .join('\n')
+  ].filter((line): line is string => Boolean(line))
+}
+
+const ViewportController = ({
+  targetNodeId,
+  positions,
+}: {
+  targetNodeId: string | null
+  positions: Map<string, { x: number; y: number }>
+}) => {
+  const { setCenter } = useReactFlow()
+
+  useEffect(() => {
+    if (!targetNodeId) return
+    const point = positions.get(targetNodeId)
+    if (!point) return
+    void setCenter(point.x, point.y, {
+      zoom: 1.15,
+      duration: 350,
+    })
+  }, [positions, setCenter, targetNodeId])
+
+  return null
 }
 
 export const MemoryGraph = ({
   network,
   selectedNodeId,
   focusedNodeId,
+  searchFocusNodeId,
   searchQuery,
   path,
   pinnedPositions,
@@ -235,6 +193,8 @@ export const MemoryGraph = ({
         matchingIds.has(node.id) ||
         path?.node_ids.includes(node.id) ||
         node.id === focusedNodeId
+      const fillColor = getNodeFillColor(node)
+      const textColor = getNodeTextColor(fillColor)
       return {
         id: node.id,
         type: node.is_notion ? 'notion' : 'memory',
@@ -243,16 +203,20 @@ export const MemoryGraph = ({
         selected: node.id === selectedNodeId,
         data: {
           label: node.label ?? node.id,
-          color: categoryColor(node),
+          color: fillColor,
+          textColor,
+          borderColor: getNodeBorderColor(node, fillColor),
           radius: node.is_notion
             ? calcNotionNodeRadius(node)
             : calcMemoryNodeRadius(node),
-          tooltip: buildNodeTooltip(node),
+          tooltipLines: buildNodeTooltipLines(node),
           highlighted,
           dimmed: hasSearch && !matchingIds.has(node.id),
           faded: !node.is_notion && (node.decay ?? 1) < 0.3,
           conviction: Boolean(node.is_conviction),
           isPrivate: Boolean(node.is_private),
+          recentlyAccessed:
+            !node.is_notion && wasAccessedRecently(node.last_accessed),
         },
       }
     })
@@ -275,26 +239,20 @@ export const MemoryGraph = ({
         )
         return {
           id: `${edge.source}-${edge.target}-${edge.link_type}-${index}`,
+          type: 'memory',
           source: edge.source,
           target: edge.target,
-          label: showEdgeLabels ? edge.link_type : undefined,
           markerEnd: directed
             ? {
                 type: MarkerType.ArrowClosed,
-                color: isPathEdge ? '#f59e0b' : edgeStroke(edge.link_type),
+                color: isPathEdge ? '#f59e0b' : getEdgeStroke(edge.link_type),
               }
             : undefined,
-          style: {
-            stroke: isPathEdge ? '#f59e0b' : edgeStroke(edge.link_type),
-            strokeWidth: isPathEdge
-              ? 3
-              : Math.max(1.5, (edge.confidence ?? 0.3) * 4),
-            strokeDasharray: edgeDashArray(edge.link_type),
-            opacity: Math.max(0.2, edge.confidence ?? 0.4),
-          },
-          labelStyle: {
-            fontSize: 11,
-            fill: '#475569',
+          data: {
+            link_type: edge.link_type,
+            confidence: edge.confidence,
+            highlighted: isPathEdge,
+            showLabel: showEdgeLabels,
           },
         }
       }),
@@ -326,13 +284,13 @@ export const MemoryGraph = ({
   }
 
   return (
-    <div className="relative min-w-0 overflow-hidden rounded-xl border bg-gradient-to-br from-white via-slate-50 to-amber-50">
+    <div className="memory-graph-surface relative min-w-0 overflow-hidden rounded-xl border bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800">
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3 text-sm">
         <label className="flex items-center gap-2">
-          <span className="text-muted-foreground text-xs">Layout</span>
+          <span className="text-slate-400 text-xs">Layout</span>
           <select
             value={layout}
-            className="border-input bg-background h-8 rounded-md border px-2 text-sm"
+            className="h-8 rounded-md border border-slate-700 bg-slate-950/70 px-2 text-sm text-slate-100"
             onChange={(event) =>
               onLayoutChange(event.currentTarget.value as LayoutMode)
             }
@@ -357,7 +315,7 @@ export const MemoryGraph = ({
         {focusedNodeId ? (
           <button
             type="button"
-            className="border-input hover:bg-muted rounded-md border px-3 py-1.5 text-xs"
+            className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-100 hover:bg-slate-800"
             onClick={onResetFocus}
           >
             Return to full graph
@@ -371,6 +329,7 @@ export const MemoryGraph = ({
           nodes={flowNodes}
           edges={flowEdges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodeClick={handleNodeClick}
           onNodeDoubleClick={handleNodeDoubleClick}
           onNodeContextMenu={handleNodeContextMenu}
@@ -378,9 +337,21 @@ export const MemoryGraph = ({
           elementsSelectable
           proOptions={{ hideAttribution: true }}
         >
-          <MiniMap zoomable pannable />
+          <ViewportController
+            targetNodeId={
+              searchFocusNodeId ?? selectedNodeId ?? focusedNodeId ?? null
+            }
+            positions={positions}
+          />
+          <MiniMap
+            zoomable
+            pannable
+            bgColor="rgba(2, 6, 23, 0.95)"
+            maskColor="rgba(2, 6, 23, 0.7)"
+            nodeColor={(node) => String(node.data?.color ?? '#94a3b8')}
+          />
           <Controls />
-          <Background color="#e2e8f0" gap={18} />
+          <Background color="rgba(148, 163, 184, 0.15)" gap={18} />
         </ReactFlow>
       </div>
 

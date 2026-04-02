@@ -167,8 +167,25 @@ def test_desire_catalog_endpoint_reports_invalid_json(tmp_path: Path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "invalid"
-    assert payload["fixed_desires"] == []
+    assert payload["fixed_desires"]
     assert payload["errors"]
+
+
+def test_desire_catalog_endpoint_falls_back_to_legacy_defaults_when_settings_file_absent(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/desires/catalog")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "missing"
+    assert payload["fixed_desires"]
 
 
 def test_desire_catalog_endpoint_uses_default_catalog_without_data_dir() -> None:

@@ -51,3 +51,12 @@ def test_load_settings_parses_cors_origins(monkeypatch: MonkeyPatch) -> None:
         "http://localhost:4173",
         "https://example.com",
     )
+
+
+def test_load_settings_falls_back_to_ego_mcp_data_dir(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.delenv("DASHBOARD_EGO_MCP_DATA_DIR", raising=False)
+    monkeypatch.setenv("EGO_MCP_DATA_DIR", "/tmp/ego-data")
+
+    settings = load_settings()
+
+    assert settings.ego_mcp_data_dir == "/tmp/ego-data"

@@ -3,10 +3,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { MemoryDetailPanel } from '@/components/memory/memory-detail-panel'
 import { MemoryFilterPanel } from '@/components/memory/memory-filter-panel'
 import { MemoryGraph } from '@/components/memory/memory-graph'
+import { MemoryGraphLegend } from '@/components/memory/memory-graph-legend'
 import { MemoryGraphStats } from '@/components/memory/memory-graph-stats'
 import {
   DEFAULT_MEMORY_GRAPH_FILTERS,
   applyMemoryGraphFilters,
+  nodeMatchesQuery,
 } from '@/components/memory/memory-graph-utils'
 import { MemorySearchBar } from '@/components/memory/memory-search-bar'
 import { NotionDetailPanel } from '@/components/memory/notion-detail-panel'
@@ -22,6 +24,7 @@ type LayoutMode = 'force' | 'hierarchical' | 'radial'
 
 export const MemoryTab = ({ isActive = true }: MemoryTabProps) => {
   const {
+    fullNetwork,
     network,
     loading,
     path,
@@ -45,9 +48,18 @@ export const MemoryTab = ({ isActive = true }: MemoryTabProps) => {
   const [radialDepth, setRadialDepth] = useState(2)
   const [layout, setLayout] = useState<LayoutMode>('force')
   const [showEdgeLabels, setShowEdgeLabels] = useState(false)
+  const [searchMatchIndex, setSearchMatchIndex] = useState(-1)
+  const [searchFocusNodeId, setSearchFocusNodeId] = useState<string | null>(
+    null,
+  )
   const [pinnedPositions, setPinnedPositions] = useState<
     Record<string, { x: number; y: number }>
   >({})
+
+  const baseNetwork = useMemo(
+    () => (fullNetwork && fullNetwork.nodes.length > 0 ? fullNetwork : network),
+    [fullNetwork, network],
+  )
 
   const filteredNetwork = useMemo(
     () => applyMemoryGraphFilters(network, filters),
@@ -58,14 +70,40 @@ export const MemoryTab = ({ isActive = true }: MemoryTabProps) => {
     () =>
       Array.from(
         new Set(
-          network.nodes
+          baseNetwork.nodes
             .filter((node) => !node.is_notion)
             .map((node) => node.category)
             .filter((category): category is string => Boolean(category)),
         ),
       ).sort(),
-    [network.nodes],
+    [baseNetwork.nodes],
   )
+
+  const searchMatches = useMemo(
+    () =>
+      filteredNetwork.nodes
+        .filter((node) => nodeMatchesQuery(node, query))
+        .sort((left, right) =>
+          (left.label ?? left.content_preview ?? left.id).localeCompare(
+            right.label ?? right.content_preview ?? right.id,
+          ),
+        ),
+    [filteredNetwork.nodes, query],
+  )
+
+  const visibleMemoryCount = filteredNetwork.nodes.filter(
+    (node) => !node.is_notion,
+  ).length
+  const visibleNotionCount = filteredNetwork.nodes.filter(
+    (node) => node.is_notion,
+  ).length
+  const memorySourceUnavailable =
+    baseNetwork.stats.memory_count === 0 && baseNetwork.stats.notion_count > 0
+
+  useEffect(() => {
+    setSearchMatchIndex(-1)
+    setSearchFocusNodeId(null)
+  }, [query])
 
   useEffect(() => {
     if (!selectedNode || selectedNode.is_notion) {
@@ -103,29 +141,38 @@ export const MemoryTab = ({ isActive = true }: MemoryTabProps) => {
   const relatedNotionIds = useMemo(() => {
     if (!selectedNode?.is_notion) return []
     const related = new Set<string>()
-    for (const edge of network.edges) {
+    for (const edge of baseNetwork.edges) {
       if (edge.source === selectedNode.id) {
-        const target = network.nodes.find((node) => node.id === edge.target)
+        const target = baseNetwork.nodes.find((node) => node.id === edge.target)
         if (target?.is_notion) related.add(target.id)
       }
       if (edge.target === selectedNode.id) {
-        const source = network.nodes.find((node) => node.id === edge.source)
+        const source = baseNetwork.nodes.find((node) => node.id === edge.source)
         if (source?.is_notion) related.add(source.id)
       }
     }
     return [...related].sort()
-  }, [network.edges, network.nodes, selectedNode])
+  }, [baseNetwork.edges, baseNetwork.nodes, selectedNode])
 
   const sourceMemoryIds = useMemo(() => {
     if (!selectedNode?.is_notion) return []
     const sources = new Set<string>()
-    for (const edge of network.edges) {
+    for (const edge of baseNetwork.edges) {
       if (edge.target !== selectedNode.id) continue
-      const source = network.nodes.find((node) => node.id === edge.source)
+      const source = baseNetwork.nodes.find((node) => node.id === edge.source)
       if (source && !source.is_notion) sources.add(source.id)
     }
     return [...sources].sort()
-  }, [network.edges, network.nodes, selectedNode])
+  }, [baseNetwork.edges, baseNetwork.nodes, selectedNode])
+
+  const handleSearchSubmit = () => {
+    if (searchMatches.length === 0) return
+    const nextIndex = (searchMatchIndex + 1) % searchMatches.length
+    const nextNode = searchMatches[nextIndex]
+    setSearchMatchIndex(nextIndex)
+    setSearchFocusNodeId(nextNode.id)
+    setSelectedNode(nextNode)
+  }
 
   const handleFocusNeighborhood = async (nodeId: string) => {
     setFocusedNodeId(nodeId)
@@ -151,12 +198,24 @@ export const MemoryTab = ({ isActive = true }: MemoryTabProps) => {
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">Search</CardTitle>
             </CardHeader>
-            <CardContent>
-              <MemorySearchBar query={query} onChange={setQuery} />
+            <CardContent className="space-y-2">
+              <MemorySearchBar
+                query={query}
+                onChange={setQuery}
+                onSubmit={handleSearchSubmit}
+              />
+              <p className="text-muted-foreground text-xs">
+                {query.trim().length > 0
+                  ? `${searchMatches.length} matches. Press Enter to focus the next node.`
+                  : 'Search memory previews, notion labels, and tags.'}
+              </p>
             </CardContent>
           </Card>
         </div>
-        <MemoryGraphStats stats={filteredNetwork.stats} />
+        <div className="space-y-4">
+          <MemoryGraphStats stats={baseNetwork.stats} />
+          <MemoryGraphLegend categories={categories} />
+        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -171,10 +230,18 @@ export const MemoryTab = ({ isActive = true }: MemoryTabProps) => {
             <div className="text-muted-foreground text-xs">
               {loading
                 ? 'Loading graph...'
-                : `${filteredNetwork.nodes.length} nodes`}
+                : `Visible ${filteredNetwork.nodes.length} nodes (${visibleMemoryCount} memories / ${visibleNotionCount} notions)`}
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
+            {memorySourceUnavailable ? (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                The current graph contains notions but no memory nodes. This
+                usually means the dashboard could not read ego-mcp memory
+                storage, so the full Memory graph from the design doc is not
+                available yet.
+              </div>
+            ) : null}
             {layout === 'radial' && focusedNodeId ? (
               <label className="block space-y-2 text-sm">
                 <span>{`Neighborhood depth ${radialDepth}`}</span>
@@ -204,6 +271,7 @@ export const MemoryTab = ({ isActive = true }: MemoryTabProps) => {
                 network={filteredNetwork}
                 selectedNodeId={selectedNode?.id ?? null}
                 focusedNodeId={focusedNodeId}
+                searchFocusNodeId={searchFocusNodeId}
                 searchQuery={query}
                 path={path}
                 pinnedPositions={pinnedPositions}

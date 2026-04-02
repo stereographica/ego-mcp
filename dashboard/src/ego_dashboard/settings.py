@@ -62,5 +62,5 @@ def load_settings() -> DashboardSettings:
         ),
         log_path=os.getenv("DASHBOARD_LOG_PATH", _default_log_path()),
         ingest_poll_seconds=_env_float("DASHBOARD_INGEST_POLL_SECONDS", 1.0),
-        ego_mcp_data_dir=os.getenv("DASHBOARD_EGO_MCP_DATA_DIR"),
+        ego_mcp_data_dir=os.getenv("DASHBOARD_EGO_MCP_DATA_DIR") or os.getenv("EGO_MCP_DATA_DIR"),
     )

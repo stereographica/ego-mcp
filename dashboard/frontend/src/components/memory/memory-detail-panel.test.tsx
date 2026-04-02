@@ -1,7 +1,12 @@
 import { render, screen } from '@testing-library/react'
 
+import { fetchNotionHistory } from '@/api'
 import { MemoryDetailPanel } from '@/components/memory/memory-detail-panel'
 import { NotionDetailPanel } from '@/components/memory/notion-detail-panel'
+
+vi.mock('@/api', () => ({
+  fetchNotionHistory: vi.fn().mockResolvedValue([]),
+}))
 
 describe('MemoryDetailPanel', () => {
   it('renders detailed memory content and links', () => {
@@ -44,7 +49,9 @@ describe('MemoryDetailPanel', () => {
 })
 
 describe('NotionDetailPanel', () => {
-  it('renders notion detail information', () => {
+  it('renders notion detail information', async () => {
+    vi.mocked(fetchNotionHistory).mockResolvedValue([])
+
     render(
       <NotionDetailPanel
         notion={{
@@ -71,7 +78,7 @@ describe('NotionDetailPanel', () => {
 
     expect(screen.getByText('Technical growth')).toBeInTheDocument()
     expect(screen.getByText('Confidence')).toBeInTheDocument()
-    expect(screen.getByText('notion-2')).toBeInTheDocument()
-    expect(screen.getByText('mem-1')).toBeInTheDocument()
+    expect(await screen.findByText(/notion-2/)).toBeInTheDocument()
+    expect(screen.getByText(/mem-1/)).toBeInTheDocument()
   })
 })

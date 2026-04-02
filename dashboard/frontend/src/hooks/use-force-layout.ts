@@ -6,6 +6,8 @@ import {
   forceLink,
   forceManyBody,
   forceSimulation,
+  forceX,
+  forceY,
 } from 'd3-force'
 
 import {
@@ -33,6 +35,8 @@ type LayoutSimulationNode = {
 type LayoutSimulationLink = {
   source: string | LayoutSimulationNode
   target: string | LayoutSimulationNode
+  confidence?: number
+  isNotionLink?: boolean
 }
 
 type UseForceLayoutOptions = {
@@ -69,9 +73,6 @@ const buildAdjacency = (network: MemoryNetworkResponse) => {
   }
   return adjacency
 }
-
-const endpointId = (value: string | LayoutSimulationNode) =>
-  typeof value === 'string' ? value : value.id
 
 const radialLayout = (
   network: MemoryNetworkResponse,
@@ -153,6 +154,7 @@ export const useForceLayout = ({
 }: UseForceLayoutOptions) =>
   useMemo(() => {
     if (network.nodes.length === 0) return new Map<string, LayoutPoint>()
+    const nodeById = new Map(network.nodes.map((node) => [node.id, node]))
 
     if (layout === 'hierarchical') {
       return hierarchicalLayout(network, width, height)
@@ -188,6 +190,10 @@ export const useForceLayout = ({
       (edge) => ({
         source: edge.source,
         target: edge.target,
+        confidence: edge.confidence ?? 0.5,
+        isNotionLink:
+          nodeById.get(edge.source)?.is_notion === true ||
+          nodeById.get(edge.target)?.is_notion === true,
       }),
     )
 
@@ -196,14 +202,38 @@ export const useForceLayout = ({
         'link',
         forceLink(simulationLinks)
           .id((node: LayoutSimulationNode) => String(node.id))
-          .distance((link: LayoutSimulationLink) =>
-            endpointId(link.source) === endpointId(link.target) ? 40 : 120,
+          .distance((link: LayoutSimulationLink) => {
+            const baseDistance = link.isNotionLink ? 96 : 132
+            return baseDistance - (link.confidence ?? 0.5) * 48
+          })
+          .strength((link: LayoutSimulationLink) =>
+            Math.min(1, 0.18 + (link.confidence ?? 0.5) * 0.7),
           ),
       )
       .force('charge', forceManyBody().strength(-280))
       .force(
         'collide',
         forceCollide().radius((node: LayoutSimulationNode) => node.radius + 18),
+      )
+      .force(
+        'x',
+        forceX((node: LayoutSimulationNode) => {
+          const source = nodeById.get(node.id)
+          return source?.is_notion ? width / 2 : width / 2 + 24
+        }).strength((node: LayoutSimulationNode) => {
+          const source = nodeById.get(node.id)
+          return source?.is_notion ? 0.08 : 0.03
+        }),
+      )
+      .force(
+        'y',
+        forceY((node: LayoutSimulationNode) => {
+          const source = nodeById.get(node.id)
+          return source?.is_notion ? height * 0.42 : height * 0.58
+        }).strength((node: LayoutSimulationNode) => {
+          const source = nodeById.get(node.id)
+          return source?.is_notion ? 0.06 : 0.025
+        }),
       )
       .force('center', forceCenter(width / 2, height / 2))
       .stop()

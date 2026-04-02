@@ -121,15 +121,8 @@ export const applyMemoryGraphFilters = (
 export const nodeMatchesQuery = (node: MemoryNetworkNode, query: string) => {
   const normalized = query.trim().toLowerCase()
   if (!normalized) return true
-  const haystack = [
-    node.label,
-    node.content_preview,
-    ...(node.tags ?? []),
-    node.category,
-    node.person_id,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
-  return haystack.includes(normalized)
+  const haystack = node.is_notion
+    ? [node.label, ...(node.tags ?? [])].filter(Boolean).join(' ')
+    : [node.content_preview, ...(node.tags ?? [])].filter(Boolean).join(' ')
+  return haystack.toLowerCase().includes(normalized)
 }

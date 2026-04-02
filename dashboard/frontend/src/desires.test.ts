@@ -65,6 +65,15 @@ describe('desire catalog helpers', () => {
     ).toEqual(['information_hunger', 'social_thirst', 'novelty'])
   })
 
+  it('keeps fixed-looking discovered keys visible when the catalog is temporarily empty', () => {
+    expect(
+      buildDesireHistorySeriesKeys(
+        [],
+        ['information_hunger', 'social_thirst', 'novelty', ''],
+      ),
+    ).toEqual(['information_hunger', 'novelty', 'social_thirst'])
+  })
+
   it('builds history chart config with catalog labels and dynamic labels', () => {
     const config = buildDesireHistoryChartConfig(
       [
@@ -132,7 +141,7 @@ describe('desire catalog helpers', () => {
     ).toMatchObject({ dynamic_desires: 0.6 })
   })
 
-  it('filters omitted built-in desires from radar data and handles missing current state', () => {
+  it('uses fixed desire payload keys as fallback radar axes when the catalog is empty', () => {
     const legacyFiltered = buildDesireRadarSeriesData([], {
       latest_desires: { predictability: 0.9 },
       latest_emergent_desires: {
@@ -146,6 +155,7 @@ describe('desire catalog helpers', () => {
     })
 
     expect(legacyFiltered.chartData.map((item) => item.key)).toEqual([
+      'predictability',
       'novelty',
     ])
     expect(legacyFiltered.hasDynamicDesires).toBe(true)
@@ -175,5 +185,45 @@ describe('desire catalog helpers', () => {
     expect(emptyRadar.hasDynamicDesires).toBe(false)
     expect(emptyRadar.boostedDesire).toBeUndefined()
     expect(emptyRadar.boostAmount).toBeUndefined()
+  })
+
+  it('uses latest fixed desires as fallback axes when the catalog has not loaded yet', () => {
+    const radar = buildDesireRadarSeriesData([], {
+      latest_desires: {
+        information_hunger: 0.7,
+        social_thirst: 0.5,
+      },
+      latest_emergent_desires: {
+        novelty: 0.6,
+      },
+      latest: {
+        string_metrics: {},
+        numeric_metrics: {},
+      },
+    })
+
+    expect(radar.chartData).toEqual([
+      {
+        key: 'information_hunger',
+        name: 'information hunger',
+        fixed_desires: 0.7,
+        dynamic_desires: 0,
+        boosted_desire: 0,
+      },
+      {
+        key: 'social_thirst',
+        name: 'social thirst',
+        fixed_desires: 0.5,
+        dynamic_desires: 0,
+        boosted_desire: 0,
+      },
+      {
+        key: 'novelty',
+        name: 'novelty',
+        fixed_desires: 0,
+        dynamic_desires: 0.6,
+        boosted_desire: 0,
+      },
+    ])
   })
 })
