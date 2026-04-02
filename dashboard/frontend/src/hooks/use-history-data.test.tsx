@@ -8,7 +8,6 @@ vi.mock('@/api', () => ({
   fetchDesireKeys: vi.fn(),
   fetchIntensity: vi.fn(),
   fetchLogs: vi.fn(),
-  fetchMemoryNetwork: vi.fn(),
   fetchMetric: vi.fn(),
   fetchNotions: vi.fn(),
   fetchStringHeatmap: vi.fn(),
@@ -90,10 +89,6 @@ describe('useHistoryData', () => {
         },
       },
     ])
-    vi.mocked(api.fetchMemoryNetwork).mockResolvedValue({
-      nodes: [{ id: 'mem-1', category: 'memory', is_notion: false }],
-      edges: [],
-    })
     vi.mocked(api.fetchNotions).mockResolvedValue({
       items: [
         {
@@ -143,7 +138,6 @@ describe('useHistoryData', () => {
     expect(
       result.current.historyMarkers.map((marker) => marker.kind).sort(),
     ).toEqual(['emergent', 'emergent', 'impulse', 'proust'])
-    expect(result.current.memoryNetwork.nodes).toHaveLength(1)
     expect(result.current.notions).toHaveLength(1)
     expect(result.current.desireKeys).toEqual([
       'information_hunger',
@@ -205,7 +199,7 @@ describe('useHistoryData', () => {
     })
   })
 
-  it('keeps memory network and notions on a slower refresh cadence', async () => {
+  it('keeps notions on a slower refresh cadence', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T12:10:00Z'))
     const range = {
@@ -233,10 +227,6 @@ describe('useHistoryData', () => {
     vi.mocked(api.fetchStringTimeline).mockResolvedValue([])
     vi.mocked(api.fetchStringHeatmap).mockResolvedValue([])
     vi.mocked(api.fetchLogs).mockResolvedValue([])
-    vi.mocked(api.fetchMemoryNetwork).mockResolvedValue({
-      nodes: [],
-      edges: [],
-    })
     vi.mocked(api.fetchNotions).mockResolvedValue({ items: [] })
     vi.mocked(api.fetchMetric).mockResolvedValue([])
 
@@ -249,7 +239,6 @@ describe('useHistoryData', () => {
     })
 
     expect(api.fetchDesireKeys).toHaveBeenNthCalledWith(1, effectiveRange)
-    expect(api.fetchMemoryNetwork).toHaveBeenCalledTimes(1)
     expect(api.fetchNotions).toHaveBeenCalledTimes(1)
 
     await act(async () => {
@@ -257,9 +246,7 @@ describe('useHistoryData', () => {
     })
 
     expect(api.fetchDesireKeys).toHaveBeenCalledTimes(2)
-    expect(api.fetchMemoryNetwork).toHaveBeenCalledTimes(1)
     expect(api.fetchNotions).toHaveBeenCalledTimes(1)
-    expect(result.current.memoryNetwork).toEqual({ nodes: [], edges: [] })
     expect(result.current.notions).toEqual([])
   })
 })

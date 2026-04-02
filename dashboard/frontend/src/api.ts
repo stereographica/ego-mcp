@@ -6,6 +6,8 @@ import type {
   HeatmapPoint,
   LogLine,
   LogPoint,
+  MemoryDetail,
+  MemoryNetworkPath,
   MemoryNetworkResponse,
   SeriesPoint,
   Notion,
@@ -14,6 +16,29 @@ import type {
 } from './types'
 
 const BASE = import.meta.env.VITE_DASHBOARD_API_BASE ?? 'http://localhost:8000'
+
+const EMPTY_MEMORY_NETWORK: MemoryNetworkResponse = {
+  nodes: [],
+  edges: [],
+  stats: {
+    node_count: 0,
+    memory_count: 0,
+    notion_count: 0,
+    edge_count: 0,
+    conviction_count: 0,
+    avg_memory_decay: 0,
+    graph_density: 0,
+    top_hub_degree: 0,
+    top_category_ratio: 0,
+  },
+}
+
+const EMPTY_MEMORY_PATH: MemoryNetworkPath = {
+  node_ids: [],
+  edge_pairs: [],
+  length: 0,
+  exists: false,
+}
 
 const get = async <T>(path: string, fallback: T): Promise<T> => {
   try {
@@ -67,7 +92,30 @@ export const fetchCurrent = async (): Promise<CurrentResponse> =>
   })
 
 export const fetchMemoryNetwork = async (): Promise<MemoryNetworkResponse> =>
-  get('/api/v1/memory/network', { nodes: [], edges: [] })
+  get('/api/v1/memory/network', EMPTY_MEMORY_NETWORK)
+
+export const fetchMemoryDetail = async (
+  id: string,
+): Promise<MemoryDetail | null> =>
+  get<MemoryDetail | null>(`/api/v1/memory/${encodeURIComponent(id)}`, null)
+
+export const fetchMemorySubgraph = async (
+  nodeId: string,
+  depth = 1,
+): Promise<MemoryNetworkResponse> =>
+  get(
+    `/api/v1/memory/network/subgraph?node_id=${encodeURIComponent(nodeId)}&depth=${depth}`,
+    EMPTY_MEMORY_NETWORK,
+  )
+
+export const fetchMemoryPath = async (
+  from: string,
+  to: string,
+): Promise<MemoryNetworkPath> =>
+  get(
+    `/api/v1/memory/network/path?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    EMPTY_MEMORY_PATH,
+  )
 
 export const fetchNotions = async (): Promise<{ items: Notion[] }> =>
   get('/api/v1/notions', { items: [] })

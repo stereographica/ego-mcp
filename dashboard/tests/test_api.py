@@ -6,10 +6,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
+import networkx as nx
 import pytest
 from fastapi.testclient import TestClient
 
-from ego_dashboard.api import _load_memory_network, create_app
+from ego_dashboard.api import _compute_graph_metrics, _load_memory_network, create_app
 from ego_dashboard.models import DashboardEvent
 from ego_dashboard.settings import DashboardSettings
 from ego_dashboard.store import TelemetryStore
@@ -56,6 +57,46 @@ def _write_desire_catalog(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _install_fake_memory_collection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    rows: list[tuple[str, str, dict[str, object]]],
+    *,
+    collection_calls: list[dict[str, object]] | None = None,
+) -> None:
+    chroma_dir = tmp_path / "chroma"
+    chroma_dir.mkdir(exist_ok=True)
+
+    class _FakeCollection:
+        def get(
+            self,
+            *,
+            limit: int,
+            offset: int,
+            include: list[str],
+        ) -> dict[str, object]:
+            if collection_calls is not None:
+                collection_calls.append(
+                    {"limit": limit, "offset": offset, "include": tuple(include)}
+                )
+            batch = rows[offset : offset + limit]
+            return {
+                "ids": [memory_id for memory_id, _, _ in batch],
+                "documents": [document for _, document, _ in batch],
+                "metadatas": [metadata for _, _, metadata in batch],
+            }
+
+    class _FakePersistentClient:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def get_collection(self, name: str) -> _FakeCollection:
+            assert name == "ego_memories"
+            return _FakeCollection()
+
+    monkeypatch.setattr("ego_dashboard.api.chromadb.PersistentClient", _FakePersistentClient)
 
 
 def test_history_endpoints() -> None:
@@ -191,11 +232,27 @@ def test_api_helpers_handle_edge_cases() -> None:
                 "skip",
             ]
         )
-    ) == [{"target_id": "mem_1", "link_type": "related", "confidence": 0.5}]
+    ) == [{"target_id": "mem_1", "link_type": "related", "confidence": 0.5, "note": ""}]
 
 
 def test_load_memory_network_returns_empty_without_data_dir() -> None:
-    assert _load_memory_network(DashboardSettings()) == {"nodes": [], "edges": []}
+    assert _load_memory_network(DashboardSettings()) == {
+        "nodes": [],
+        "edges": [],
+        "stats": {
+            "node_count": 0,
+            "memory_count": 0,
+            "notion_count": 0,
+            "edge_count": 0,
+            "conviction_count": 0,
+            "avg_memory_decay": 0.0,
+            "graph_density": 0.0,
+            "top_hub_id": None,
+            "top_hub_degree": 0,
+            "top_category": None,
+            "top_category_ratio": 0.0,
+        },
+    }
 
 
 def test_load_notion_rows_handles_missing_invalid_and_valid_files(tmp_path: Path) -> None:
@@ -392,6 +449,7 @@ def test_memory_network_and_notions_endpoints(
                     "decay": 0.7,
                     "access_count": 2,
                     "confidence": 0.7,
+                    "emotion_tone": "frustrated",
                     "is_notion": True,
                 },
             ],
@@ -422,6 +480,7 @@ def test_memory_network_and_notions_endpoints(
     assert network.status_code == 200
     assert network.json()["nodes"][0]["id"] == "mem_1"
     assert network.json()["nodes"][1]["is_notion"] is True
+    assert network.json()["nodes"][1]["emotion_tone"] == "frustrated"
     assert network.json()["edges"][0]["link_type"] == "notion_source"
     assert network.json()["edges"][1]["link_type"] == "notion_related"
 
@@ -445,67 +504,49 @@ def test_load_memory_network_uses_existing_collection_in_batches(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    chroma_dir = tmp_path / "chroma"
-    chroma_dir.mkdir()
     collection_calls: list[dict[str, object]] = []
-
-    class _FakeCollection:
-        def get(
-            self,
-            *,
-            limit: int,
-            offset: int,
-            include: list[str],
-        ) -> dict[str, object]:
-            collection_calls.append({"limit": limit, "offset": offset, "include": tuple(include)})
-            if offset == 0:
-                return {
-                    "ids": ["mem_1"],
-                    "documents": ["Memory one with a readable summary"],
-                    "metadatas": [
-                        {
-                            "category": "daily",
-                            "timestamp": "2026-01-01T12:00:00+00:00",
-                            "access_count": 2,
-                            "linked_ids": json.dumps(
-                                [
-                                    {
-                                        "target_id": "mem_2",
-                                        "link_type": "related",
-                                        "confidence": 0.4,
-                                    }
-                                ]
-                            ),
-                        }
-                    ],
-                }
-            if offset == 1:
-                return {
-                    "ids": ["mem_2"],
-                    "documents": ["Private note that should stay hidden"],
-                    "metadatas": [
-                        {
-                            "category": "daily",
-                            "timestamp": "2026-01-01T12:00:00+00:00",
-                            "access_count": 5,
-                            "linked_ids": "[]",
-                            "is_private": True,
-                        }
-                    ],
-                }
-            return {"ids": [], "documents": [], "metadatas": []}
-
-    class _FakePersistentClient:
-        def __init__(self, path: str) -> None:
-            self.path = path
-            self.collection_requested: str | None = None
-            self.collection = _FakeCollection()
-
-        def get_collection(self, name: str) -> _FakeCollection:
-            self.collection_requested = name
-            return self.collection
-
-    monkeypatch.setattr("ego_dashboard.api.chromadb.PersistentClient", _FakePersistentClient)
+    _install_fake_memory_collection(
+        monkeypatch,
+        tmp_path,
+        [
+            (
+                "mem_1",
+                "Memory one with a readable summary",
+                {
+                    "category": "daily",
+                    "timestamp": "2026-01-01T12:00:00+00:00",
+                    "access_count": 2,
+                    "importance": 4,
+                    "tags": "alpha,beta",
+                    "valence": 0.3,
+                    "arousal": 0.6,
+                    "last_accessed": "2026-01-02T08:00:00+00:00",
+                    "linked_ids": json.dumps(
+                        [
+                            {
+                                "target_id": "mem_2",
+                                "link_type": "related",
+                                "confidence": 0.4,
+                            }
+                        ]
+                    ),
+                },
+            ),
+            (
+                "mem_2",
+                "Private note that should stay hidden",
+                {
+                    "category": "daily",
+                    "timestamp": "2026-01-01T12:00:00+00:00",
+                    "access_count": 5,
+                    "importance": 2,
+                    "linked_ids": "[]",
+                    "is_private": True,
+                },
+            ),
+        ],
+        collection_calls=collection_calls,
+    )
     monkeypatch.setattr(
         "ego_dashboard.api._calculate_memory_decay",
         lambda timestamp, *, link_confidence_max, access_count, now=None: (
@@ -525,9 +566,30 @@ def test_load_memory_network_uses_existing_collection_in_batches(
     ]
     assert nodes[0]["id"] == "mem_1"
     assert nodes[0]["label"] == "Memory one with a readable summary"
+    assert nodes[0]["content_preview"] == "Memory one with a readable summary"
+    assert nodes[0]["importance"] == 4
+    assert nodes[0]["tags"] == ["alpha", "beta"]
+    assert nodes[0]["emotional_valence"] == pytest.approx(0.3)
+    assert nodes[0]["emotional_arousal"] == pytest.approx(0.6)
+    assert nodes[0]["last_accessed"] == "2026-01-02T08:00:00+00:00"
+    assert nodes[0]["degree"] == 1
+    assert nodes[0]["betweenness"] == pytest.approx(0.0)
     assert nodes[1]["access_count"] == 5
     assert nodes[1]["label"] == "REDACTED"
     assert nodes[0]["decay"] == pytest.approx(2.52)
+    assert result["stats"] == {
+        "node_count": 2,
+        "memory_count": 2,
+        "notion_count": 0,
+        "edge_count": 1,
+        "conviction_count": 0,
+        "avg_memory_decay": pytest.approx(3.82),
+        "graph_density": 1.0,
+        "top_hub_id": "mem_1",
+        "top_hub_degree": 1,
+        "top_category": "daily",
+        "top_category_ratio": 1.0,
+    }
     assert edges == [
         {
             "source": "mem_1",
@@ -579,30 +641,349 @@ def test_load_memory_network_keeps_notion_nodes_when_memory_load_fails(
             "id": "notion_1",
             "label": "pattern & signal (curious)",
             "is_notion": True,
+            "content_preview": None,
+            "importance": None,
+            "tags": [],
+            "is_private": False,
             "confidence": 0.8,
-            "access_count": 1,
-            "decay": 0.8,
+            "emotion_tone": "curious",
+            "access_count": None,
+            "decay": None,
             "category": "notion",
             "reinforcement_count": 6,
             "person_id": "Master",
             "related_count": 1,
             "is_conviction": True,
+            "source_count": 1,
+            "degree": 0,
+            "betweenness": 0.0,
+            "emotional_valence": None,
+            "emotional_arousal": None,
+            "last_accessed": None,
+            "created": "2026-01-01T12:00:00+00:00",
+            "last_reinforced": "2026-01-02T12:00:00+00:00",
         }
     ]
-    assert result["edges"] == [
-        {
-            "source": "notion_1",
-            "target": "mem_1",
-            "link_type": "notion_source",
-            "confidence": 0.8,
+    assert result["edges"] == []
+    assert result["stats"] == {
+        "node_count": 1,
+        "memory_count": 0,
+        "notion_count": 1,
+        "edge_count": 0,
+        "conviction_count": 1,
+        "avg_memory_decay": 0.0,
+        "graph_density": 0.0,
+        "top_hub_id": "notion_1",
+        "top_hub_degree": 0,
+        "top_category": None,
+        "top_category_ratio": 0.0,
+    }
+
+
+def test_memory_detail_endpoint_returns_full_memory_and_generated_notions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_memory_collection(
+        monkeypatch,
+        tmp_path,
+        [
+            (
+                "mem_1",
+                "A detailed memory body with enough text to verify the full response.",
+                {
+                    "category": "technical",
+                    "timestamp": "2026-01-01T12:00:00+00:00",
+                    "access_count": 4,
+                    "importance": 5,
+                    "tags": "design,db",
+                    "is_private": False,
+                    "last_accessed": "2026-01-03T09:30:00+00:00",
+                    "valence": 0.25,
+                    "arousal": 0.75,
+                    "intensity": 0.55,
+                    "linked_ids": json.dumps(
+                        [
+                            {
+                                "target_id": "mem_2",
+                                "link_type": "caused_by",
+                                "confidence": 0.91,
+                            }
+                        ]
+                    ),
+                },
+            ),
+            (
+                "mem_2",
+                "Supporting memory",
+                {
+                    "category": "observation",
+                    "timestamp": "2026-01-01T12:10:00+00:00",
+                    "access_count": 1,
+                    "linked_ids": "[]",
+                },
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.api._calculate_memory_decay",
+        lambda timestamp, *, link_confidence_max, access_count, now=None: 0.82,
+    )
+    (tmp_path / "notions.json").write_text(
+        json.dumps(
+            {
+                "notion_1": {
+                    "label": "Technical growth",
+                    "emotion_tone": "proud",
+                    "confidence": 0.87,
+                    "source_memory_ids": ["mem_1"],
+                    "related_notion_ids": [],
+                    "reinforcement_count": 12,
+                    "person_id": "",
+                    "created": "2026-01-02T12:00:00+00:00",
+                    "last_reinforced": "2026-01-04T12:00:00+00:00",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/memory/mem_1")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "mem_1",
+        "content": "A detailed memory body with enough text to verify the full response.",
+        "timestamp": "2026-01-01T12:00:00+00:00",
+        "category": "technical",
+        "importance": 5,
+        "tags": ["design", "db"],
+        "is_private": False,
+        "access_count": 4,
+        "last_accessed": "2026-01-03T09:30:00+00:00",
+        "decay": 0.82,
+        "emotional_trace": {
+            "valence": 0.25,
+            "arousal": 0.75,
+            "intensity": 0.55,
         },
-        {
-            "source": "notion_1",
-            "target": "notion_2",
-            "link_type": "notion_related",
-            "confidence": 0.8,
-        },
-    ]
+        "linked_ids": [
+            {
+                "target_id": "mem_2",
+                "link_type": "caused_by",
+                "confidence": 0.91,
+                "note": "",
+            }
+        ],
+        "generated_notion_ids": ["notion_1"],
+    }
+
+
+def test_memory_detail_endpoint_returns_404_when_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_memory_collection(monkeypatch, tmp_path, [])
+
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/memory/mem_missing")
+
+    assert response.status_code == 404
+
+
+def test_memory_network_subgraph_endpoint_respects_depth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_memory_collection(
+        monkeypatch,
+        tmp_path,
+        [
+            (
+                "mem_1",
+                "One",
+                {
+                    "category": "daily",
+                    "timestamp": "2026-01-01T12:00:00+00:00",
+                    "linked_ids": json.dumps(
+                        [
+                            {
+                                "target_id": "mem_2",
+                                "link_type": "related",
+                                "confidence": 0.7,
+                            }
+                        ]
+                    ),
+                },
+            ),
+            (
+                "mem_2",
+                "Two",
+                {
+                    "category": "daily",
+                    "timestamp": "2026-01-01T12:05:00+00:00",
+                    "linked_ids": json.dumps(
+                        [
+                            {
+                                "target_id": "mem_1",
+                                "link_type": "related",
+                                "confidence": 0.7,
+                            },
+                            {
+                                "target_id": "mem_3",
+                                "link_type": "related",
+                                "confidence": 0.6,
+                            },
+                        ]
+                    ),
+                },
+            ),
+            (
+                "mem_3",
+                "Three",
+                {
+                    "category": "daily",
+                    "timestamp": "2026-01-01T12:10:00+00:00",
+                    "linked_ids": json.dumps(
+                        [
+                            {
+                                "target_id": "mem_2",
+                                "link_type": "related",
+                                "confidence": 0.6,
+                            }
+                        ]
+                    ),
+                },
+            ),
+        ],
+    )
+
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    depth_one = client.get("/api/v1/memory/network/subgraph?node_id=mem_1&depth=1")
+    depth_two = client.get("/api/v1/memory/network/subgraph?node_id=mem_1&depth=2")
+
+    assert depth_one.status_code == 200
+    assert {node["id"] for node in depth_one.json()["nodes"]} == {"mem_1", "mem_2"}
+    assert depth_two.status_code == 200
+    assert {node["id"] for node in depth_two.json()["nodes"]} == {
+        "mem_1",
+        "mem_2",
+        "mem_3",
+    }
+
+
+def test_memory_network_path_endpoint_reports_connected_and_disconnected_nodes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_memory_collection(
+        monkeypatch,
+        tmp_path,
+        [
+            (
+                "mem_1",
+                "One",
+                {
+                    "category": "daily",
+                    "timestamp": "2026-01-01T12:00:00+00:00",
+                    "linked_ids": json.dumps(
+                        [
+                            {
+                                "target_id": "mem_2",
+                                "link_type": "related",
+                                "confidence": 0.7,
+                            }
+                        ]
+                    ),
+                },
+            ),
+            (
+                "mem_2",
+                "Two",
+                {
+                    "category": "daily",
+                    "timestamp": "2026-01-01T12:05:00+00:00",
+                    "linked_ids": "[]",
+                },
+            ),
+            (
+                "mem_3",
+                "Three",
+                {
+                    "category": "daily",
+                    "timestamp": "2026-01-01T12:10:00+00:00",
+                    "linked_ids": "[]",
+                },
+            ),
+        ],
+    )
+
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    connected = client.get("/api/v1/memory/network/path?from=mem_1&to=mem_2")
+    disconnected = client.get("/api/v1/memory/network/path?from=mem_1&to=mem_3")
+
+    assert connected.status_code == 200
+    assert connected.json() == {
+        "node_ids": ["mem_1", "mem_2"],
+        "edge_pairs": [["mem_1", "mem_2"]],
+        "length": 1,
+        "exists": True,
+    }
+    assert disconnected.status_code == 200
+    assert disconnected.json() == {
+        "node_ids": [],
+        "edge_pairs": [],
+        "length": 0,
+        "exists": False,
+    }
+
+
+def test_compute_graph_metrics_uses_sampled_betweenness_for_large_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = nx.path_graph(501)
+    called: dict[str, object] = {}
+
+    def fake_betweenness_centrality(
+        graph_arg: nx.Graph[int],
+        *,
+        k: int | None = None,
+        normalized: bool = True,
+    ) -> dict[int, float]:
+        called["graph"] = graph_arg
+        called["k"] = k
+        called["normalized"] = normalized
+        return {node: 0.0 for node in graph_arg.nodes}
+
+    monkeypatch.setattr("ego_dashboard.api.nx.betweenness_centrality", fake_betweenness_centrality)
+
+    result = _compute_graph_metrics(graph)
+
+    assert called == {"graph": graph, "k": 100, "normalized": True}
+    assert result["degree"]["0"] == 1
+    assert result["degree"]["1"] == 2
+    assert result["betweenness"]["500"] == 0.0
 
 
 def test_notion_history_endpoint_returns_bucketed_items() -> None:

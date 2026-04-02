@@ -4,15 +4,16 @@ import asyncio
 import json
 import logging
 import threading
-from collections import deque
+from collections import Counter, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Protocol, TypedDict
+from typing import Any, Protocol, TypedDict, cast
 
 import chromadb
-from fastapi import FastAPI, Query, WebSocket
+import networkx as nx
+from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from ego_dashboard.desire_catalog import load_desire_catalog
@@ -66,20 +67,29 @@ class _MemoryLinkPayload(TypedDict):
     target_id: str
     link_type: str
     confidence: float
+    note: str
+
+
+class _GraphMetrics(TypedDict):
+    degree: dict[object, int]
+    betweenness: dict[object, float]
+
+
+def _coerce_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
 
 
 def _clamp_float(value: object, default: float = 0.0) -> float:
-    if isinstance(value, bool):
-        parsed = float(int(value))
-    elif isinstance(value, (int, float)):
-        parsed = float(value)
-    elif isinstance(value, str):
-        try:
-            parsed = float(value)
-        except ValueError:
-            parsed = default
-    else:
-        parsed = default
+    parsed = _coerce_float(value, default)
     return max(0.0, min(1.0, parsed))
 
 
@@ -98,10 +108,14 @@ def _coerce_int(value: object, default: int = 0) -> int:
     return default
 
 
+def _coerce_bool(value: object) -> bool:
+    return value in (True, 1, "1", "true", "True")
+
+
 def _memory_label(document: object, metadata: object, *, limit: int = 72) -> str | None:
     metadata_dict = metadata if isinstance(metadata, dict) else {}
     private_raw = metadata_dict.get("is_private") if isinstance(metadata_dict, dict) else False
-    if private_raw in (True, 1, "1", "true", "True"):
+    if _coerce_bool(private_raw):
         return "REDACTED"
     if not isinstance(document, str):
         return None
@@ -111,6 +125,34 @@ def _memory_label(document: object, metadata: object, *, limit: int = 72) -> str
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3].rstrip() + "..."
+
+
+def _memory_content_preview(
+    document: object,
+    metadata: object,
+    *,
+    limit: int = 80,
+) -> str | None:
+    return _memory_label(document, metadata, limit=limit)
+
+
+def _coerce_tags(value: object) -> list[str]:
+    if isinstance(value, str):
+        candidates = value.split(",")
+    elif isinstance(value, list):
+        candidates = [item for item in value if isinstance(item, str)]
+    else:
+        return []
+
+    tags: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        tag = candidate.strip()
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        tags.append(tag)
+    return tags
 
 
 def _parse_iso_timestamp(value: object) -> datetime | None:
@@ -170,6 +212,7 @@ def _load_link_metadata(value: object) -> list[_MemoryLinkPayload]:
                 "target_id": target_id,
                 "link_type": link_type if isinstance(link_type, str) and link_type else "related",
                 "confidence": _clamp_float(item.get("confidence"), 0.5),
+                "note": str(item.get("note", "")),
             }
         )
     return links
@@ -191,8 +234,16 @@ def _load_notion_rows(settings: DashboardSettings) -> list[dict[str, object]]:
     for notion_id, raw in payload.items():
         if not isinstance(raw, dict):
             continue
-        source_ids = raw.get("source_memory_ids", [])
-        related_ids = raw.get("related_notion_ids", [])
+        source_ids = [
+            memory_id
+            for memory_id in raw.get("source_memory_ids", [])
+            if isinstance(memory_id, str) and memory_id
+        ]
+        related_ids = [
+            related_notion_id
+            for related_notion_id in raw.get("related_notion_ids", [])
+            if isinstance(related_notion_id, str) and related_notion_id
+        ]
         reinforcement_count = _coerce_int(raw.get("reinforcement_count"), 0)
         person_id = raw.get("person_id")
         confidence = float(raw.get("confidence", 0.5))
@@ -202,152 +253,179 @@ def _load_notion_rows(settings: DashboardSettings) -> list[dict[str, object]]:
                 "label": str(raw.get("label", "")),
                 "emotion_tone": str(raw.get("emotion_tone", "neutral")),
                 "confidence": confidence,
-                "source_count": len(source_ids) if isinstance(source_ids, list) else 0,
-                "source_memory_ids": list(source_ids) if isinstance(source_ids, list) else [],
-                "related_notion_ids": (list(related_ids) if isinstance(related_ids, list) else []),
-                "related_count": len(related_ids) if isinstance(related_ids, list) else 0,
+                "source_count": len(source_ids),
+                "source_memory_ids": source_ids,
+                "related_notion_ids": related_ids,
+                "related_count": len(related_ids),
                 "reinforcement_count": reinforcement_count,
                 "person_id": str(person_id) if isinstance(person_id, str) else "",
                 "is_conviction": confidence >= 0.7 and reinforcement_count >= 5,
                 "created": str(raw.get("created", "")),
                 "last_reinforced": str(raw.get("last_reinforced", "")),
+                "tags": _coerce_tags(raw.get("tags", [])),
             }
         )
     rows.sort(key=lambda row: str(row.get("created", "")), reverse=True)
     return rows
 
 
-def _load_memory_network(settings: DashboardSettings) -> dict[str, object]:
-    notion_rows = _load_notion_rows(settings)
+def _load_memory_rows(settings: DashboardSettings) -> list[dict[str, object]]:
     if not settings.ego_mcp_data_dir:
-        return {"nodes": [], "edges": []}
+        return []
 
-    nodes: list[dict[str, object]] = []
-    edges: list[dict[str, object]] = []
-    seen_edges: set[tuple[str, str, str]] = set()
     chroma_dir = Path(settings.ego_mcp_data_dir) / "chroma"
     if not chroma_dir.exists():
         logger.warning(
             "Memory network skipped because Chroma directory does not exist: %s", chroma_dir
         )
-    else:
-        try:
-            client = chromadb.PersistentClient(path=str(chroma_dir))
-            collection = client.get_collection(name="ego_memories")
-            offset = 0
-            while True:
-                rows = collection.get(
-                    limit=_MEMORY_NETWORK_BATCH_SIZE,
-                    offset=offset,
-                    include=["documents", "metadatas"],
+        return []
+
+    rows: list[dict[str, object]] = []
+    try:
+        client = chromadb.PersistentClient(path=str(chroma_dir))
+        collection = client.get_collection(name="ego_memories")
+        offset = 0
+        while True:
+            batch = collection.get(
+                limit=_MEMORY_NETWORK_BATCH_SIZE,
+                offset=offset,
+                include=["documents", "metadatas"],
+            )
+
+            ids = batch.get("ids", [])
+            documents = batch.get("documents", [])
+            metadatas = batch.get("metadatas", [])
+            if not isinstance(ids, list) or not ids:
+                break
+
+            document_rows = documents if isinstance(documents, list) else []
+            metadata_rows = metadatas if isinstance(metadatas, list) else []
+            for index, memory_id in enumerate(ids):
+                if not isinstance(memory_id, str):
+                    continue
+                document = document_rows[index] if index < len(document_rows) else None
+                metadata = metadata_rows[index] if index < len(metadata_rows) else {}
+                if not isinstance(metadata, dict):
+                    continue
+                linked_ids = _load_link_metadata(metadata.get("linked_ids"))
+                max_confidence = max((link["confidence"] for link in linked_ids), default=0.0)
+                access_count = _coerce_int(metadata.get("access_count"), 0)
+                category = metadata.get("category")
+                rows.append(
+                    {
+                        "id": memory_id,
+                        "content": document if isinstance(document, str) else "",
+                        "label": _memory_label(document, metadata),
+                        "content_preview": _memory_content_preview(document, metadata),
+                        "category": (
+                            str(category) if isinstance(category, str) and category else "daily"
+                        ),
+                        "timestamp": (
+                            str(metadata.get("timestamp"))
+                            if isinstance(metadata.get("timestamp"), str)
+                            else ""
+                        ),
+                        "decay": _calculate_memory_decay(
+                            metadata.get("timestamp"),
+                            link_confidence_max=max_confidence,
+                            access_count=access_count,
+                        ),
+                        "access_count": access_count,
+                        "importance": max(1, min(5, _coerce_int(metadata.get("importance"), 3))),
+                        "tags": _coerce_tags(metadata.get("tags")),
+                        "is_private": _coerce_bool(metadata.get("is_private")),
+                        "last_accessed": (
+                            str(metadata.get("last_accessed"))
+                            if isinstance(metadata.get("last_accessed"), str)
+                            else ""
+                        ),
+                        "emotional_valence": _coerce_float(metadata.get("valence"), 0.0),
+                        "emotional_arousal": _clamp_float(metadata.get("arousal"), 0.5),
+                        "emotional_intensity": _clamp_float(metadata.get("intensity"), 0.5),
+                        "linked_ids": linked_ids,
+                    }
                 )
 
-                ids = rows.get("ids", [])
-                documents = rows.get("documents", [])
-                metadatas = rows.get("metadatas", [])
-                if not isinstance(ids, list) or not ids:
-                    break
-                document_rows = documents if isinstance(documents, list) else []
-                metadata_rows = metadatas if isinstance(metadatas, list) else []
+            if len(ids) < _MEMORY_NETWORK_BATCH_SIZE:
+                break
+            offset += len(ids)
+    except Exception:
+        logger.exception("Failed to load memory nodes for Memory Network from %s", chroma_dir)
+    return rows
 
-                for index, memory_id in enumerate(ids):
-                    if not isinstance(memory_id, str):
-                        continue
-                    document = document_rows[index] if index < len(document_rows) else None
-                    metadata = metadata_rows[index] if index < len(metadata_rows) else {}
-                    if not isinstance(metadata, dict):
-                        continue
-                    linked_ids = _load_link_metadata(metadata.get("linked_ids"))
-                    max_confidence = max(
-                        (link["confidence"] for link in linked_ids),
-                        default=0.0,
-                    )
-                    access_count = _coerce_int(metadata.get("access_count"), 0)
-                    category = metadata.get("category")
-                    nodes.append(
-                        {
-                            "id": memory_id,
-                            "label": _memory_label(document, metadata),
-                            "category": (
-                                str(category) if isinstance(category, str) and category else "daily"
-                            ),
-                            "decay": _calculate_memory_decay(
-                                metadata.get("timestamp"),
-                                link_confidence_max=max_confidence,
-                                access_count=access_count,
-                            ),
-                            "access_count": access_count,
-                            "is_notion": False,
-                        }
-                    )
-                    for link in linked_ids:
-                        target_id = str(link["target_id"])
-                        link_type = str(link["link_type"])
-                        if memory_id <= target_id:
-                            edge_key = (memory_id, target_id, link_type)
-                        else:
-                            edge_key = (target_id, memory_id, link_type)
-                        if edge_key in seen_edges:
-                            continue
-                        seen_edges.add(edge_key)
-                        edges.append(
-                            {
-                                "source": memory_id,
-                                "target": target_id,
-                                "link_type": link_type,
-                                "confidence": link["confidence"],
-                            }
-                        )
 
-                if len(ids) < _MEMORY_NETWORK_BATCH_SIZE:
-                    break
-                offset += len(ids)
-        except Exception:
-            logger.exception("Failed to load memory nodes for Memory Network from %s", chroma_dir)
+def _edge_identity(source: str, target: str, link_type: str) -> tuple[str, str, str]:
+    normalized_type = link_type.strip().lower() or "related"
+    if normalized_type in {"related", "similar", "notion_related"}:
+        ordered_source, ordered_target = sorted((source, target))
+        return ordered_source, ordered_target, normalized_type
+    return source, target, normalized_type
+
+
+def _build_network_edges(
+    memory_rows: list[dict[str, object]],
+    notion_rows: list[dict[str, object]],
+    node_ids: set[str],
+) -> list[dict[str, object]]:
+    edges: list[dict[str, object]] = []
+    seen_edges: set[tuple[str, str, str]] = set()
+
+    for memory in memory_rows:
+        source_id = str(memory["id"])
+        linked_ids = memory.get("linked_ids", [])
+        if not isinstance(linked_ids, list):
+            continue
+        for link in linked_ids:
+            if not isinstance(link, dict):
+                continue
+            target_id = str(link.get("target_id", ""))
+            link_type = str(link.get("link_type", "related"))
+            if not target_id or source_id not in node_ids or target_id not in node_ids:
+                continue
+            edge_key = _edge_identity(source_id, target_id, link_type)
+            if edge_key in seen_edges:
+                continue
+            seen_edges.add(edge_key)
+            edges.append(
+                {
+                    "source": source_id,
+                    "target": target_id,
+                    "link_type": link_type,
+                    "confidence": _clamp_float(link.get("confidence"), 0.5),
+                }
+            )
 
     for notion in notion_rows:
         notion_id = str(notion["id"])
-        nodes.append(
-            {
-                "id": notion_id,
-                "label": notion["label"],
-                "is_notion": True,
-                "confidence": notion["confidence"],
-                "access_count": notion["source_count"],
-                "decay": notion["confidence"],
-                "category": "notion",
-                "reinforcement_count": notion["reinforcement_count"],
-                "person_id": notion["person_id"],
-                "related_count": notion["related_count"],
-                "is_conviction": notion["is_conviction"],
-            }
-        )
         source_memory_ids = notion.get("source_memory_ids", [])
-        if not isinstance(source_memory_ids, list):
-            continue
-        for source_memory_id in source_memory_ids:
-            if not isinstance(source_memory_id, str):
-                continue
-            edges.append(
-                {
-                    "source": notion_id,
-                    "target": source_memory_id,
-                    "link_type": "notion_source",
-                    "confidence": notion["confidence"],
-                }
-            )
+        if isinstance(source_memory_ids, list):
+            for source_memory_id in source_memory_ids:
+                if not isinstance(source_memory_id, str):
+                    continue
+                if source_memory_id not in node_ids or notion_id not in node_ids:
+                    continue
+                edge_key = _edge_identity(source_memory_id, notion_id, "notion_source")
+                if edge_key in seen_edges:
+                    continue
+                seen_edges.add(edge_key)
+                edges.append(
+                    {
+                        "source": source_memory_id,
+                        "target": notion_id,
+                        "link_type": "notion_source",
+                        "confidence": _clamp_float(notion.get("confidence"), 0.5),
+                    }
+                )
+
         related_notion_ids = notion.get("related_notion_ids", [])
         if not isinstance(related_notion_ids, list):
             continue
         for related_notion_id in related_notion_ids:
             if not isinstance(related_notion_id, str):
                 continue
-            ordered_ids = tuple(sorted((notion_id, related_notion_id)))
-            edge_key = (
-                ordered_ids[0],
-                ordered_ids[1],
-                "notion_related",
-            )
+            if related_notion_id not in node_ids or notion_id not in node_ids:
+                continue
+            edge_key = _edge_identity(notion_id, related_notion_id, "notion_related")
             if edge_key in seen_edges:
                 continue
             seen_edges.add(edge_key)
@@ -356,10 +434,205 @@ def _load_memory_network(settings: DashboardSettings) -> dict[str, object]:
                     "source": notion_id,
                     "target": related_notion_id,
                     "link_type": "notion_related",
-                    "confidence": notion["confidence"],
+                    "confidence": _clamp_float(notion.get("confidence"), 0.5),
                 }
             )
-    return {"nodes": nodes, "edges": edges}
+    return edges
+
+
+def _build_graph(node_ids: set[str], edges: list[dict[str, object]]) -> nx.Graph[str]:
+    graph: nx.Graph[str] = nx.Graph()
+    graph.add_nodes_from(node_ids)
+    for edge in edges:
+        source = edge.get("source")
+        target = edge.get("target")
+        if not isinstance(source, str) or not isinstance(target, str):
+            continue
+        graph.add_edge(source, target, weight=_clamp_float(edge.get("confidence"), 0.5))
+    return graph
+
+
+def _compute_graph_metrics(graph: nx.Graph[Any]) -> dict[str, dict[str, int] | dict[str, float]]:
+    degree: dict[str, int] = {str(node_id): int(value) for node_id, value in graph.degree()}
+    if graph.number_of_nodes() <= 500:
+        betweenness_raw = nx.betweenness_centrality(graph, normalized=True)
+    else:
+        betweenness_raw = nx.betweenness_centrality(graph, k=100, normalized=True)
+    betweenness = {str(node_id): float(value) for node_id, value in betweenness_raw.items()}
+    return {"degree": degree, "betweenness": betweenness}
+
+
+def _build_memory_network_stats(
+    nodes: list[dict[str, object]],
+    edges: list[dict[str, object]],
+    graph: nx.Graph[Any],
+) -> dict[str, object]:
+    memory_nodes = [node for node in nodes if node.get("is_notion") is not True]
+    notion_nodes = [node for node in nodes if node.get("is_notion") is True]
+    conviction_count = sum(1 for node in notion_nodes if node.get("is_conviction") is True)
+    avg_memory_decay = (
+        sum(_coerce_float(node.get("decay"), 0.0) for node in memory_nodes) / len(memory_nodes)
+        if memory_nodes
+        else 0.0
+    )
+
+    top_hub_id: str | None = None
+    top_hub_degree = 0
+    if nodes:
+        top_hub_degree_neg, top_hub_key = min(
+            (-_coerce_int(node.get("degree"), 0), str(node["id"])) for node in nodes
+        )
+        top_hub_id = top_hub_key
+        top_hub_degree = -top_hub_degree_neg
+
+    category_counts = Counter(str(node.get("category", "")) for node in memory_nodes)
+    category_counts.pop("", None)
+    if category_counts:
+        top_category_name = min((-count, category) for category, count in category_counts.items())[
+            1
+        ]
+        top_category_ratio = category_counts[top_category_name] / len(memory_nodes)
+    else:
+        top_category_name = None
+        top_category_ratio = 0.0
+
+    return {
+        "node_count": len(nodes),
+        "memory_count": len(memory_nodes),
+        "notion_count": len(notion_nodes),
+        "edge_count": len(edges),
+        "conviction_count": conviction_count,
+        "avg_memory_decay": avg_memory_decay,
+        "graph_density": float(nx.density(graph)) if graph.number_of_nodes() > 1 else 0.0,
+        "top_hub_id": top_hub_id,
+        "top_hub_degree": top_hub_degree,
+        "top_category": top_category_name,
+        "top_category_ratio": top_category_ratio,
+    }
+
+
+def _build_memory_network(
+    memory_rows: list[dict[str, object]],
+    notion_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    node_ids = {
+        str(row["id"])
+        for row in [*memory_rows, *notion_rows]
+        if isinstance(row.get("id"), str) and row.get("id")
+    }
+    edges = _build_network_edges(memory_rows, notion_rows, node_ids)
+    graph = _build_graph(node_ids, edges)
+    metrics = _compute_graph_metrics(graph)
+    degree = cast(dict[str, int], metrics["degree"])
+    betweenness = cast(dict[str, float], metrics["betweenness"])
+
+    nodes: list[dict[str, object]] = []
+    for memory in memory_rows:
+        memory_id = str(memory["id"])
+        nodes.append(
+            {
+                "id": memory_id,
+                "label": memory.get("label"),
+                "category": memory.get("category"),
+                "is_notion": False,
+                "content_preview": memory.get("content_preview"),
+                "importance": memory.get("importance"),
+                "tags": memory.get("tags", []),
+                "is_private": memory.get("is_private", False),
+                "confidence": None,
+                "access_count": memory.get("access_count"),
+                "decay": memory.get("decay"),
+                "reinforcement_count": None,
+                "person_id": None,
+                "related_count": None,
+                "is_conviction": False,
+                "source_count": None,
+                "degree": degree.get(memory_id, 0),
+                "betweenness": betweenness.get(memory_id, 0.0),
+                "emotional_valence": memory.get("emotional_valence"),
+                "emotional_arousal": memory.get("emotional_arousal"),
+                "last_accessed": memory.get("last_accessed") or None,
+                "created": None,
+                "last_reinforced": None,
+            }
+        )
+
+    for notion in notion_rows:
+        notion_id = str(notion["id"])
+        nodes.append(
+            {
+                "id": notion_id,
+                "label": notion.get("label"),
+                "category": "notion",
+                "is_notion": True,
+                "content_preview": None,
+                "importance": None,
+                "tags": notion.get("tags", []),
+                "is_private": False,
+                "confidence": notion.get("confidence"),
+                "emotion_tone": notion.get("emotion_tone"),
+                "access_count": None,
+                "decay": None,
+                "reinforcement_count": notion.get("reinforcement_count"),
+                "person_id": notion.get("person_id"),
+                "related_count": notion.get("related_count"),
+                "is_conviction": notion.get("is_conviction", False),
+                "source_count": notion.get("source_count"),
+                "degree": degree.get(notion_id, 0),
+                "betweenness": betweenness.get(notion_id, 0.0),
+                "emotional_valence": None,
+                "emotional_arousal": None,
+                "last_accessed": None,
+                "created": notion.get("created") or None,
+                "last_reinforced": notion.get("last_reinforced") or None,
+            }
+        )
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "stats": _build_memory_network_stats(nodes, edges, graph),
+    }
+
+
+def _load_memory_network(settings: DashboardSettings) -> dict[str, object]:
+    return _build_memory_network(_load_memory_rows(settings), _load_notion_rows(settings))
+
+
+def _load_memory_detail(settings: DashboardSettings, memory_id: str) -> dict[str, object] | None:
+    memory = next(
+        (row for row in _load_memory_rows(settings) if str(row.get("id", "")) == memory_id),
+        None,
+    )
+    if memory is None:
+        return None
+
+    generated_notion_ids: list[str] = []
+    for notion in _load_notion_rows(settings):
+        source_memory_ids = notion.get("source_memory_ids")
+        if not isinstance(source_memory_ids, list):
+            continue
+        if memory_id in source_memory_ids:
+            generated_notion_ids.append(str(notion["id"]))
+    return {
+        "id": memory_id,
+        "content": str(memory.get("content", "")),
+        "timestamp": str(memory.get("timestamp", "")),
+        "category": str(memory.get("category", "")),
+        "importance": _coerce_int(memory.get("importance"), 3),
+        "tags": memory.get("tags", []),
+        "is_private": bool(memory.get("is_private", False)),
+        "access_count": _coerce_int(memory.get("access_count"), 0),
+        "last_accessed": str(memory.get("last_accessed", "")),
+        "decay": _coerce_float(memory.get("decay"), 0.0),
+        "emotional_trace": {
+            "valence": _coerce_float(memory.get("emotional_valence"), 0.0),
+            "arousal": _coerce_float(memory.get("emotional_arousal"), 0.5),
+            "intensity": _coerce_float(memory.get("emotional_intensity"), 0.5),
+        },
+        "linked_ids": memory.get("linked_ids", []),
+        "generated_notion_ids": generated_notion_ids,
+    }
 
 
 def _default_store(settings: DashboardSettings | None = None) -> StoreProtocol:
@@ -500,6 +773,70 @@ def create_app(
     @app.get("/api/v1/memory/network")
     def get_memory_network() -> dict[str, object]:
         return _load_memory_network(app_settings)
+
+    @app.get("/api/v1/memory/{memory_id}")
+    def get_memory_detail(memory_id: str) -> dict[str, object]:
+        detail = _load_memory_detail(app_settings, memory_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Memory not found")
+        return detail
+
+    @app.get("/api/v1/memory/network/subgraph")
+    def get_memory_subgraph(
+        node_id: str,
+        depth: int = Query(default=1, ge=1, le=3),
+    ) -> dict[str, object]:
+        memory_rows = _load_memory_rows(app_settings)
+        notion_rows = _load_notion_rows(app_settings)
+        full_network = _build_memory_network(memory_rows, notion_rows)
+        full_nodes = cast(list[dict[str, object]], full_network["nodes"])
+        full_edges = cast(list[dict[str, object]], full_network["edges"])
+        full_graph = _build_graph(
+            {
+                str(node["id"])
+                for node in full_nodes
+                if isinstance(node.get("id"), str) and node.get("id")
+            },
+            full_edges,
+        )
+        if node_id not in full_graph:
+            raise HTTPException(status_code=404, detail="Node not found")
+        subgraph = nx.ego_graph(full_graph, node_id, radius=depth)
+        subgraph_ids = {str(graph_node_id) for graph_node_id in subgraph.nodes}
+        return _build_memory_network(
+            [row for row in memory_rows if str(row.get("id", "")) in subgraph_ids],
+            [row for row in notion_rows if str(row.get("id", "")) in subgraph_ids],
+        )
+
+    @app.get("/api/v1/memory/network/path")
+    def get_memory_path(
+        from_id: str = Query(alias="from"),
+        to_id: str = Query(alias="to"),
+    ) -> dict[str, object]:
+        network = _load_memory_network(app_settings)
+        nodes = cast(list[dict[str, object]], network["nodes"])
+        edges = cast(list[dict[str, object]], network["edges"])
+        graph = _build_graph(
+            {
+                str(node["id"])
+                for node in nodes
+                if isinstance(node.get("id"), str) and node.get("id")
+            },
+            edges,
+        )
+        if from_id not in graph or to_id not in graph:
+            raise HTTPException(status_code=404, detail="Node not found")
+        try:
+            node_ids = [str(node_id) for node_id in nx.shortest_path(graph, from_id, to_id)]
+        except nx.NetworkXNoPath:
+            return {"node_ids": [], "edge_pairs": [], "length": 0, "exists": False}
+        edge_pairs = [[node_ids[index], node_ids[index + 1]] for index in range(len(node_ids) - 1)]
+        return {
+            "node_ids": node_ids,
+            "edge_pairs": edge_pairs,
+            "length": len(edge_pairs),
+            "exists": True,
+        }
 
     @app.get("/api/v1/notions")
     def get_notions() -> dict[str, object]:
