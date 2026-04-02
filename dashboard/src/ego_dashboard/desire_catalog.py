@@ -94,15 +94,32 @@ def default_desire_catalog() -> DesireCatalog:
     )
 
 
+def _fallback_catalog(
+    *,
+    status: Literal["missing", "invalid"],
+    errors: tuple[str, ...],
+    source_path: str | None,
+    version: int | None = None,
+) -> DesireCatalog:
+    default_catalog = default_desire_catalog()
+    return DesireCatalog(
+        version=version,
+        fixed_desires=default_catalog.fixed_desires,
+        status=status,
+        errors=errors,
+        source_path=source_path,
+        implicit_rules=default_catalog.implicit_rules,
+        emergent=default_catalog.emergent,
+    )
+
+
 def load_desire_catalog(data_dir: str | None) -> DesireCatalog:
     if not data_dir:
         return default_desire_catalog()
 
     path = Path(data_dir) / "settings" / "desires.json"
     if not path.exists():
-        return DesireCatalog(
-            version=None,
-            fixed_desires=(),
+        return _fallback_catalog(
             status="missing",
             errors=(f"desire catalog not found: {path}",),
             source_path=str(path),
@@ -111,9 +128,7 @@ def load_desire_catalog(data_dir: str | None) -> DesireCatalog:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return DesireCatalog(
-            version=None,
-            fixed_desires=(),
+        return _fallback_catalog(
             status="invalid",
             errors=(f"failed to read desire catalog: {exc}",),
             source_path=str(path),
@@ -126,9 +141,7 @@ def load_desire_catalog(data_dir: str | None) -> DesireCatalog:
 def _parse_desire_catalog_payload(payload: object, *, source_path: str) -> DesireCatalog:
     errors: list[str] = []
     if not isinstance(payload, dict):
-        return DesireCatalog(
-            version=None,
-            fixed_desires=(),
+        return _fallback_catalog(
             status="invalid",
             errors=("desire catalog root must be an object",),
             source_path=source_path,
@@ -213,9 +226,8 @@ def _parse_desire_catalog_payload(payload: object, *, source_path: str) -> Desir
         )
 
     if errors:
-        return DesireCatalog(
+        return _fallback_catalog(
             version=version if isinstance(version, int) else None,
-            fixed_desires=(),
             status="invalid",
             errors=tuple(errors),
             source_path=source_path,

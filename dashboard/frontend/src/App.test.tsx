@@ -39,7 +39,47 @@ vi.mock('./api', () => ({
   }),
   fetchIntensity: async () => [{ ts: '2026-01-01T12:00:00Z', value: 0.7 }],
   fetchMetric: async () => [{ ts: '2026-01-01T12:00:00Z', value: 0.5 }],
-  fetchMemoryNetwork: async () => ({ nodes: [], edges: [] }),
+  fetchMemoryNetwork: async () => ({
+    nodes: [],
+    edges: [],
+    stats: {
+      node_count: 0,
+      memory_count: 0,
+      notion_count: 0,
+      edge_count: 0,
+      conviction_count: 0,
+      avg_memory_decay: 0,
+      graph_density: 0,
+      top_hub_id: undefined,
+      top_hub_degree: 0,
+      top_category: undefined,
+      top_category_ratio: 0,
+    },
+  }),
+  fetchMemoryDetail: async () => null,
+  fetchMemorySubgraph: async () => ({
+    nodes: [],
+    edges: [],
+    stats: {
+      node_count: 0,
+      memory_count: 0,
+      notion_count: 0,
+      edge_count: 0,
+      conviction_count: 0,
+      avg_memory_decay: 0,
+      graph_density: 0,
+      top_hub_id: undefined,
+      top_hub_degree: 0,
+      top_category: undefined,
+      top_category_ratio: 0,
+    },
+  }),
+  fetchMemoryPath: async () => ({
+    node_ids: [],
+    edge_pairs: [],
+    length: 0,
+    exists: false,
+  }),
   fetchNotions: async () => ({ items: [] }),
   fetchUsage: async () => [
     { ts: '2026-01-01T12:00:00Z', feel_desires: 2, remember: 1 },
@@ -105,5 +145,17 @@ describe('App', () => {
     expect(
       container.querySelectorAll('input[type="datetime-local"]'),
     ).toHaveLength(2)
+  })
+
+  it('shows the dedicated memory tab without time range controls', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('tab', { name: 'Memory' }))
+
+    expect(await screen.findByText('Memory graph')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('radio', { name: 'custom' }),
+    ).not.toBeInTheDocument()
   })
 })

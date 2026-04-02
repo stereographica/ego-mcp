@@ -4,6 +4,7 @@ import { HistoryTab } from '@/components/history/history-tab'
 import { DashboardHeader } from '@/components/layout/dashboard-header'
 import { TimeRangeControls } from '@/components/layout/time-range-controls'
 import { LogsTab } from '@/components/logs/logs-tab'
+import { MemoryTab } from '@/components/memory/memory-tab'
 import { NowTab } from '@/components/now/now-tab'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDesireCatalog } from '@/hooks/use-desire-catalog'
@@ -55,10 +56,11 @@ const App = () => {
         <TabsList>
           <TabsTrigger value="now">Now</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
+          <TabsTrigger value="memory">Memory</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
         </TabsList>
 
-        {activeTab !== 'now' && (
+        {(activeTab === 'history' || activeTab === 'logs') && (
           <div className="mt-3">
             <TimeRangeControls
               preset={preset}
@@ -86,6 +88,10 @@ const App = () => {
             preset={preset}
             desireCatalog={desireCatalog}
           />
+        </TabsContent>
+
+        <TabsContent value="memory">
+          <MemoryTab isActive={activeTab === 'memory'} />
         </TabsContent>
 
         <TabsContent value="logs">

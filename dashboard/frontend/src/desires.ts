@@ -80,7 +80,7 @@ export const buildDesireHistorySeriesKeys = (
     .filter(
       (key) =>
         !catalogIds.has(key) &&
-        !LEGACY_FIXED_DESIRE_IDS.has(key) &&
+        (catalog.length === 0 || !LEGACY_FIXED_DESIRE_IDS.has(key)) &&
         key.trim().length > 0,
     )
     .sort((lhs, rhs) => lhs.localeCompare(rhs))
@@ -114,15 +114,27 @@ export const buildDesireRadarSeriesData = (
   const catalogIds = catalogKeySet(sortedCatalog)
   const fixedDesires = current?.latest_desires ?? {}
   const emergentDesires = current?.latest_emergent_desires ?? {}
+  const fallbackFixedKeys =
+    sortedCatalog.length === 0
+      ? Object.keys(fixedDesires)
+          .filter((key) => key.trim().length > 0)
+          .sort((lhs, rhs) => lhs.localeCompare(rhs))
+      : []
   const dynamicKeys = Object.keys(emergentDesires)
     .filter(
       (key) =>
         !catalogIds.has(key) &&
-        !LEGACY_FIXED_DESIRE_IDS.has(key) &&
+        !fallbackFixedKeys.includes(key) &&
+        (sortedCatalog.length === 0 || !LEGACY_FIXED_DESIRE_IDS.has(key)) &&
         key.trim().length > 0,
     )
     .sort((lhs, rhs) => lhs.localeCompare(rhs))
-  const axisKeys = [...sortedCatalog.map((item) => item.id), ...dynamicKeys]
+  const axisKeys = [
+    ...(sortedCatalog.length > 0
+      ? sortedCatalog.map((item) => item.id)
+      : fallbackFixedKeys),
+    ...dynamicKeys,
+  ]
 
   const chartData = axisKeys.map((key) => {
     const catalogItem = sortedCatalog.find((item) => item.id === key)
@@ -130,8 +142,9 @@ export const buildDesireRadarSeriesData = (
     return {
       key,
       name: catalogItem?.display_name ?? formatDesireLabel(key),
-      fixed_desires: catalogItem ? value : 0,
-      dynamic_desires: catalogItem ? 0 : value,
+      fixed_desires: catalogItem || fallbackFixedKeys.includes(key) ? value : 0,
+      dynamic_desires:
+        catalogItem || fallbackFixedKeys.includes(key) ? 0 : value,
       boosted_desire: 0,
     }
   })

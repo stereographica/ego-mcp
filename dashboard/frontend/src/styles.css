@@ -85,3 +85,39 @@
     font-family: Inter, system-ui, sans-serif;
   }
 }
+
+@keyframes memory-node-pulse {
+  0% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.16);
+  }
+}
+
+.memory-node-pulse {
+  border: 2px solid rgba(248, 250, 252, 0.45);
+  animation: memory-node-pulse 1.8s ease-out infinite;
+}
+
+.memory-graph-surface .react-flow__pane {
+  cursor: grab;
+}
+
+.memory-graph-surface .react-flow__controls {
+  border-color: rgba(71, 85, 105, 0.9);
+  background: rgba(15, 23, 42, 0.92);
+}
+
+.memory-graph-surface .react-flow__controls-button {
+  border-color: rgba(71, 85, 105, 0.7);
+  background: rgba(15, 23, 42, 0.96);
+  color: rgb(226, 232, 240);
+}
+
+.memory-graph-surface .react-flow__minimap {
+  border: 1px solid rgba(71, 85, 105, 0.9);
+  background: rgba(2, 6, 23, 0.96);
+}

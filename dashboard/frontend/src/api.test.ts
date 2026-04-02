@@ -2,7 +2,10 @@ import {
   fetchDesireCatalog,
   fetchDesireKeys,
   fetchLogs,
+  fetchMemoryDetail,
   fetchMemoryNetwork,
+  fetchMemoryPath,
+  fetchMemorySubgraph,
   fetchNotionHistory,
   fetchNotions,
   fetchStringHeatmap,
@@ -185,13 +188,52 @@ describe('api history extensions', () => {
   it('fetches the memory network panel payload', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({ nodes: [], edges: [] }),
+      json: async () => ({
+        nodes: [],
+        edges: [],
+        stats: {
+          node_count: 0,
+          memory_count: 0,
+          notion_count: 0,
+          edge_count: 0,
+          conviction_count: 0,
+          avg_memory_decay: 0,
+          graph_density: 0,
+          top_hub_degree: 0,
+          top_category_ratio: 0,
+        },
+      }),
     } as Response)
 
     await fetchMemoryNetwork()
     const url = String(vi.mocked(globalThis.fetch).mock.calls[0]?.[0] ?? '')
 
     expect(url).toContain('/api/v1/memory/network')
+  })
+
+  it('fetches memory detail, a subgraph, and a path', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'mem-1' }),
+    } as Response)
+
+    await fetchMemoryDetail('mem-1')
+    await fetchMemorySubgraph('mem-1', 2)
+    await fetchMemoryPath('mem-1', 'mem-2')
+
+    const detailUrl = String(
+      vi.mocked(globalThis.fetch).mock.calls[0]?.[0] ?? '',
+    )
+    const subgraphUrl = String(
+      vi.mocked(globalThis.fetch).mock.calls[1]?.[0] ?? '',
+    )
+    const pathUrl = String(vi.mocked(globalThis.fetch).mock.calls[2]?.[0] ?? '')
+
+    expect(detailUrl).toContain('/api/v1/memory/mem-1')
+    expect(subgraphUrl).toContain(
+      '/api/v1/memory/network/subgraph?node_id=mem-1&depth=2',
+    )
+    expect(pathUrl).toContain('/api/v1/memory/network/path?from=mem-1&to=mem-2')
   })
 
   it('fetches notions and notion history', async () => {

@@ -20,6 +20,32 @@ vi.mock('recharts', async () => {
   }
 })
 
+vi.mock('@xyflow/react', async () => {
+  const React = await vi.importActual<typeof import('react')>('react')
+
+  return {
+    ReactFlow: ({ children }: { children?: React.ReactNode }) =>
+      React.createElement('div', { 'data-testid': 'react-flow' }, children),
+    Background: () => null,
+    Controls: () => null,
+    MiniMap: () => null,
+    Handle: () => null,
+    BaseEdge: () => null,
+    EdgeLabelRenderer: ({ children }: { children?: React.ReactNode }) =>
+      children,
+    getStraightPath: () => ['M0 0L1 1', 0, 0],
+    MarkerType: {
+      ArrowClosed: 'arrowclosed',
+    },
+    Position: {
+      Top: 'top',
+      Bottom: 'bottom',
+      Left: 'left',
+      Right: 'right',
+    },
+  }
+})
+
 // ResizeObserver polyfill for jsdom
 globalThis.ResizeObserver = class ResizeObserver {
   observe() {}

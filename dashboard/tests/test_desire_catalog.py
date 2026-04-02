@@ -67,7 +67,7 @@ def test_load_desire_catalog_returns_invalid_status_for_broken_json(tmp_path: Pa
     catalog = load_desire_catalog(str(tmp_path))
 
     assert catalog.status == "invalid"
-    assert catalog.fixed_desires == ()
+    assert catalog.fixed_ids == set(LEGACY_FIXED_DESIRE_IDS)
     assert catalog.errors
 
 
@@ -77,7 +77,7 @@ def test_load_desire_catalog_returns_missing_status_when_settings_file_absent(
     catalog = load_desire_catalog(str(tmp_path))
 
     assert catalog.status == "missing"
-    assert catalog.fixed_desires == ()
+    assert catalog.fixed_ids == set(LEGACY_FIXED_DESIRE_IDS)
     assert catalog.errors
 
 
@@ -159,7 +159,7 @@ def test_load_desire_catalog_reports_schema_errors_for_invalid_payload(tmp_path:
     catalog = load_desire_catalog(str(tmp_path))
 
     assert catalog.status == "invalid"
-    assert catalog.fixed_desires == ()
+    assert catalog.fixed_ids == set(LEGACY_FIXED_DESIRE_IDS)
     assert "version must be an integer" in catalog.errors
     assert "implicit_rules must be an array" in catalog.errors
     assert "emergent must be an object" in catalog.errors

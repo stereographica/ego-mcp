@@ -76,13 +76,26 @@ export type MemoryNetworkNode = {
   label?: string
   category: string
   is_notion: boolean
+  content_preview?: string | null
+  importance?: number | null
+  tags?: string[]
+  is_private?: boolean
   confidence?: number
+  emotion_tone?: string | null
   access_count?: number
   decay?: number
   reinforcement_count?: number
+  source_count?: number | null
   person_id?: string
   related_count?: number
   is_conviction?: boolean
+  degree: number
+  betweenness: number
+  emotional_valence?: number | null
+  emotional_arousal?: number | null
+  last_accessed?: string | null
+  created?: string | null
+  last_reinforced?: string | null
 }
 export type MemoryNetworkEdge = {
   source: string
@@ -90,15 +103,69 @@ export type MemoryNetworkEdge = {
   link_type: string
   confidence?: number
 }
+export type MemoryNetworkStats = {
+  node_count: number
+  memory_count: number
+  notion_count: number
+  edge_count: number
+  conviction_count: number
+  avg_memory_decay: number
+  graph_density: number
+  top_hub_id?: string
+  top_hub_degree: number
+  top_category?: string
+  top_category_ratio: number
+}
 export type MemoryNetworkResponse = {
   nodes: MemoryNetworkNode[]
   edges: MemoryNetworkEdge[]
+  stats: MemoryNetworkStats
+}
+export type MemoryDetail = {
+  id: string
+  content: string
+  timestamp: string
+  category: string
+  importance: number
+  tags?: string[]
+  is_private: boolean
+  access_count: number
+  last_accessed: string
+  decay: number
+  emotional_trace: {
+    valence: number
+    arousal: number
+    intensity: number
+  }
+  linked_ids: Array<{
+    target_id: string
+    link_type: string
+    confidence: number
+    note?: string
+  }>
+  generated_notion_ids: string[]
+}
+export type MemoryNetworkPath = {
+  node_ids: string[]
+  edge_pairs: [string, string][] | string[][]
+  length: number
+  exists: boolean
+}
+export type MemoryGraphFilters = {
+  showMemories: boolean
+  showNotions: boolean
+  convictionsOnly: boolean
+  categories: string[]
+  minImportance: number
+  minConfidence: number
+  minDecay: number
 }
 export type Notion = {
   id: string
   label: string
   emotion_tone: string
   confidence: number
+  tags?: string[]
   source_count: number
   source_memory_ids: string[]
   related_notion_ids: string[]

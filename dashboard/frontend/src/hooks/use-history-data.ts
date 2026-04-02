@@ -5,7 +5,6 @@ import {
   fetchDesireKeys,
   fetchIntensity,
   fetchLogs,
-  fetchMemoryNetwork,
   fetchMetric,
   fetchNotions,
   fetchStringHeatmap,
@@ -23,7 +22,6 @@ import type {
   HistoryMarker,
   IntensityPoint,
   LogPoint,
-  MemoryNetworkResponse,
   Notion,
   SeriesPoint,
   StringPoint,
@@ -159,10 +157,6 @@ export const useHistoryData = (
   const [emotionTrend, setEmotionTrend] = useState<EmotionTrendPoint[]>([])
   const [emotionHeatmap, setEmotionHeatmap] = useState<HeatmapPoint[]>([])
   const [historyMarkers, setHistoryMarkers] = useState<HistoryMarker[]>([])
-  const [memoryNetwork, setMemoryNetwork] = useState<MemoryNetworkResponse>({
-    nodes: [],
-    edges: [],
-  })
   const [notions, setNotions] = useState<Notion[]>([])
   const [desireMetrics, setDesireMetrics] = useState<DesireMetricSeriesMap>(
     () => makeEmptyDesireMetricSeriesMap(desireCatalog),
@@ -268,14 +262,10 @@ export const useHistoryData = (
     let disposed = false
 
     const loadMemorySurface = async () => {
-      const [network, notionResponse] = await Promise.all([
-        fetchMemoryNetwork(),
-        fetchNotions(),
-      ])
-      if (disposed) return
-
-      setMemoryNetwork(network)
-      setNotions(notionResponse.items)
+      const notionResponse = await fetchNotions()
+      if (!disposed) {
+        setNotions(notionResponse.items)
+      }
     }
 
     void loadMemorySurface()
@@ -323,7 +313,6 @@ export const useHistoryData = (
     emotionTrend,
     emotionHeatmap,
     historyMarkers,
-    memoryNetwork,
     notions,
     desireMetrics,
     desireKeys,
