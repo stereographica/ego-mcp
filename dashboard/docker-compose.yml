@@ -35,7 +35,7 @@ services:
       DASHBOARD_CORS_ALLOWED_ORIGINS: ${DASHBOARD_CORS_ALLOWED_ORIGINS:-http://localhost:4173,http://127.0.0.1:4173}
       DASHBOARD_EGO_MCP_DATA_DIR: ${DASHBOARD_EGO_MCP_DATA_DIR:-}
     volumes:
-      - ${DASHBOARD_EGO_MCP_DATA_DIR:-/tmp}:${DASHBOARD_EGO_MCP_DATA_DIR:-/tmp}:ro
+      - ${DASHBOARD_EGO_MCP_DATA_DIR:-/tmp}:${DASHBOARD_EGO_MCP_DATA_DIR:-/tmp}
     ports:
       - "8000:8000"
     depends_on:

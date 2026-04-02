@@ -15,7 +15,7 @@
 | `DASHBOARD_LOG_MOUNT_TARGET` | `/host-tmp` | Ingestor-side mount target for compose |
 | `DASHBOARD_LOG_PATH` | `/tmp/ego-mcp-*.log` (local) / `/host-tmp/ego-mcp-*.log` (compose) | JSONL log file or glob tailed by the ingestor |
 | `DASHBOARD_INGEST_POLL_SECONDS` | `1.0` | Ingestor file polling interval in seconds |
-| `DASHBOARD_EGO_MCP_DATA_DIR` | none | ego-mcp data directory. Used by the Memory Network / Notions API to read ChromaDB and `notions.json`, and by the desire catalog loader to read `settings/desires.json`. In compose, the same absolute path is mounted read-only into the backend container |
+| `DASHBOARD_EGO_MCP_DATA_DIR` | none | ego-mcp data directory. Used by the Memory Network / Notions API to read ChromaDB and `notions.json`, and by the desire catalog loader to read `settings/desires.json`. In compose, the same absolute path is mounted into the backend container with write access because Chroma may touch SQLite state even during reads |
 | `VITE_DASHBOARD_API_BASE` | `http://localhost:8000` | API base URL used by the browser |
 | `VITE_DASHBOARD_WS_BASE` | `ws://localhost:8000` | WebSocket base URL used by the browser |
 
@@ -43,7 +43,7 @@
 - In compose, the host `DASHBOARD_LOG_MOUNT_SOURCE` (default: `/tmp`) is mounted read-only into the container
 - The ingestor handles inode changes, truncation, and per-file checkpoints for all files matched by the glob
 - On restart, if the inode/offset in `ingestion_checkpoints` still matches a file, ingest resumes from that offset; otherwise it rereads from the beginning
-- If `DASHBOARD_EGO_MCP_DATA_DIR` is set, compose mounts that same absolute path read-only into the backend container
+- If `DASHBOARD_EGO_MCP_DATA_DIR` is set, compose mounts that same absolute path into the backend container with write access because Chroma may require SQLite writes during reads
 
 ### Desire Catalog Settings
 
