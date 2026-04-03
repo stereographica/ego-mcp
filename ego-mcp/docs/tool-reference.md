@@ -457,8 +457,10 @@ Backend tools are guided by surface tool responses. They appear in the system pr
 
 **When to call:** When `feel_desires` indicates a high desire and you've acted on it.
 
-`name` can target any desire that exists under `fixed_desires` in `settings/desires.json`.
-Any desire that does not exist there, including omitted built-in desires, is treated as nonexistent.
+`name` can target any fixed desire ID that exists under `fixed_desires` in `settings/desires.json`.
+It can also target active emergent desire IDs such as `grasp_something`.
+For backward compatibility, legacy emergent sentences such as `You want to grasp something.` are also accepted.
+Any other value, including omitted built-in fixed desires, is treated as nonexistent.
 
 **inputSchema:**
 

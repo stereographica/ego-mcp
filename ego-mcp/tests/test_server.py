@@ -767,7 +767,7 @@ class TestImplicitSatisfactionFromServer:
         class FakeDesire:
             def generate_emergent_desires(self, notions: list[Notion]) -> list[str]:
                 assert len(notions) == 1
-                return ["You want to feel safe."]
+                return ["feel_safe"]
 
             def expire_emergent_desires(self) -> list[str]:
                 return ["old emergent desire"]
@@ -812,7 +812,7 @@ class TestImplicitSatisfactionFromServer:
 
         metadata = get_tool_metadata()
         assert "You need to know something." in text
-        assert metadata["emergent_desire_created"] == "You want to feel safe."
+        assert metadata["emergent_desire_created"] == "feel_safe"
         assert metadata["emergent_desire_expired"] == "old emergent desire"
         assert metadata["impulse_boost_triggered"] is True
         assert metadata["impulse_source_memory_id"] == "mem_proust"

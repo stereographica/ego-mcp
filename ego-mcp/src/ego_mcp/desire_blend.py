@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ego_mcp.desire_catalog import DesireCatalog, default_desire_catalog
+from ego_mcp.emergent_desires import emergent_desire_sentence
 
 _TEMPLATES: dict[str, tuple[str, str]] = default_desire_catalog().template_map()
 
@@ -20,6 +21,9 @@ def _render_sentence(
     template_map = catalog.template_map() if catalog is not None else _TEMPLATES
     templates = template_map.get(name)
     if templates is None:
+        emergent_sentence = emergent_desire_sentence(name)
+        if emergent_sentence is not None:
+            return emergent_sentence
         return name if name.endswith(".") else f"{name}."
     return templates[1] if level >= 0.7 else templates[0]
 
