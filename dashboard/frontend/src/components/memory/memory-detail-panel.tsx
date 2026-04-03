@@ -6,6 +6,8 @@ type MemoryDetailPanelProps = {
   detail: MemoryDetail
 }
 
+const PRIVATE_CONTENT_PLACEHOLDER = 'REDACTED'
+
 const formatTimestamp = (value: string) =>
   value ? new Date(value).toLocaleString() : 'n/a'
 
@@ -84,7 +86,7 @@ export const MemoryDetailPanel = ({ detail }: MemoryDetailPanelProps) => (
           Content
         </p>
         <div className="max-h-56 overflow-y-auto rounded-md border bg-muted/20 p-3 whitespace-pre-wrap">
-          {detail.content}
+          {detail.is_private ? PRIVATE_CONTENT_PLACEHOLDER : detail.content}
         </div>
       </div>
 
