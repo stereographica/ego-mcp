@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from ego_mcp.emergent_desires import canonical_emergent_desire_id
 
-TARGET_VERSION = "0.6.1"
+TARGET_VERSION = "0.6.2"
 
 _BACKUP_FILENAME = "desire_state.pre_0006_emergent_desire_ids.json"
 

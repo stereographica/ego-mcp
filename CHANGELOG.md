@@ -2,6 +2,15 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [0.6.2] - 2026-04-03
+
+### Changed
+- ego-mcp: 動的欲求を prose label ではなく `grasp_something` のような stable ID で内部管理するよう変更し、`satisfy_desire` は active な emergent desire ID を直接受け付けるよう改善
+- ego-mcp: `satisfy_desire` が legacy な emergent desire sentence も後方互換として受け付けるようにし、既存の推論フローからでも充足できるよう改善
+- ego-mcp: migration `0006_emergent_desire_ids` で既存 `desire_state.json` の emergent desire key を canonical ID へ正規化し、書き換え前バックアップを保持するようにした
+- dashboard: Current / desire key API が返す動的欲求 key の扱いを stable ID ベースとして文書化
+- バージョンアップ: ego-mcp `0.6.1` → `0.6.2`
+
 ## [0.5.0] - 2026-03-28
 
 ### Added
