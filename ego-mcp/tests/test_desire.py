@@ -268,7 +268,39 @@ class TestDesirePersistence:
         engine = DesireEngine(state_path, catalog_path=catalog_path)
 
         assert "legacy_fixed_desire" not in engine._state
-        assert "You want to feel safe." in engine._state
+        assert "feel_safe" in engine._state
+        assert "You want to feel safe." not in engine._state
+
+    def test_load_state_normalizes_legacy_emergent_labels(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        state_path = tmp_path / "desire_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "You want to grasp something.": {
+                        "last_satisfied": "",
+                        "satisfaction_quality": 0.5,
+                        "boost": 0.0,
+                        "is_emergent": True,
+                        "created": (
+                            datetime.now(timezone.utc) - timedelta(hours=1)
+                        ).isoformat(),
+                        "satisfaction_hours": 24.0,
+                    }
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        engine = DesireEngine.from_data_dir(tmp_path)
+
+        assert "grasp_something" in engine._state
+        assert "You want to grasp something." not in engine._state
+        assert engine.compute_levels()["grasp_something"] >= 0.0
 
 
 class TestDesireCatalog:
@@ -469,15 +501,46 @@ class TestEmergentDesires:
 
         created = engine.generate_emergent_desires(notions)
 
-        assert created == ["You want to be with someone."]
+        assert created == ["be_with_someone"]
         assert engine._state[created[0]]["is_emergent"] is True
         assert engine._state[created[0]]["created"] != ""
         assert engine.compute_levels()[created[0]] >= 0.0
 
+    def test_satisfy_accepts_legacy_emergent_sentence_alias(
+        self, engine: DesireEngine
+    ) -> None:
+        engine._state["grasp_something"] = {
+            "last_satisfied": "",
+            "satisfaction_quality": 0.5,
+            "boost": 0.0,
+            "is_emergent": True,
+            "created": (
+                datetime.now(timezone.utc) - timedelta(hours=12)
+            ).isoformat(),
+            "satisfaction_hours": 24.0,
+        }
+
+        new_level = engine.satisfy("You want to grasp something.", quality=0.8)
+
+        assert "You want to grasp something." not in engine._state
+        assert engine._state["grasp_something"]["satisfaction_quality"] == 0.8
+        assert new_level == engine.compute_levels()["grasp_something"]
+
+    def test_blend_desires_renders_emergent_sentence_from_id(
+        self, engine: DesireEngine
+    ) -> None:
+        assert (
+            blend_desires(
+                {"grasp_something": 0.8},
+                catalog=engine.catalog,
+            )
+            == "You want to grasp something."
+        )
+
     def test_expire_emergent_desires_removes_stale_entries(
         self, engine: DesireEngine
     ) -> None:
-        stale_name = "You want to feel safe."
+        stale_name = "feel_safe"
         engine._state[stale_name] = {
             "last_satisfied": "",
             "satisfaction_quality": 0.5,
@@ -497,7 +560,7 @@ class TestEmergentDesires:
     def test_expire_emergent_desires_removes_stale_satisfied_entries(
         self, engine: DesireEngine
     ) -> None:
-        stale_name = "You want to stay in this."
+        stale_name = "stay_in_this"
         engine._state[stale_name] = {
             "last_satisfied": (
                 datetime.now(timezone.utc) - timedelta(days=8)

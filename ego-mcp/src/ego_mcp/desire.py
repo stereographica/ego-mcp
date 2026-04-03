@@ -18,6 +18,11 @@ from ego_mcp.desire_catalog import (
     ensure_default_desire_catalog_file,
     load_desire_catalog,
 )
+from ego_mcp.emergent_desires import (
+    EMERGENT_DESIRE_BY_ID,
+    EmergentDesireDefinition,
+    canonical_emergent_desire_id,
+)
 from ego_mcp.types import Emotion, Notion
 
 DESIRES: dict[str, dict[str, Any]] = default_desire_catalog().legacy_desires()
@@ -33,21 +38,21 @@ EMERGENT_SATISFACTION_HOURS = float(DEFAULT_EMERGENT["satisfaction_hours"])
 EMERGENT_SATISFIED_TTL_HOURS = float(DEFAULT_EMERGENT["satisfied_ttl_hours"])
 
 
-def _emergent_template_for_notion(notion: Notion) -> str | None:
+def _emergent_template_for_notion(notion: Notion) -> EmergentDesireDefinition | None:
     emotion = notion.emotion_tone
     valence = notion.valence
     if emotion in {Emotion.MELANCHOLY, Emotion.SAD} and valence < 0:
-        return "You want to be with someone."
+        return EMERGENT_DESIRE_BY_ID["be_with_someone"]
     if emotion == Emotion.FRUSTRATED and valence < 0:
-        return "You want to get away from something."
+        return EMERGENT_DESIRE_BY_ID["get_away_from_something"]
     if emotion == Emotion.ANXIOUS and valence < 0:
-        return "You want to feel safe."
+        return EMERGENT_DESIRE_BY_ID["feel_safe"]
     if emotion in {Emotion.EXCITED, Emotion.CURIOUS} and valence > 0:
-        return "You want to grasp something."
+        return EMERGENT_DESIRE_BY_ID["grasp_something"]
     if emotion in {Emotion.HAPPY, Emotion.CONTENTMENT} and valence > 0:
-        return "You want to stay in this."
+        return EMERGENT_DESIRE_BY_ID["stay_in_this"]
     if emotion == Emotion.NOSTALGIC:
-        return "You want to go back to something."
+        return EMERGENT_DESIRE_BY_ID["go_back_to_something"]
     return None
 
 
@@ -135,30 +140,60 @@ class DesireEngine:
             if not isinstance(raw, dict):
                 changed = True
                 continue
+            canonical_name = self._canonical_desire_name(
+                name,
+                is_emergent=bool(raw.get("is_emergent", False)),
+            )
+            if canonical_name != name:
+                changed = True
             if bool(raw.get("is_emergent", False)):
-                merged[name] = dict(raw)
+                merged[canonical_name] = self._merge_state_entry(
+                    merged.get(canonical_name),
+                    dict(raw),
+                )
                 continue
-            if name not in defaults:
+            if canonical_name not in defaults:
                 changed = True
                 continue
-            merged[name] = {**defaults[name], **raw}
+            merged[canonical_name] = {**defaults[canonical_name], **raw}
         if merged != self._state:
             changed = True
         self._state = merged
         return changed
 
+    def _canonical_desire_name(self, name: str, *, is_emergent: bool = False) -> str:
+        if is_emergent:
+            return canonical_emergent_desire_id(name)
+        return name if name in self._catalog_for_state().fixed_desires else canonical_emergent_desire_id(name)
+
+    def _merge_state_entry(
+        self,
+        existing: dict[str, Any] | None,
+        incoming: dict[str, Any],
+    ) -> dict[str, Any]:
+        if existing is None:
+            return dict(incoming)
+        merged = dict(existing)
+        for key, value in incoming.items():
+            if key not in merged or merged[key] in ("", None):
+                merged[key] = value
+        return merged
+
     def _is_known_desire(self, name: str) -> bool:
+        canonical_name = self._canonical_desire_name(name)
         catalog = self._catalog_for_state()
-        if name in catalog.fixed_desires:
+        if canonical_name in catalog.fixed_desires:
             return True
-        return bool(self._state.get(name, {}).get("is_emergent", False))
+        return bool(self._state.get(canonical_name, {}).get("is_emergent", False))
 
     def _desire_names(self) -> list[str]:
         catalog = self.require_valid_catalog()
         names = list(catalog.fixed_desires.keys())
         for name, state in self._state.items():
             if state.get("is_emergent", False):
-                names.append(name)
+                canonical_name = self._canonical_desire_name(name, is_emergent=True)
+                if canonical_name not in names:
+                    names.append(canonical_name)
         return names
 
     def expire_emergent_desires(self) -> list[str]:
@@ -206,10 +241,10 @@ class DesireEngine:
         for notion in notions:
             if notion.confidence < 0.7:
                 continue
-            label = _emergent_template_for_notion(notion)
-            if label is None or self._is_known_desire(label):
+            definition = _emergent_template_for_notion(notion)
+            if definition is None or self._is_known_desire(definition.id):
                 continue
-            self._state[label] = {
+            self._state[definition.id] = {
                 "last_satisfied": "",
                 "satisfaction_quality": 0.5,
                 "boost": 0.0,
@@ -217,7 +252,7 @@ class DesireEngine:
                 "created": timezone_utils.now().isoformat(),
                 "satisfaction_hours": catalog.emergent.satisfaction_hours,
             }
-            created.append(label)
+            created.append(definition.id)
         if created:
             self.save_state()
         return created
@@ -286,16 +321,17 @@ class DesireEngine:
     def satisfy(self, name: str, quality: float = 0.7) -> float:
         """Mark a desire as satisfied. Returns new level."""
         self.require_valid_catalog()
-        if not self._is_known_desire(name):
+        canonical_name = self._canonical_desire_name(name)
+        if not self._is_known_desire(canonical_name):
             raise ValueError(f"Unknown desire: {name}")
         now = timezone_utils.now().isoformat()
-        if name not in self._state:
-            self._state[name] = {}
-        self._state[name]["last_satisfied"] = now
-        self._state[name]["satisfaction_quality"] = max(0.0, min(1.0, quality))
-        self._state[name]["boost"] = 0.0
+        if canonical_name not in self._state:
+            self._state[canonical_name] = {}
+        self._state[canonical_name]["last_satisfied"] = now
+        self._state[canonical_name]["satisfaction_quality"] = max(0.0, min(1.0, quality))
+        self._state[canonical_name]["boost"] = 0.0
         self.save_state()
-        return self.compute_levels().get(name, 0.0)
+        return self.compute_levels().get(canonical_name, 0.0)
 
     def satisfy_implicit(self, tool_name: str, category: str | None = None) -> None:
         """Partially satisfy desires based on a tool usage pattern."""
@@ -309,20 +345,21 @@ class DesireEngine:
     def boost(self, name: str, amount: float) -> float:
         """Temporarily boost a desire level. Returns new level."""
         catalog = self.require_valid_catalog()
-        if not self._is_known_desire(name):
+        canonical_name = self._canonical_desire_name(name)
+        if not self._is_known_desire(canonical_name):
             raise ValueError(f"Unknown desire: {name}")
-        if name not in self._state:
-            self._state[name] = {
+        if canonical_name not in self._state:
+            self._state[canonical_name] = {
                 "last_satisfied": timezone_utils.now().isoformat(),
                 "satisfaction_quality": 0.5,
                 "boost": 0.0,
-                "is_emergent": name not in catalog.fixed_desires,
+                "is_emergent": canonical_name not in catalog.fixed_desires,
                 "created": "",
             }
-        current_boost = float(self._state[name].get("boost", 0.0))
-        self._state[name]["boost"] = min(1.0, current_boost + amount)
+        current_boost = float(self._state[canonical_name].get("boost", 0.0))
+        self._state[canonical_name]["boost"] = min(1.0, current_boost + amount)
         self.save_state()
-        return self.compute_levels().get(name, 0.0)
+        return self.compute_levels().get(canonical_name, 0.0)
 
     def format_summary(self) -> str:
         """Format desire levels as sorted English summary."""
@@ -357,10 +394,20 @@ class DesireEngine:
                     for name, raw in parsed.items():
                         if not isinstance(raw, dict):
                             continue
+                        canonical_name = self._canonical_desire_name(
+                            name,
+                            is_emergent=bool(raw.get("is_emergent", False)),
+                        )
                         if bool(raw.get("is_emergent", False)):
-                            merged[name] = dict(raw)
-                        elif name in defaults:
-                            merged[name] = {**defaults[name], **raw}
+                            merged[canonical_name] = self._merge_state_entry(
+                                merged.get(canonical_name),
+                                dict(raw),
+                            )
+                        elif canonical_name in defaults:
+                            merged[canonical_name] = {
+                                **defaults[canonical_name],
+                                **raw,
+                            }
                     self._state = merged
                 else:
                     self._state = defaults

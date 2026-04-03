@@ -311,3 +311,159 @@ class TestDesireStateSplitMigration:
 
         payload = json.loads((tmp_path / "desire_state.json").read_text(encoding="utf-8"))
         assert set(payload.keys()) == {"curiosity", "You want to feel safe."}
+
+
+class TestEmergentDesireIdMigration:
+    def test_run_migrations_applies_0006_to_existing_desire_state(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        state_path = tmp_path / "desire_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "You want to feel safe.": {
+                        "last_satisfied": "",
+                        "satisfaction_quality": 0.5,
+                        "boost": 0.0,
+                        "is_emergent": True,
+                        "created": "2024-01-01T00:00:00+00:00",
+                        "satisfaction_hours": 24.0,
+                    }
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        applied = migrations_mod.run_migrations(tmp_path)
+
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        assert "0006_emergent_desire_ids" in applied
+        assert "feel_safe" in payload
+        assert "You want to feel safe." not in payload
+
+    def test_0006_normalizes_legacy_emergent_labels_and_creates_backup(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        migration_mod = __import__(
+            "ego_mcp.migrations.0006_emergent_desire_ids",
+            fromlist=["up"],
+        )
+        state_path = tmp_path / "desire_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "curiosity": {"satisfaction_quality": 0.8, "is_emergent": False},
+                    "You want to grasp something.": {
+                        "last_satisfied": "",
+                        "satisfaction_quality": 0.5,
+                        "boost": 0.0,
+                        "is_emergent": True,
+                        "created": "2024-01-01T00:00:00+00:00",
+                        "satisfaction_hours": 24.0,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        migration_mod.up(tmp_path)
+
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        backup_path = tmp_path / "desire_state.pre_0006_emergent_desire_ids.json"
+        backup_payload = json.loads(backup_path.read_text(encoding="utf-8"))
+        assert "grasp_something" in payload
+        assert "You want to grasp something." not in payload
+        assert payload["grasp_something"]["created"] == "2024-01-01T00:00:00+00:00"
+        assert "You want to grasp something." in backup_payload
+
+    def test_0006_is_idempotent_when_state_is_already_normalized(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        migration_mod = __import__(
+            "ego_mcp.migrations.0006_emergent_desire_ids",
+            fromlist=["up"],
+        )
+        state_path = tmp_path / "desire_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "grasp_something": {
+                        "last_satisfied": "",
+                        "satisfaction_quality": 0.5,
+                        "boost": 0.0,
+                        "is_emergent": True,
+                        "created": "2024-01-01T00:00:00+00:00",
+                        "satisfaction_hours": 24.0,
+                    }
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        migration_mod.up(tmp_path)
+
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        assert payload == {
+            "grasp_something": {
+                "last_satisfied": "",
+                "satisfaction_quality": 0.5,
+                "boost": 0.0,
+                "is_emergent": True,
+                "created": "2024-01-01T00:00:00+00:00",
+                "satisfaction_hours": 24.0,
+            }
+        }
+        assert not (
+            tmp_path / "desire_state.pre_0006_emergent_desire_ids.json"
+        ).exists()
+
+    def test_0006_prefers_existing_canonical_entry_on_collision(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        migration_mod = __import__(
+            "ego_mcp.migrations.0006_emergent_desire_ids",
+            fromlist=["up"],
+        )
+        state_path = tmp_path / "desire_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "grasp_something": {
+                        "last_satisfied": "2024-02-01T00:00:00+00:00",
+                        "satisfaction_quality": 0.9,
+                        "boost": 0.0,
+                        "is_emergent": True,
+                        "created": "2024-02-01T00:00:00+00:00",
+                        "satisfaction_hours": 24.0,
+                    },
+                    "You want to grasp something.": {
+                        "last_satisfied": "",
+                        "satisfaction_quality": 0.2,
+                        "boost": 0.4,
+                        "is_emergent": True,
+                        "created": "2024-01-01T00:00:00+00:00",
+                        "satisfaction_hours": 48.0,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        migration_mod.up(tmp_path)
+
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        assert payload["grasp_something"]["satisfaction_quality"] == 0.9
+        assert payload["grasp_something"]["satisfaction_hours"] == 24.0
+        assert "You want to grasp something." not in payload
