@@ -8,6 +8,7 @@
 
 - `GET /api/v1/current`
   - Current summary values (`latest`, `tool_calls_per_min`, `error_rate`)
+  - Includes `latest_desires` and `latest_emergent_desires`; emergent desires use stable IDs such as `grasp_something`
 - `GET /api/v1/usage/tools?from=...&to=...&bucket=1m|5m|15m`
   - Tool usage series. Counts `Tool invocation` logs as one call each, and only falls back to terminal events for older data without logs
 - `GET /api/v1/metrics/{key}?from=...&to=...&bucket=...`
@@ -25,6 +26,7 @@
   - Desire keys seen during the selected history range, used for dynamic series discovery in the history chart
   - Returns only fixed desires that exist in the catalog and dynamic desires that do not
   - Legacy fixed desires that are not in the catalog are excluded
+  - Dynamic desire keys are stable IDs rather than prose labels
 - `GET /api/v1/logs?from=...&to=...&level=INFO&search=remember`
   - Logs for live tail and history views (up to 300 rows)
 - `GET /api/v1/alerts/anomalies?from=...&to=...&bucket=...`
