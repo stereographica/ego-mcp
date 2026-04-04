@@ -171,6 +171,26 @@ If the settings violate the schema:
 - `wake_up`, `feel_desires`, `introspect`, and `satisfy_desire` return an MCP tool error so the LLM can see the configuration problem.
 - Tools such as `remember`, where desire updates are only a side effect, continue their main work and skip only the implicit desire update.
 
+## Connecting to Claude Code
+
+Add the following to your Claude Code MCP settings (`.mcp.json` or `~/.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "ego": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/ego-mcp", "python", "-m", "ego_mcp"],
+      "env": {
+        "GEMINI_API_KEY": "your-key-here"
+      }
+    }
+  }
+}
+```
+
+ego-mcp uses stdio transport, so it works with any MCP client that supports the standard protocol.
+
 ## Connecting to OpenClaw (via mcporter)
 
 OpenClaw does **not** support a root-level `mcpServers` key in `~/.openclaw/openclaw.json`.
