@@ -71,6 +71,35 @@ class TestRelationshipStore:
         rel = store.get("Master")
         assert rel.total_interactions == 0
 
+    def test_update_rejects_wrong_type_for_dict_field(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        with pytest.raises(TypeError, match="communication_style.*dict.*str"):
+            store.update("Master", {"communication_style": "calm and warm"})
+
+    def test_update_rejects_wrong_type_for_list_field(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        with pytest.raises(TypeError, match="known_facts.*list.*str"):
+            store.update("Master", {"known_facts": "likes coffee"})
+
+    def test_update_rejects_wrong_type_for_numeric_field(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        with pytest.raises(TypeError, match="trust_level"):
+            store.update("Master", {"trust_level": "high"})
+
+    def test_update_accepts_correct_types(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        updated = store.update(
+            "Master",
+            {
+                "communication_style": {"warm": 3.0},
+                "known_facts": ["likes coffee"],
+                "trust_level": 0.9,
+            },
+        )
+        assert updated.communication_style == {"warm": 3.0}
+        assert updated.known_facts == ["likes coffee"]
+        assert updated.trust_level == 0.9
+
     def test_apply_tom_feedback(self, tmp_path: Path) -> None:
         store = RelationshipStore(tmp_path / "relationships.json")
         updated = store.apply_tom_feedback(

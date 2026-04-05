@@ -28,6 +28,26 @@ class TestSelfModelStore:
         assert model.current_goals == ["learn"]
         assert model.last_updated != ""
 
+    def test_update_rejects_unknown_field(self, tmp_path: Path) -> None:
+        store = SelfModelStore(tmp_path / "self_model.json")
+        with pytest.raises(ValueError, match="Invalid self-model field"):
+            store.update({"nonexistent": "value"})
+
+    def test_update_rejects_wrong_type_for_dict_field(self, tmp_path: Path) -> None:
+        store = SelfModelStore(tmp_path / "self_model.json")
+        with pytest.raises(TypeError, match="preferences.*dict.*str"):
+            store.update({"preferences": "likes quiet"})
+
+    def test_update_rejects_wrong_type_for_list_field(self, tmp_path: Path) -> None:
+        store = SelfModelStore(tmp_path / "self_model.json")
+        with pytest.raises(TypeError, match="current_goals.*list.*str"):
+            store.update({"current_goals": "ship the patch"})
+
+    def test_update_rejects_wrong_type_for_numeric_field(self, tmp_path: Path) -> None:
+        store = SelfModelStore(tmp_path / "self_model.json")
+        with pytest.raises(TypeError, match="confidence_calibration"):
+            store.update({"confidence_calibration": "high"})
+
     def test_add_question_and_resolve(self, tmp_path: Path) -> None:
         store = SelfModelStore(tmp_path / "self_model.json")
         qid = store.add_question("What should I prioritize?")

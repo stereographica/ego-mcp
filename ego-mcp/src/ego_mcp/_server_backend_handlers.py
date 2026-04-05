@@ -328,14 +328,22 @@ def _handle_update_relationship(config: EgoConfig, args: dict[str, Any]) -> str:
     relationship_store = _relationship_store(config)
     try:
         relationship_store.update(person, {field_name: value})
-    except ValueError as exc:
+    except (ValueError, TypeError) as exc:
         return f"Error: {exc}"
     return f"Updated {person}.{field_name}"
 
 
+_SELF_FIELD_ALIASES: dict[str, str] = {
+    "confidence": "confidence_calibration",
+    "goals": "current_goals",
+    "values": "discovered_values",
+    "narratives": "identity_narratives",
+}
+
+
 def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
     """Update self model."""
-    field_name = args["field"]
+    field_name = _SELF_FIELD_ALIASES.get(args["field"], args["field"])
     value = args["value"]
     store = SelfModelStore(config.data_dir / "self_model.json")
 
@@ -356,7 +364,10 @@ def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
             return f"Updated question importance for {question_id}."
         return f"Question {question_id} not found."
 
-    store.update({field_name: value})
+    try:
+        store.update({field_name: value})
+    except (ValueError, TypeError) as exc:
+        return f"Error: {exc}"
     return f"Updated self.{field_name}"
 
 
