@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import uuid
@@ -12,6 +13,21 @@ from typing import Any
 
 from ego_mcp import timezone_utils
 from ego_mcp.types import SelfModel
+
+_UPDATABLE_FIELDS = frozenset(
+    f.name for f in dataclasses.fields(SelfModel) if f.name not in ("last_updated",)
+)
+
+_FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
+    "preferences": dict,
+    "discovered_values": dict,
+    "skill_confidence": dict,
+    "current_goals": list,
+    "unresolved_questions": list,
+    "identity_narratives": list,
+    "growth_log": list,
+    "confidence_calibration": (int, float),
+}
 
 
 def _clamp_question_importance(value: Any) -> int:
@@ -118,6 +134,21 @@ class SelfModelStore:
         )
 
     def update(self, patch: dict[str, Any]) -> SelfModel:
+        invalid_fields = sorted(key for key in patch if key not in _UPDATABLE_FIELDS)
+        if invalid_fields:
+            valid_fields = ", ".join(sorted(_UPDATABLE_FIELDS))
+            invalid = ", ".join(invalid_fields)
+            raise ValueError(
+                f"Invalid self-model field(s): {invalid}. "
+                f"Valid fields: {valid_fields}"
+            )
+        for key, value in patch.items():
+            expected = _FIELD_TYPES.get(key)
+            if expected is not None and not isinstance(value, expected):
+                raise TypeError(
+                    f"Field '{key}' expects {expected.__name__ if isinstance(expected, type) else ' or '.join(t.__name__ for t in expected)}, "
+                    f"got {type(value).__name__}: {value!r}"
+                )
         for key, value in patch.items():
             self._data[key] = value
         self._data["last_updated"] = timezone_utils.now().isoformat()

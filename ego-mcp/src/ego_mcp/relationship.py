@@ -17,6 +17,23 @@ _UPDATABLE_FIELDS = frozenset(
     if field.name not in ("person_id",)
 )
 
+# Expected types for each updatable field.
+_FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
+    "name": str,
+    "known_facts": list,
+    "communication_style": dict,
+    "preferred_topics": list,
+    "sensitive_topics": list,
+    "emotional_baseline": dict,
+    "trust_level": (int, float),
+    "shared_episode_ids": list,
+    "inferred_personality": dict,
+    "recent_mood_trajectory": list,
+    "first_interaction": str,
+    "last_interaction": str,
+    "total_interactions": (int, float),
+}
+
 
 class RelationshipStore:
     """JSON-backed store for per-person relationship models."""
@@ -81,6 +98,13 @@ class RelationshipStore:
                 f"Invalid relationship field(s): {invalid}. "
                 f"Valid fields: {valid_fields}"
             )
+        for key, value in patch.items():
+            expected = _FIELD_TYPES.get(key)
+            if expected is not None and not isinstance(value, expected):
+                raise TypeError(
+                    f"Field '{key}' expects {expected.__name__ if isinstance(expected, type) else ' or '.join(t.__name__ for t in expected)}, "
+                    f"got {type(value).__name__}: {value!r}"
+                )
         raw = self._get_raw(person_id)
         for key, value in patch.items():
             raw[key] = value

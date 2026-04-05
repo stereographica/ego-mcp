@@ -2279,6 +2279,79 @@ class TestUpdateRelationship:
         rel = store.get("Master")
         assert rel.emotional_baseline == {"warm": 1.0}
 
+    @pytest.mark.asyncio
+    async def test_rejects_string_for_communication_style(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "update_relationship",
+            {
+                "person": "Master",
+                "field": "communication_style",
+                "value": "calm and warm",
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert result.startswith("Error:")
+        assert "communication_style" in result
+        assert "dict" in result
+
+    @pytest.mark.asyncio
+    async def test_rejects_string_for_list_field(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "update_relationship",
+            {
+                "person": "Master",
+                "field": "known_facts",
+                "value": "likes coffee",
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert result.startswith("Error:")
+        assert "known_facts" in result
+        assert "list" in result
+
+    @pytest.mark.asyncio
+    async def test_rejects_string_for_trust_level(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "update_relationship",
+            {"person": "Master", "field": "trust_level", "value": "high"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert result.startswith("Error:")
+        assert "trust_level" in result
+
 
 class TestUpdateSelf:
     @pytest.mark.asyncio
@@ -2299,7 +2372,7 @@ class TestUpdateSelf:
             episodes,
             consolidation,
         )
-        assert "Updated self.confidence" in result
+        assert "Updated self.confidence_calibration" in result
 
     @pytest.mark.asyncio
     async def test_resolve_question_via_update_self(
@@ -2346,6 +2419,71 @@ class TestUpdateSelf:
             consolidation,
         )
         assert f"Updated question importance for {qid}" in result
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_field(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "update_self",
+            {"field": "nonexistent_field", "value": "anything"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert result.startswith("Error:")
+        assert "Invalid self-model field" in result
+
+    @pytest.mark.asyncio
+    async def test_rejects_string_for_dict_field(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "update_self",
+            {"field": "preferences", "value": "likes quiet work"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert result.startswith("Error:")
+        assert "preferences" in result
+        assert "dict" in result
+
+    @pytest.mark.asyncio
+    async def test_rejects_string_for_list_field(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "update_self",
+            {"field": "current_goals", "value": "ship the patch"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        assert result.startswith("Error:")
+        assert "current_goals" in result
+        assert "list" in result
 
 
 class TestGetEpisode:
