@@ -251,6 +251,40 @@ def test_desire_metric_keys_include_dynamic_history_only_keys() -> None:
     ]
 
 
+def test_current_and_desire_metric_keys_accept_attune_events() -> None:
+    store = TelemetryStore()
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store.ingest(
+        DashboardEvent(
+            ts=start,
+            event_type="tool_call_completed",
+            tool_name="attune",
+            ok=True,
+            duration_ms=10,
+            emotion_primary="curious",
+            emotion_intensity=0.6,
+            numeric_metrics={
+                "curiosity": 0.7,
+                "You want to feel safe.": 0.4,
+            },
+            string_metrics={"time_phase": "night"},
+            params={"time_phase": "night"},
+            private=False,
+            message="ok",
+        )
+    )
+    store.ingest(_event(1, "remember", 0.3, "night"))
+
+    current = store.current()
+
+    assert current["latest_desires"] == {"curiosity": 0.7}
+    assert current["latest_emergent_desires"] == {"You want to feel safe.": 0.4}
+    assert store.desire_metric_keys(start, start + timedelta(minutes=10)) == [
+        "You want to feel safe.",
+        "curiosity",
+    ]
+
+
 def test_desire_metrics_follow_catalog_and_hide_removed_legacy_fixed_desires() -> None:
     store = TelemetryStore(
         desire_catalog=_catalog(

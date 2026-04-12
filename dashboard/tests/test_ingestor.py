@@ -262,6 +262,39 @@ def test_projector_parses_feel_desires_completion_metrics() -> None:
     assert event.numeric_metrics["curiosity"] == 0.7
 
 
+def test_projector_carries_attune_desire_metrics_from_completion_log() -> None:
+    projector = EgoMcpLogProjector()
+    completion = {
+        "timestamp": "2026-01-01T12:00:02Z",
+        "level": "INFO",
+        "logger": "ego_mcp.server",
+        "message": "Tool execution completed",
+        "tool_name": "attune",
+        "emotion_primary": "curious",
+        "emotion_intensity": 0.65,
+        "valence": 0.2,
+        "arousal": 0.7,
+        "time_phase": "night",
+        "desire_levels": {
+            "information_hunger": 0.8,
+            "curiosity": 0.7,
+        },
+        "information_hunger": 0.8,
+        "curiosity": 0.7,
+        "You want to feel safe.": 0.4,
+    }
+
+    event = projector.project(completion)
+
+    assert event is not None
+    assert event.tool_name == "attune"
+    assert event.ok is True
+    assert event.string_metrics["time_phase"] == "night"
+    assert event.numeric_metrics["information_hunger"] == 0.8
+    assert event.numeric_metrics["curiosity"] == 0.7
+    assert event.numeric_metrics["You want to feel safe."] == 0.4
+
+
 def test_projector_preserves_forgetting_and_notion_metrics() -> None:
     projector = EgoMcpLogProjector()
     completion = {

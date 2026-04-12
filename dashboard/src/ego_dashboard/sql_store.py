@@ -8,12 +8,14 @@ from datetime import UTC, datetime, timedelta
 import psycopg
 from redis import Redis
 
+from ego_dashboard.constants import DESIRE_TELEMETRY_TOOL_NAMES
 from ego_dashboard.desire_catalog import DesireCatalog, default_desire_catalog
 from ego_dashboard.models import DashboardEvent, LogEvent
 from ego_dashboard.telemetry_identity import dashboard_event_dedupe_key, log_event_dedupe_key
 
 logger = logging.getLogger(__name__)
 _TOOL_OUTPUT_CHARS_CLEANUP_MIGRATION = "20260401_remove_tool_output_chars_metric"
+_DESIRE_TERMINAL_EVENT_TYPES = ("tool_call_completed", "tool_call_failed")
 
 
 def _escape_ilike_pattern(value: str) -> str:
@@ -59,6 +61,10 @@ def _tool_name_from_fields(fields: object) -> str | None:
         return None
     raw = fields.get("tool_name")
     return raw if isinstance(raw, str) and raw else None
+
+
+def _desire_tool_names_param() -> list[str]:
+    return list(DESIRE_TELEMETRY_TOOL_NAMES)
 
 
 def _dense_usage_rows(
@@ -210,12 +216,13 @@ class SqlTelemetryStore:
             UPDATE tool_events
             SET numeric_metrics = numeric_metrics - 'tool_output_chars',
                 params = params - 'tool_output_chars'
-            WHERE tool_name = 'feel_desires'
+            WHERE tool_name = ANY(%s)
               AND (
                 numeric_metrics ? 'tool_output_chars'
                 OR params ? 'tool_output_chars'
               )
             """,
+            (_desire_tool_names_param(),),
         )
 
     def _apply_tool_events_cleanup_migration(
@@ -223,12 +230,16 @@ class SqlTelemetryStore:
         cur: psycopg.Cursor[object],
         migration_name: str,
         sql: str,
+        params: tuple[object, ...] | None = None,
     ) -> None:
         cur.execute("SELECT 1 FROM dashboard_migrations WHERE name = %s", (migration_name,))
         if cur.fetchone() is not None:
             return
 
-        cur.execute(sql)
+        if params is None:
+            cur.execute(sql)
+        else:
+            cur.execute(sql, params)
         rowcount = getattr(cur, "rowcount", 0)
         cleaned_rows = int(rowcount) if isinstance(rowcount, int) else 0
         cur.execute(
@@ -421,10 +432,12 @@ class SqlTelemetryStore:
                     """
                     SELECT numeric_metrics
                     FROM tool_events
-                    WHERE ts >= %s AND ts <= %s AND tool_name = 'feel_desires'
+                    WHERE ts >= %s AND ts <= %s
+                      AND tool_name = ANY(%s)
+                      AND event_type = ANY(%s)
                     ORDER BY ts ASC
                     """,
-                    (start, end),
+                    (start, end, _desire_tool_names_param(), list(_DESIRE_TERMINAL_EVENT_TYPES)),
                 )
                 rows = cur.fetchall()
 
@@ -765,11 +778,17 @@ class SqlTelemetryStore:
                     """
                     SELECT numeric_metrics
                     FROM tool_events
-                    WHERE ts <= %s AND tool_name = 'feel_desires'
+                    WHERE ts <= %s
+                      AND tool_name = ANY(%s)
+                      AND event_type = ANY(%s)
                     ORDER BY ts DESC
                     LIMIT 1
                     """,
-                    (latest_ts,),
+                    (
+                        latest_ts,
+                        _desire_tool_names_param(),
+                        list(_DESIRE_TERMINAL_EVENT_TYPES),
+                    ),
                 )
                 latest_desire_row = cur.fetchone()
                 latest_desires: dict[str, float] = {}
