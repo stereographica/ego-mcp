@@ -247,6 +247,7 @@ class TestHandleRememberDesireSatisfaction:
             )
         assert "Saved (" in result
         assert "Unknown desire in satisfies" in caplog.text
+        assert "Putting this into words eased something." not in result
 
     @pytest.mark.asyncio
     async def test_auto_infer_satisfaction_with_embed_fn(

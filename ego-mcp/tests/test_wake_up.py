@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -129,3 +130,21 @@ class TestHandleWakeUp:
         result = await _handle_wake_up(config, memory, engine)
         # With no memories, embers section should not appear
         assert "Embers:" not in result
+
+    @pytest.mark.asyncio
+    async def test_stale_emergent_desire_not_rendered(
+        self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
+    ) -> None:
+        engine._state["be_with_someone"] = {
+            "is_emergent": True,
+            "created": (datetime.now(timezone.utc) - timedelta(days=10)).isoformat(),
+            "last_satisfied": "",
+            "satisfaction_quality": 0.5,
+            "boost": 0.0,
+            "satisfaction_hours": 24.0,
+        }
+
+        result = await _handle_wake_up(config, memory, engine)
+
+        assert "...be with someone" not in result
+        assert "You want to be with someone." not in result

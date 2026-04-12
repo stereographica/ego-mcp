@@ -14,7 +14,7 @@ from ego_mcp._server_runtime import (
 )
 from ego_mcp.config import EgoConfig
 from ego_mcp.current_interest import derive_current_interests
-from ego_mcp.desire import DesireEngine
+from ego_mcp.desire import DesireEngine, generate_emergent_from_recent_memories
 from ego_mcp.desire_blend import blend_desires
 from ego_mcp.emergent_desires import emergent_desire_sentence
 from ego_mcp.interoception import get_body_state
@@ -83,8 +83,12 @@ async def _handle_attune(
     emotional_texture = _format_recent_emotion_layer(recent_all, now=now)
 
     # 2. Desire currents (3-direction with EMA)
-    created_emergent = desire.generate_emergent_desires(_list_notions_safe())
     expired_emergent = desire.expire_emergent_desires()
+    created_emergent: list[str] = []
+    recent_emergent = generate_emergent_from_recent_memories(desire, recent_all)
+    if recent_emergent is not None:
+        created_emergent.append(recent_emergent)
+    created_emergent.extend(desire.generate_emergent_desires(_list_notions_safe()))
 
     from ego_mcp._server_context import (
         _derive_desire_modulation,

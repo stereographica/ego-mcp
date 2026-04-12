@@ -227,6 +227,9 @@ async def _handle_wake_up(
     now = timezone_utils.now()
     recent_all = await memory.list_recent(n=30)
     parts: list[str] = []
+    expire_emergent = getattr(desire, "expire_emergent_desires", None)
+    if callable(expire_emergent):
+        expire_emergent()
 
     # 1. Emotional texture of last session
     if recent_all:

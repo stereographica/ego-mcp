@@ -301,12 +301,15 @@ async def _handle_remember(
                 s.strip() for s in satisfies_raw if isinstance(s, str) and s.strip()
             ]
         if satisfies_explicit:
+            satisfied_any = False
             for desire_id in satisfies_explicit:
                 try:
                     desire_engine.satisfy(desire_id, quality=0.5)
+                    satisfied_any = True
                 except ValueError:
                     logger.warning("Unknown desire in satisfies: %s", desire_id)
-            desire_settling_section = "Putting this into words eased something."
+            if satisfied_any:
+                desire_settling_section = "Putting this into words eased something."
         elif embed_fn is not None:
             catalog = getattr(desire_engine, "catalog", None)
             if catalog is not None:

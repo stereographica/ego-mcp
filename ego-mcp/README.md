@@ -318,7 +318,7 @@ uv run mypy src/ego_mcp/
 ### Upgrading from v0.6.x
 
 See [docs/migration-v1.0.0.md](docs/migration-v1.0.0.md) for the v0.6.x → v1.0.0 migration guide.
-The server runs automatic migrations on startup. If you have a customized `settings/desires.json`, you may need to manually set `settling` sentence templates and `satisfaction_signals` via `configure_desires(action="check")`.
+The server runs automatic migrations on startup. If you have a customized `settings/desires.json`, use `configure_desires(action="check")` to find missing fields, then fill them with `configure_desires(action="set_sentence", ...)` and `configure_desires(action="set_signals", ...)`.
 
 ### `hashlib blake2*` error when running `uv`
 
