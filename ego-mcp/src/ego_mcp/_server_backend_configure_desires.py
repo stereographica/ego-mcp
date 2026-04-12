@@ -153,10 +153,11 @@ def _set_sentence(
     if direction not in ("rising", "steady", "settling"):
         return f"Invalid direction: {direction}. Use rising, steady, or settling."
 
-    desires[desire_id].setdefault("sentence", {})
-    if not isinstance(desires[desire_id]["sentence"], dict):
-        desires[desire_id]["sentence"] = {}
-    payload["fixed_desires"][desire_id]["sentence"][direction] = sentence
+    desire = desires[desire_id]
+    desire.setdefault("sentence", {})
+    if not isinstance(desire["sentence"], dict):
+        desire["sentence"] = {}
+    desire["sentence"][direction] = sentence
     _write_payload(path, payload)
     return _write_result(path, f"Updated {desire_id}.sentence.{direction}")
 
@@ -171,7 +172,7 @@ def _set_signals(
     if desire_id not in desires:
         return f"Unknown desire: {desire_id}"
 
-    payload["fixed_desires"][desire_id]["satisfaction_signals"] = signals
+    desires[desire_id]["satisfaction_signals"] = signals
     _write_payload(path, payload)
     return _write_result(
         path,

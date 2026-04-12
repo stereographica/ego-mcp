@@ -5,7 +5,7 @@ from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-from ego_dashboard.constants import DESIRE_TELEMETRY_TOOL_NAMES
+from ego_dashboard.constants import DESIRE_TELEMETRY_TOOL_NAMES, DESIRE_TERMINAL_EVENT_TYPES
 from ego_dashboard.desire_catalog import DesireCatalog, default_desire_catalog
 from ego_dashboard.models import DashboardEvent, LogEvent
 from ego_dashboard.telemetry_identity import dashboard_event_dedupe_key, log_event_dedupe_key
@@ -83,6 +83,8 @@ class TelemetryStore:
 
     def _desire_metrics_for_event(self, event: DashboardEvent) -> dict[str, float]:
         if event.tool_name not in DESIRE_TELEMETRY_TOOL_NAMES:
+            return {}
+        if event.event_type not in DESIRE_TERMINAL_EVENT_TYPES:
             return {}
         desire_metrics: dict[str, float] = {}
         for key, value in event.numeric_metrics.items():

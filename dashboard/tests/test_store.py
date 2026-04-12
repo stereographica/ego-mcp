@@ -285,6 +285,32 @@ def test_current_and_desire_metric_keys_accept_attune_events() -> None:
     ]
 
 
+def test_invoked_attune_event_not_counted_for_desire_metrics() -> None:
+    """Invoked events should not contribute desire metrics (Finding 6)."""
+    store = TelemetryStore()
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    # Invoked event has numeric_metrics but should be ignored for desires
+    store.ingest(
+        DashboardEvent(
+            ts=start,
+            event_type="tool_call_invoked",
+            tool_name="attune",
+            ok=True,
+            duration_ms=0,
+            emotion_primary="",
+            emotion_intensity=0.0,
+            numeric_metrics={"curiosity": 0.99},
+            string_metrics={},
+            params={},
+            private=False,
+            message="",
+        )
+    )
+    current = store.current()
+    assert current["latest_desires"] == {}
+    assert store.desire_metric_keys(start, start + timedelta(minutes=10)) == []
+
+
 def test_desire_metrics_follow_catalog_and_hide_removed_legacy_fixed_desires() -> None:
     store = TelemetryStore(
         desire_catalog=_catalog(

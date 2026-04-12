@@ -150,6 +150,7 @@ Top-level keys:
 | `satisfaction_hours` | number | Yes | Recovery time constant for emergent desires after they are satisfied. Must be greater than `0`. |
 | `expiry_hours` | number | Yes | How long an emergent desire can remain unsatisfied before it is considered stale and removed. Must be greater than `0`. |
 | `satisfied_ttl_hours` | number | Yes | How long a satisfied emergent desire is retained before being removed from state. Must be greater than `0`. |
+| `min_recent_memories` | integer | No | Minimum number of recent memories within the time window required to trigger an emergent desire from short-term emotion flow. Default `3`. Must be `>= 1`. |
 
 Validation and parsing rules:
 

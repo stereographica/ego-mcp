@@ -19,3 +19,9 @@ DESIRE_TELEMETRY_TOOL_NAMES: tuple[str, ...] = (
     "feel_desires",
     "attune",
 )
+
+# Only terminal events carry computed desire metrics.
+DESIRE_TERMINAL_EVENT_TYPES: tuple[str, ...] = (
+    "tool_call_completed",
+    "tool_call_failed",
+)

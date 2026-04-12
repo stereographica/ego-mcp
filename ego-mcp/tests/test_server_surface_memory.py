@@ -250,6 +250,45 @@ class TestHandleRememberDesireSatisfaction:
         assert "Putting this into words eased something." not in result
 
     @pytest.mark.asyncio
+    async def test_failed_explicit_satisfies_falls_through_to_auto_inference(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When all explicit satisfies IDs are invalid, fall back to auto-inference."""
+        engine = DesireEngine.from_data_dir(remember_config.data_dir)
+        catalog = engine.require_valid_catalog()
+        target_desire = next(iter(catalog.fixed_desires.keys()))
+
+        import ego_mcp._server_surface_memory as mem_mod
+
+        monkeypatch.setattr(
+            mem_mod,
+            "infer_desire_satisfaction",
+            lambda content, valence, intensity, cat, fn: [(target_desire, 0.4)],
+        )
+
+        def fake_embed(texts: list[str]) -> list[list[float]]:
+            return [[0.1] * 64 for _ in texts]
+
+        result = await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "A wonderful moment",
+                "emotion": "happy",
+                "satisfies": ["nonexistent_desire_xyz"],
+            },
+            desire_engine=engine,
+            embed_fn=fake_embed,
+        )
+        assert "Saved (" in result
+        # Explicit failed → fell through to auto-inference → success message
+        assert "Something quieted" in result
+        assert "Putting this into words eased something." not in result
+
+    @pytest.mark.asyncio
     async def test_auto_infer_satisfaction_with_embed_fn(
         self,
         remember_config: EgoConfig,

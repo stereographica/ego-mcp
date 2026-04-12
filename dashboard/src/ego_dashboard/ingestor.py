@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
+from ego_dashboard.constants import DESIRE_TELEMETRY_TOOL_NAMES
 from ego_dashboard.desire_catalog import DesireCatalog, default_desire_catalog, load_desire_catalog
 from ego_dashboard.models import DashboardEvent, LogEvent
 from ego_dashboard.settings import load_settings
@@ -139,9 +140,9 @@ class EgoMcpLogProjector:
             return None
 
         if message == "Tool invocation":
-            if tool_name == "feel_desires":
-                # For feel_desires we project completion/failure instead so we can attach
-                # the computed desire levels without double-counting tool usage.
+            if tool_name in DESIRE_TELEMETRY_TOOL_NAMES:
+                # For desire tools we project completion/failure instead so we
+                # can attach computed desire levels without double-counting.
                 return None
             tool_args = raw.get("tool_args")
             safe_tool_args = tool_args if isinstance(tool_args, dict) else {}
@@ -162,7 +163,7 @@ class EgoMcpLogProjector:
                 True,
                 "tool_call_completed",
             )
-            if tool_name == "feel_desires":
+            if tool_name in DESIRE_TELEMETRY_TOOL_NAMES:
                 parsed_levels = self._parse_feel_desires_levels(raw)
                 if parsed_levels:
                     raw_params = event_raw.get("params")
@@ -181,7 +182,7 @@ class EgoMcpLogProjector:
                 False,
                 "tool_call_failed",
             )
-            if tool_name == "feel_desires":
+            if tool_name in DESIRE_TELEMETRY_TOOL_NAMES:
                 parsed_levels = self._parse_feel_desires_levels(raw)
                 if parsed_levels:
                     raw_params = event_raw.get("params")

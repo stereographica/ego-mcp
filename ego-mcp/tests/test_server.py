@@ -987,6 +987,7 @@ class TestWakeUpServerHandler:
     async def test_handle_wake_up_prefers_workspace_monologue(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         class FakeSync:
             def read_latest_monologue(self) -> tuple[str | None, str | None]:
@@ -1009,6 +1010,9 @@ class TestWakeUpServerHandler:
             def compute_levels_with_modulation(self) -> dict[str, float]:
                 return {"curiosity": 0.8}
 
+            def expire_emergent_desires(self) -> list[str]:
+                return []
+
         async def fake_relationship_snapshot(
             _config: object, _memory: object, _person: str
         ) -> str:
@@ -1019,7 +1023,7 @@ class TestWakeUpServerHandler:
         monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
 
         text = await server_mod._handle_wake_up(
-            cast(Any, SimpleNamespace(companion_name="Master")),
+            cast(Any, SimpleNamespace(companion_name="Master", data_dir=tmp_path)),
             cast(Any, FakeMemoryStore()),
             cast(Any, FakeDesire()),
         )
@@ -1038,6 +1042,7 @@ class TestWakeUpServerHandler:
     async def test_handle_wake_up_falls_back_to_recent_introspection(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         class FakeSync:
             def read_latest_monologue(self) -> tuple[str | None, str | None]:
@@ -1068,6 +1073,9 @@ class TestWakeUpServerHandler:
             def compute_levels_with_modulation(self) -> dict[str, float]:
                 return {"cognitive_coherence": 0.75}
 
+            def expire_emergent_desires(self) -> list[str]:
+                return []
+
         async def fake_relationship_snapshot(
             _config: object, _memory: object, _person: str
         ) -> str:
@@ -1078,7 +1086,7 @@ class TestWakeUpServerHandler:
         monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
 
         text = await server_mod._handle_wake_up(
-            cast(Any, SimpleNamespace(companion_name="Master")),
+            cast(Any, SimpleNamespace(companion_name="Master", data_dir=tmp_path)),
             cast(Any, FakeMemoryStore()),
             cast(Any, FakeDesire()),
         )
@@ -1092,6 +1100,7 @@ class TestWakeUpServerHandler:
     async def test_handle_wake_up_without_any_introspection(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         class FakeSync:
             def read_latest_monologue(self) -> tuple[str | None, str | None]:
@@ -1111,6 +1120,9 @@ class TestWakeUpServerHandler:
             def compute_levels_with_modulation(self) -> dict[str, float]:
                 return {"expression": 0.45}
 
+            def expire_emergent_desires(self) -> list[str]:
+                return []
+
         async def fake_relationship_snapshot(
             _config: object, _memory: object, _person: str
         ) -> str:
@@ -1121,7 +1133,7 @@ class TestWakeUpServerHandler:
         monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
 
         text = await server_mod._handle_wake_up(
-            cast(Any, SimpleNamespace(companion_name="Master")),
+            cast(Any, SimpleNamespace(companion_name="Master", data_dir=tmp_path)),
             cast(Any, FakeMemoryStore()),
             cast(Any, FakeDesire()),
         )

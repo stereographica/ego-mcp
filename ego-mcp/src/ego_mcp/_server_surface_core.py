@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from ego_mcp import timezone_utils
@@ -129,6 +132,46 @@ def _list_notions_safe() -> list[Notion]:
     return list(_notion_map().values())
 
 
+_logger = logging.getLogger(__name__)
+
+_CONFIDENCE_DROP_THRESHOLD = 0.1
+
+
+def _detect_weakened_notions(
+    current_notions: list[Notion],
+    snapshot_path: Path,
+) -> list[Notion]:
+    """Return notions whose confidence dropped >= threshold since last snapshot.
+
+    Saves the current confidence values for next comparison.
+    """
+    previous: dict[str, float] = {}
+    if snapshot_path.exists():
+        try:
+            previous = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    if not isinstance(previous, dict):
+        previous = {}
+
+    weakened: list[Notion] = []
+    for n in current_notions:
+        prev_conf = previous.get(n.id)
+        if prev_conf is not None and prev_conf - n.confidence >= _CONFIDENCE_DROP_THRESHOLD:
+            weakened.append(n)
+
+    current_snapshot = {n.id: n.confidence for n in current_notions}
+    try:
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(
+            json.dumps(current_snapshot), encoding="utf-8"
+        )
+    except OSError:
+        _logger.debug("Failed to save notion confidence snapshot", exc_info=True)
+
+    return weakened
+
+
 def _format_associated_from_map(
     notion: Notion,
     notion_map: dict[str, Notion],
@@ -227,9 +270,7 @@ async def _handle_wake_up(
     now = timezone_utils.now()
     recent_all = await memory.list_recent(n=30)
     parts: list[str] = []
-    expire_emergent = getattr(desire, "expire_emergent_desires", None)
-    if callable(expire_emergent):
-        expire_emergent()
+    desire.expire_emergent_desires()
 
     # 1. Emotional texture of last session
     if recent_all:
@@ -242,9 +283,9 @@ async def _handle_wake_up(
         for name, state in desire._state.items()
         if isinstance(state, dict) and state.get("is_emergent", False)
     ]
-    weakened_notions = [
-        n for n in _list_notions_safe() if n.confidence < 0.4
-    ]
+    all_notions = _list_notions_safe()
+    snapshot_path = config.data_dir / "notion_confidence_snapshot.json"
+    weakened_notions = _detect_weakened_notions(all_notions, snapshot_path)
     try:
         unresolved_qs = _fading_important_questions(memory)
     except Exception:

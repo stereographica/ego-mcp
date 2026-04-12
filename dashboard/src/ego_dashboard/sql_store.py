@@ -8,14 +8,13 @@ from datetime import UTC, datetime, timedelta
 import psycopg
 from redis import Redis
 
-from ego_dashboard.constants import DESIRE_TELEMETRY_TOOL_NAMES
+from ego_dashboard.constants import DESIRE_TELEMETRY_TOOL_NAMES, DESIRE_TERMINAL_EVENT_TYPES
 from ego_dashboard.desire_catalog import DesireCatalog, default_desire_catalog
 from ego_dashboard.models import DashboardEvent, LogEvent
 from ego_dashboard.telemetry_identity import dashboard_event_dedupe_key, log_event_dedupe_key
 
 logger = logging.getLogger(__name__)
 _TOOL_OUTPUT_CHARS_CLEANUP_MIGRATION = "20260401_remove_tool_output_chars_metric"
-_DESIRE_TERMINAL_EVENT_TYPES = ("tool_call_completed", "tool_call_failed")
 
 
 def _escape_ilike_pattern(value: str) -> str:
@@ -437,7 +436,7 @@ class SqlTelemetryStore:
                       AND event_type = ANY(%s)
                     ORDER BY ts ASC
                     """,
-                    (start, end, _desire_tool_names_param(), list(_DESIRE_TERMINAL_EVENT_TYPES)),
+                    (start, end, _desire_tool_names_param(), list(DESIRE_TERMINAL_EVENT_TYPES)),
                 )
                 rows = cur.fetchall()
 
@@ -787,7 +786,7 @@ class SqlTelemetryStore:
                     (
                         latest_ts,
                         _desire_tool_names_param(),
-                        list(_DESIRE_TERMINAL_EVENT_TYPES),
+                        list(DESIRE_TERMINAL_EVENT_TYPES),
                     ),
                 )
                 latest_desire_row = cur.fetchone()

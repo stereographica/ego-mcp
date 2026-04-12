@@ -164,6 +164,7 @@ DEFAULT_EMERGENT = {
     "satisfaction_hours": 24.0,
     "expiry_hours": 72.0,
     "satisfied_ttl_hours": 24.0 * 7,
+    "min_recent_memories": 3,
 }
 
 
@@ -245,6 +246,7 @@ class EmergentDesireConfig(BaseModel):
     satisfaction_hours: float = Field(gt=0)
     expiry_hours: float = Field(gt=0)
     satisfied_ttl_hours: float = Field(gt=0)
+    min_recent_memories: int = Field(default=3, ge=1)
 
 
 class DesireCatalog(BaseModel):
