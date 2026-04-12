@@ -111,3 +111,40 @@ class TestConfigureDesires:
             },
         )
         assert "Unknown desire: nonexistent" in result
+
+    def test_check_still_reports_issues_when_catalog_is_invalid(
+        self, catalog_path: Path
+    ) -> None:
+        payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        payload["fixed_desires"]["curiosity"]["sentence"]["settling"] = ""
+        payload["fixed_desires"]["curiosity"]["implicit_satisfaction"]["recall"] = 2.0
+        catalog_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        result = _handle_configure_desires(str(catalog_path), {"action": "check"})
+
+        assert "validation:" in result
+        assert "curiosity: missing settling sentence" in result
+
+    def test_set_sentence_can_edit_invalid_catalog(self, catalog_path: Path) -> None:
+        payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        payload["fixed_desires"]["curiosity"]["implicit_satisfaction"]["recall"] = 2.0
+        catalog_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        result = _handle_configure_desires(
+            str(catalog_path),
+            {
+                "action": "set_sentence",
+                "desire_id": "curiosity",
+                "direction": "settling",
+                "sentence": "Quiet again.",
+            },
+        )
+
+        assert "Updated curiosity.sentence.settling" in result
+        assert "Catalog still has validation issues:" in result
+        payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        assert payload["fixed_desires"]["curiosity"]["sentence"]["settling"] == "Quiet again."

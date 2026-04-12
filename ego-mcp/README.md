@@ -150,6 +150,7 @@ Top-level keys:
 | `satisfaction_hours` | number | Yes | Recovery time constant for emergent desires after they are satisfied. Must be greater than `0`. |
 | `expiry_hours` | number | Yes | How long an emergent desire can remain unsatisfied before it is considered stale and removed. Must be greater than `0`. |
 | `satisfied_ttl_hours` | number | Yes | How long a satisfied emergent desire is retained before being removed from state. Must be greater than `0`. |
+| `min_recent_memories` | integer | No | Minimum number of recent memories within the time window required to trigger an emergent desire from short-term emotion flow. Default `3`. Must be `>= 1`. |
 
 Validation and parsing rules:
 
@@ -318,7 +319,7 @@ uv run mypy src/ego_mcp/
 ### Upgrading from v0.6.x
 
 See [docs/migration-v1.0.0.md](docs/migration-v1.0.0.md) for the v0.6.x → v1.0.0 migration guide.
-The server runs automatic migrations on startup. If you have a customized `settings/desires.json`, you may need to manually set `settling` sentence templates and `satisfaction_signals` via `configure_desires(action="check")`.
+The server runs automatic migrations on startup. If you have a customized `settings/desires.json`, use `configure_desires(action="check")` to find missing fields, then fill them with `configure_desires(action="set_sentence", ...)` and `configure_desires(action="set_signals", ...)`.
 
 ### `hashlib blake2*` error when running `uv`
 

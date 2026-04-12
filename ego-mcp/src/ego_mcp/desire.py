@@ -83,15 +83,25 @@ def generate_emergent_from_recent_memories(
     engine: DesireEngine,
     memories: list[Memory],
     window_hours: float = 6.0,
-    min_memories: int = 3,
+    min_memories: int | None = None,
 ) -> str | None:
     """Generate an emergent desire from a short-term emotion flow.
 
     Analyses recent memories within *window_hours*, finds the dominant
     emotion + average valence, and maps it to an emergent desire.
     Returns the desire ID if created, or ``None``.
+
+    *min_memories* defaults to ``catalog.emergent.min_recent_memories``
+    (3 if the catalog is unavailable).
     """
     from collections import Counter
+
+    if min_memories is None:
+        try:
+            catalog = engine.require_valid_catalog()
+            min_memories = catalog.emergent.min_recent_memories
+        except Exception:
+            min_memories = 3
 
     now = timezone_utils.now()
     recent: list[Memory] = []

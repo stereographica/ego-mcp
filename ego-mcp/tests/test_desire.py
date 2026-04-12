@@ -786,3 +786,32 @@ class TestGenerateEmergentFromRecentMemories:
         ]
         result = generate_emergent_from_recent_memories(engine, mems)
         assert result is None
+
+    def test_reads_min_recent_memories_from_catalog(self, tmp_path: Path) -> None:
+        """min_memories defaults to catalog.emergent.min_recent_memories."""
+        catalog = default_desire_catalog()
+        payload = catalog.model_dump(mode="json", exclude_none=True)
+        payload["emergent"]["min_recent_memories"] = 2
+        settings_dir = tmp_path / "settings"
+        settings_dir.mkdir()
+        (settings_dir / "desires.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        engine = DesireEngine.from_data_dir(tmp_path)
+        # Only 2 memories — would fail with default min_memories=3, but succeeds with 2
+        mems = [
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=1),
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=2),
+        ]
+        result = generate_emergent_from_recent_memories(engine, mems)
+        assert result is not None
+
+    def test_explicit_min_memories_overrides_catalog(self, tmp_path: Path) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        mems = [
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=1),
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=2),
+        ]
+        # Explicit override to 2 — should succeed
+        result = generate_emergent_from_recent_memories(engine, mems, min_memories=2)
+        assert result is not None

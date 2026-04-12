@@ -16,7 +16,7 @@ from ego_mcp._server_surface_attune import (
 )
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
-from ego_mcp.types import Category, Memory
+from ego_mcp.types import Category, Emotion, EmotionalTrace, Memory
 
 
 @pytest.fixture
@@ -133,6 +133,34 @@ class TestHandleAttune:
         """Lines 160-162: emergent_desire_sentence returns a sentence."""
         engine._state["be_with_someone"] = {"is_emergent": True}
         result = await _handle_attune(config, memory, engine)
+        assert "Emergent pull:" in result
+        assert "You want to be with someone." in result
+
+    @pytest.mark.asyncio
+    async def test_recent_memories_can_trigger_emergent_pull_without_notions(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        sad_memories = [
+            Memory(
+                id=f"m{i}",
+                content="feeling alone tonight",
+                timestamp=(now - timedelta(hours=i + 1)).isoformat(),
+                emotional_trace=EmotionalTrace(
+                    primary=Emotion.SAD,
+                    valence=-0.6,
+                    intensity=0.7,
+                ),
+            )
+            for i in range(3)
+        ]
+        memory.list_recent = AsyncMock(return_value=sad_memories)
+
+        result = await _handle_attune(config, memory, engine)
+
         assert "Emergent pull:" in result
         assert "You want to be with someone." in result
 

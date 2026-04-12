@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ego_mcp._server_surface_core import _handle_wake_up
+from ego_mcp._server_surface_core import (
+    _detect_weakened_notions,
+    _handle_wake_up,
+)
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
+from ego_mcp.types import Notion
 
 
 @pytest.fixture
@@ -129,3 +135,64 @@ class TestHandleWakeUp:
         result = await _handle_wake_up(config, memory, engine)
         # With no memories, embers section should not appear
         assert "Embers:" not in result
+
+    @pytest.mark.asyncio
+    async def test_stale_emergent_desire_not_rendered(
+        self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
+    ) -> None:
+        engine._state["be_with_someone"] = {
+            "is_emergent": True,
+            "created": (datetime.now(timezone.utc) - timedelta(days=10)).isoformat(),
+            "last_satisfied": "",
+            "satisfaction_quality": 0.5,
+            "boost": 0.0,
+            "satisfaction_hours": 24.0,
+        }
+
+        result = await _handle_wake_up(config, memory, engine)
+
+        assert "...be with someone" not in result
+        assert "You want to be with someone." not in result
+
+
+class TestDetectWeakenedNotions:
+    def test_no_previous_snapshot_returns_empty(self, tmp_path: Path) -> None:
+        snapshot = tmp_path / "snap.json"
+        notions = [Notion(id="n1", confidence=0.3)]
+        result = _detect_weakened_notions(notions, snapshot)
+        assert result == []
+
+    def test_detects_confidence_drop(self, tmp_path: Path) -> None:
+        snapshot = tmp_path / "snap.json"
+        snapshot.write_text(json.dumps({"n1": 0.8, "n2": 0.5}))
+        notions = [
+            Notion(id="n1", confidence=0.6),  # dropped 0.2 >= 0.1
+            Notion(id="n2", confidence=0.45),  # dropped 0.05 < 0.1
+        ]
+        result = _detect_weakened_notions(notions, snapshot)
+        assert len(result) == 1
+        assert result[0].id == "n1"
+
+    def test_saves_current_snapshot(self, tmp_path: Path) -> None:
+        snapshot = tmp_path / "snap.json"
+        notions = [Notion(id="n1", confidence=0.7)]
+        _detect_weakened_notions(notions, snapshot)
+        saved = json.loads(snapshot.read_text())
+        assert saved == {"n1": 0.7}
+
+    def test_corrupted_snapshot_treated_as_empty(self, tmp_path: Path) -> None:
+        snapshot = tmp_path / "snap.json"
+        snapshot.write_text("not json")
+        notions = [Notion(id="n1", confidence=0.3)]
+        result = _detect_weakened_notions(notions, snapshot)
+        assert result == []
+
+    def test_notion_removed_since_last_snapshot(self, tmp_path: Path) -> None:
+        snapshot = tmp_path / "snap.json"
+        snapshot.write_text(json.dumps({"n1": 0.8, "n2": 0.9}))
+        # n2 no longer present
+        notions = [Notion(id="n1", confidence=0.8)]
+        result = _detect_weakened_notions(notions, snapshot)
+        assert result == []
+        saved = json.loads(snapshot.read_text())
+        assert "n2" not in saved
