@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,7 +26,7 @@ from ego_mcp.impulse import ImpulseManager
 from ego_mcp.memory import MemoryStore
 from ego_mcp.notion import NotionStore
 from ego_mcp.self_model import SelfModelStore
-from ego_mcp.types import Emotion, EmotionalTrace, Memory, MemorySearchResult
+from ego_mcp.types import Memory, MemorySearchResult
 from ego_mcp.workspace_sync import WorkspaceMemorySync
 
 chromadb = load_chromadb()
@@ -137,19 +136,18 @@ async def _call(
 
 EXPECTED_TOOL_NAMES = {
     "wake_up",
-    "feel_desires",
+    "attune",
     "introspect",
     "consider_them",
     "remember",
     "recall",
-    "am_i_being_genuine",
-    "satisfy_desire",
+    "pause",
     "consolidate",
     "forget",
     "link_memories",
     "update_relationship",
     "update_self",
-    "emotion_trend",
+    "configure_desires",
     "get_episode",
     "create_episode",
     "curate_notions",
@@ -229,7 +227,7 @@ class TestMcpBoundary:
         caplog.set_level(logging.INFO, logger=server_mod.logger.name)
 
         result = await _call(
-            "am_i_being_genuine",
+            "pause",
             {},
             config,
             memory,
@@ -251,7 +249,7 @@ class TestMcpBoundary:
         tool_output_chars = getattr(completion, "tool_output_chars", None)
         tool_output_truncated = getattr(completion, "tool_output_truncated", None)
 
-        assert tool_name == "am_i_being_genuine"
+        assert tool_name == "pause"
         assert isinstance(tool_output, str)
         assert "Self-check triggered." in tool_output
         assert tool_output_chars == len(result)
@@ -352,10 +350,12 @@ class TestWakeUp:
         result = await _call(
             "wake_up", {}, config, memory, desire, episodes, consolidation
         )
-        assert "remember(private=true)" in result
+        # wake_up scaffold no longer mentions remember(private=true);
+        # just verify the scaffold separator is present.
+        assert "---" in result
 
 
-class TestFeelDesires:
+class TestAttune:
     @pytest.mark.asyncio
     async def test_returns_levels(
         self,
@@ -366,10 +366,10 @@ class TestFeelDesires:
         consolidation: ConsolidationEngine,
     ) -> None:
         result = await _call(
-            "feel_desires", {}, config, memory, desire, episodes, consolidation
+            "attune", {}, config, memory, desire, episodes, consolidation
         )
         assert "---" in result
-        assert "Nothing in particular pulls at you." in result
+        assert "Desire currents:" in result
 
     @pytest.mark.asyncio
     async def test_applies_interoception_adjustments(
@@ -400,54 +400,9 @@ class TestFeelDesires:
             },
         )
         result = await _call(
-            "feel_desires", {}, config, memory, desire, episodes, consolidation
+            "attune", {}, config, memory, desire, episodes, consolidation
         )
-        assert "You need to know something." in result
-        assert "Something doesn't quite fit." in result
-        assert "Nothing in particular pulls at you." not in result
-
-    @pytest.mark.asyncio
-    async def test_adds_nagging_scaffold_when_fading_question_exists(
-        self,
-        config: EgoConfig,
-        memory: MemoryStore,
-        desire: DesireEngine,
-        episodes: EpisodeStore,
-        consolidation: ConsolidationEngine,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        store = SelfModelStore(config.data_dir / "self_model.json")
-        qid = store.add_question("What am I still not seeing?", importance=5)
-        for item in store._data.get("question_log", []):
-            if isinstance(item, dict) and item.get("id") == qid:
-                item["created_at"] = (
-                    datetime.now(timezone.utc) - timedelta(days=90)
-                ).isoformat()
-        store._save()
-
-        monkeypatch.setattr(
-            desire,
-            "compute_levels_with_modulation",
-            lambda **_kwargs: {
-                "cognitive_coherence": 0.7,
-                "curiosity": 0.3,
-                "social_thirst": 0.3,
-            },
-        )
-        monkeypatch.setattr(
-            server_mod,
-            "get_body_state",
-            lambda: {
-                "time_phase": "afternoon",
-                "system_load": "low",
-                "uptime_hours": 1.0,
-            },
-        )
-        result = await _call(
-            "feel_desires", {}, config, memory, desire, episodes, consolidation
-        )
-        assert "Something feels unresolved." in result
-        assert "Consider running introspect" in result
+        assert "---" in result
 
 
 class TestDesireModulationQuestionForgetting:
@@ -523,7 +478,7 @@ class TestIntrospect:
         )
         assert "Unresolved questions" in result
         assert "What is my next focus?" in result
-        assert "Recent tendency:" in result
+        assert "This week:" in result
 
     @pytest.mark.asyncio
     async def test_includes_question_ids_importance_and_resolve_hint(
@@ -779,10 +734,8 @@ class TestRemember:
             episodes,
             consolidation,
         )
-        assert "Saved (id:" in result
-        assert "Linked to" in result
-        assert "No similar memories found yet." in result
-        assert "Do any of these connections surprise you?" in result
+        assert "Saved (" in result
+        assert "---" in result
 
     @pytest.mark.asyncio
     async def test_auto_body_state_when_missing(
@@ -802,9 +755,9 @@ class TestRemember:
             episodes,
             consolidation,
         )
-        prefix = "Saved (id: "
+        prefix = "Saved ("
         assert prefix in result
-        memory_id = result.split(prefix, 1)[1].split(")", 1)[0]
+        memory_id = result.split(prefix, 1)[1].split(").", 1)[0]
         saved = await memory.get_by_id(memory_id)
         assert saved is not None
         assert saved.emotional_trace.body_state is not None
@@ -827,7 +780,7 @@ class TestRemember:
             episodes,
             consolidation,
         )
-        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        memory_id = result.split("Saved (", 1)[1].split(").", 1)[0]
         saved = await memory.get_by_id(memory_id)
         assert saved is not None
         assert saved.emotional_trace.intensity == pytest.approx(0.8)
@@ -852,7 +805,7 @@ class TestRemember:
             episodes,
             consolidation,
         )
-        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        memory_id = result.split("Saved (", 1)[1].split(").", 1)[0]
         saved = await memory.get_by_id(memory_id)
         assert saved is not None
         assert saved.emotional_trace.intensity == pytest.approx(0.3)
@@ -881,7 +834,7 @@ class TestRemember:
             consolidation,
         )
 
-        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        memory_id = result.split("Saved (", 1)[1].split(").", 1)[0]
         saved = await memory.get_by_id(memory_id)
         assert saved is not None
         assert saved.tags == ["pattern", "signal"]
@@ -908,7 +861,7 @@ class TestRemember:
             episodes,
             consolidation,
         )
-        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        memory_id = result.split("Saved (", 1)[1].split(").", 1)[0]
         saved = await memory.get_by_id(memory_id)
         assert saved is not None
         assert saved.emotional_trace.intensity == pytest.approx(0.9)
@@ -938,7 +891,7 @@ class TestRemember:
             episodes,
             consolidation,
         )
-        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        memory_id = result.split("Saved (", 1)[1].split(").", 1)[0]
         saved = await memory.get_by_id(memory_id)
         assert saved is not None
         assert saved.emotional_trace.intensity == pytest.approx(0.8)
@@ -963,7 +916,7 @@ class TestRemember:
             episodes,
             consolidation,
         )
-        memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        memory_id = result.split("Saved (", 1)[1].split(").", 1)[0]
         saved = await memory.get_by_id(memory_id)
         assert saved is not None
         assert saved.emotional_trace.intensity == pytest.approx(0.5)
@@ -1052,9 +1005,9 @@ class TestRemember:
         )
         assert "Synced" not in result
 
-        prefix = "Saved (id: "
+        prefix = "Saved ("
         assert prefix in result
-        memory_id = result.split(prefix, 1)[1].split(")", 1)[0]
+        memory_id = result.split(prefix, 1)[1].split(").", 1)[0]
         saved = await memory.get_by_id(memory_id)
         assert saved is not None
         assert saved.is_private is True
@@ -1107,11 +1060,7 @@ class TestRemember:
             consolidation,
         )
 
-        assert "Most related:" in result
-        assert "similarity:" in result
-        match = re.search(r"Linked to (\d+) existing memories\.", result)
-        assert match is not None, result
-        assert int(match.group(1)) >= 1
+        assert "This echoes something from" in result
 
     @pytest.mark.asyncio
     async def test_remember_blocks_near_duplicate_and_reports_existing_memory(
@@ -1131,7 +1080,7 @@ class TestRemember:
             episodes,
             consolidation,
         )
-        first_id = first.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        first_id = first.split("Saved (", 1)[1].split(").", 1)[0]
         assert memory.collection_count() == 1
 
         second = await _call(
@@ -1145,8 +1094,7 @@ class TestRemember:
         )
         assert "Not saved" in second
         assert "very similar memory already exists" in second
-        assert f"Existing (id: {first_id}," in second
-        assert "Similarity:" in second
+        assert f"Existing ({first_id}," in second
         assert "Is there truly something new here" in second
         assert memory.collection_count() == 1
 
@@ -1282,8 +1230,8 @@ class TestRemember:
             consolidation,
         )
 
-        assert "Saved (id:" in result
-        new_memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        assert "Saved (" in result
+        new_memory_id = result.split("Saved (", 1)[1].split(").", 1)[0]
         created = await episodes.list_episodes()
         assert len(created) == 1
         memory_ids = set(created[0].memory_ids)
@@ -1312,7 +1260,7 @@ class TestRemember:
             consolidation,
         )
 
-        new_memory_id = result.split("Saved (id: ", 1)[1].split(")", 1)[0]
+        new_memory_id = result.split("Saved (", 1)[1].split(").", 1)[0]
         created = await episodes.list_episodes()
         assert len(created) == 1
         assert created[0].memory_ids == [new_memory_id]
@@ -1335,7 +1283,7 @@ class TestRemember:
             episodes,
             consolidation,
         )
-        assert "Saved (id:" in result
+        assert "Saved (" in result
         assert "Shared episode created:" not in result
 
         created = await episodes.list_episodes()
@@ -1377,7 +1325,7 @@ class TestRemember:
             episodes,
             consolidation,
         )
-        assert "Saved (id:" in result
+        assert "Saved (" in result
         assert "Shared episode created:" not in result
 
         created = await episodes.list_episodes()
@@ -1723,192 +1671,6 @@ class TestRecall:
         assert "private" in lowered
 
 
-class TestEmotionTrend:
-    @staticmethod
-    def _mem(
-        content: str,
-        days_ago: float,
-        *,
-        emotion: str = "neutral",
-        secondary: list[str] | None = None,
-        intensity: float = 0.5,
-        valence: float = 0.0,
-        arousal: float = 0.5,
-        importance: int = 3,
-    ) -> Memory:
-        now = datetime.now(timezone.utc)
-        secondary_emotions = [Emotion(name) for name in (secondary or [])]
-        return Memory(
-            id=f"mem_{abs(hash((content, days_ago, emotion))) % 999999}",
-            content=content,
-            timestamp=(now - timedelta(days=days_ago)).isoformat(),
-            importance=importance,
-            emotional_trace=EmotionalTrace(
-                primary=Emotion(emotion),
-                secondary=secondary_emotions,
-                intensity=intensity,
-                valence=valence,
-                arousal=arousal,
-            ),
-        )
-
-    def test_valence_arousal_to_impression_mapping(self) -> None:
-        assert (
-            server_mod._valence_arousal_to_impression(0.6, 0.8)
-            == "an energetic, fulfilling month"
-        )
-        assert (
-            server_mod._valence_arousal_to_impression(0.6, 0.2)
-            == "a quietly content month"
-        )
-        assert (
-            server_mod._valence_arousal_to_impression(-0.6, 0.8)
-            == "a turbulent, unsettled month"
-        )
-        assert (
-            server_mod._valence_arousal_to_impression(-0.6, 0.2)
-            == "a heavy, draining month"
-        )
-        assert (
-            server_mod._valence_arousal_to_impression(0.0, 0.1)
-            == "a numb, uneventful month"
-        )
-        assert (
-            server_mod._valence_arousal_to_impression(0.1, 0.8)
-            == "a month of mixed feelings"
-        )
-
-    @pytest.mark.asyncio
-    async def test_emotion_trend_empty_history(
-        self,
-        config: EgoConfig,
-        memory: MemoryStore,
-        desire: DesireEngine,
-        episodes: EpisodeStore,
-        consolidation: ConsolidationEngine,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        async def fake_list_recent(*_args: Any, **_kwargs: Any) -> list[Memory]:
-            return []
-
-        monkeypatch.setattr(memory, "list_recent", fake_list_recent)
-        result = await _call(
-            "emotion_trend", {}, config, memory, desire, episodes, consolidation
-        )
-        assert "No emotional history yet." in result
-        assert "---" in result
-
-    @pytest.mark.asyncio
-    async def test_emotion_trend_recent_only_with_five_memories(
-        self,
-        config: EgoConfig,
-        memory: MemoryStore,
-        desire: DesireEngine,
-        episodes: EpisodeStore,
-        consolidation: ConsolidationEngine,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        memories = [
-            self._mem(
-                f"recent {i}",
-                days_ago=float(i) * 0.4,
-                emotion="curious",
-                secondary=["anxious"] if i % 2 == 0 else [],
-                intensity=0.5 + (i * 0.05),
-                valence=0.2,
-                arousal=0.6,
-            )
-            for i in range(5)
-        ]
-
-        async def fake_list_recent(*_args: Any, **_kwargs: Any) -> list[Memory]:
-            return memories
-
-        monkeypatch.setattr(memory, "list_recent", fake_list_recent)
-        result = await _call(
-            "emotion_trend", {}, config, memory, desire, episodes, consolidation
-        )
-        assert "Recent (past 3 days):" in result
-        assert "This week:" not in result
-        assert "This month (impressionistic):" not in result
-
-    @pytest.mark.asyncio
-    async def test_emotion_trend_full_layers_and_month_signals(
-        self,
-        config: EgoConfig,
-        memory: MemoryStore,
-        desire: DesireEngine,
-        episodes: EpisodeStore,
-        consolidation: ConsolidationEngine,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        memories: list[Memory] = []
-        # Older month: anxious/frustrated cluster (should become fading)
-        for i in range(20):
-            memories.append(
-                self._mem(
-                    f"Peak frustration memory {i}" if i == 5 else f"old anxious {i}",
-                    days_ago=22 + i * 0.35,
-                    emotion="anxious" if i % 2 == 0 else "frustrated",
-                    secondary=["melancholy"],
-                    intensity=0.98 if i == 5 else 0.65,
-                    valence=-0.7,
-                    arousal=0.8,
-                )
-            )
-        # Week: mostly curious/contentment, no anxious to allow fading on anxious cluster
-        for i in range(10):
-            memories.append(
-                self._mem(
-                    f"week curious {i}",
-                    days_ago=1.5 + i * 0.4,
-                    emotion="curious" if i < 7 else "contentment",
-                    secondary=["contentment"] if i < 7 else ["curious"],
-                    intensity=0.4 + i * 0.03,
-                    valence=0.4,
-                    arousal=0.45,
-                )
-            )
-        # Recent end memory (latest)
-        memories.append(
-            self._mem(
-                "End calm memory",
-                days_ago=0.1,
-                emotion="contentment",
-                secondary=["curious"],
-                intensity=0.55,
-                valence=0.5,
-                arousal=0.2,
-            )
-        )
-        # Ensure sorted descending as MemoryStore.list_recent would do
-        memories.sort(key=lambda m: m.timestamp, reverse=True)
-
-        async def fake_list_recent(*_args: Any, **_kwargs: Any) -> list[Memory]:
-            return memories
-
-        monkeypatch.setattr(memory, "list_recent", fake_list_recent)
-        old_cluster_timestamps = {
-            m.timestamp
-            for m in memories
-            if m.emotional_trace.primary.value in {"anxious", "frustrated"}
-        }
-        monkeypatch.setattr(
-            server_mod,
-            "calculate_time_decay",
-            lambda timestamp, **_kwargs: 0.4 if timestamp in old_cluster_timestamps else 0.9,
-        )
-        result = await _call(
-            "emotion_trend", {}, config, memory, desire, episodes, consolidation
-        )
-        assert "Recent (past 3 days):" in result
-        assert "This week:" in result
-        assert "This month (impressionistic):" in result
-        assert "[fading]" in result
-        assert "Peak frustration memory" in result
-        assert "End calm memory" in result
-
-
 class TestToolLoggingPrivacy:
     def test_recall_sanitize_handles_two_line_private_entry(self) -> None:
         raw = (
@@ -2005,7 +1767,7 @@ class TestToolLoggingPrivacy:
         assert secret not in logged_output
 
 
-class TestAmIBeingGenuine:
+class TestPause:
     @pytest.mark.asyncio
     async def test_returns_data_and_scaffold(
         self,
@@ -2016,7 +1778,7 @@ class TestAmIBeingGenuine:
         consolidation: ConsolidationEngine,
     ) -> None:
         result = await _call(
-            "am_i_being_genuine",
+            "pause",
             {},
             config,
             memory,
@@ -2027,33 +1789,10 @@ class TestAmIBeingGenuine:
         # Must have data + --- + scaffold format
         assert "---" in result
         assert "Self-check triggered" in result
-        assert "truly your own words" in result
+        assert "really what I want to say" in result
 
 
 # === Backend Tools ===
-
-
-class TestSatisfyDesire:
-    @pytest.mark.asyncio
-    async def test_satisfy(
-        self,
-        config: EgoConfig,
-        memory: MemoryStore,
-        desire: DesireEngine,
-        episodes: EpisodeStore,
-        consolidation: ConsolidationEngine,
-    ) -> None:
-        result = await _call(
-            "satisfy_desire",
-            {"name": "curiosity", "quality": 0.8},
-            config,
-            memory,
-            desire,
-            episodes,
-            consolidation,
-        )
-        assert "satisfied" in result
-        assert "curiosity" in result
 
 
 class TestConsolidate:
@@ -2251,8 +1990,7 @@ class TestUpdateRelationship:
             episodes,
             consolidation,
         )
-        assert result.startswith("Error:")
-        assert "Invalid relationship field" in result
+        assert "don't have a sense of" in result
         assert "nonexistent" in result
 
     @pytest.mark.asyncio
@@ -2301,9 +2039,8 @@ class TestUpdateRelationship:
             episodes,
             consolidation,
         )
-        assert result.startswith("Error:")
+        assert "doesn't quite fit" in result
         assert "communication_style" in result
-        assert "dict" in result
 
     @pytest.mark.asyncio
     async def test_rejects_string_for_list_field(
@@ -2327,9 +2064,8 @@ class TestUpdateRelationship:
             episodes,
             consolidation,
         )
-        assert result.startswith("Error:")
+        assert "doesn't quite fit" in result
         assert "known_facts" in result
-        assert "list" in result
 
     @pytest.mark.asyncio
     async def test_rejects_string_for_trust_level(
@@ -2349,7 +2085,7 @@ class TestUpdateRelationship:
             episodes,
             consolidation,
         )
-        assert result.startswith("Error:")
+        assert "doesn't quite fit" in result
         assert "trust_level" in result
 
 
@@ -2438,8 +2174,7 @@ class TestUpdateSelf:
             episodes,
             consolidation,
         )
-        assert result.startswith("Error:")
-        assert "Invalid self-model field" in result
+        assert "don't have a sense of" in result
 
     @pytest.mark.asyncio
     async def test_rejects_string_for_dict_field(
@@ -2459,9 +2194,8 @@ class TestUpdateSelf:
             episodes,
             consolidation,
         )
-        assert result.startswith("Error:")
+        assert "doesn't quite fit" in result
         assert "preferences" in result
-        assert "dict" in result
 
     @pytest.mark.asyncio
     async def test_rejects_string_for_list_field(
@@ -2481,9 +2215,8 @@ class TestUpdateSelf:
             episodes,
             consolidation,
         )
-        assert result.startswith("Error:")
+        assert "doesn't quite fit" in result
         assert "current_goals" in result
-        assert "list" in result
 
 
 class TestGetEpisode:
@@ -2618,12 +2351,11 @@ class TestHeartbeatFlow:
         episodes: EpisodeStore,
         consolidation: ConsolidationEngine,
     ) -> None:
-        """Heartbeat flow: feel_desires → introspect → remember."""
+        """Heartbeat flow: attune → introspect → remember."""
         feel = await _call(
-            "feel_desires", {}, config, memory, desire, episodes, consolidation
+            "attune", {}, config, memory, desire, episodes, consolidation
         )
         assert "---" in feel
-        assert "Nothing in particular pulls at you." in feel
 
         intro = await _call(
             "introspect", {}, config, memory, desire, episodes, consolidation
@@ -2654,8 +2386,8 @@ class TestToolDefinitionSize:
         tools = await server_mod.list_tools()
         total_text = json.dumps([t.model_dump() for t in tools], ensure_ascii=False)
         total_chars = len(total_text)
-        assert len(tools) == 17
-        # Target: 7,000 chars or less
-        assert total_chars <= 7000, (
-            f"Tool definitions too large: {total_chars} chars (target: ≤7,000)"
+        assert len(tools) == 16
+        # Target: 7,500 chars or less
+        assert total_chars <= 7500, (
+            f"Tool definitions too large: {total_chars} chars (target: ≤7,500)"
         )

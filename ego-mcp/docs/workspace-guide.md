@@ -87,8 +87,8 @@ Keep it minimal. ego-mcp's tool responses will guide the AI's thinking.
 ```markdown
 ## ego-mcp usage
 - Session start: `wake_up` → `introspect` → save reflection with `remember`
-- Heartbeat: `feel_desires` → if needed `introspect` → act or HEARTBEAT_OK
-- Before responding (important conversations): `consider_them` → `am_i_being_genuine`
+- Heartbeat: `attune` → if needed `introspect` → act or HEARTBEAT_OK
+- Before responding (important conversations): `consider_them` → `pause`
 - After significant experiences: `remember` to save
 ```
 
@@ -101,8 +101,8 @@ Keep it minimal. ego-mcp's tool responses will guide the AI's thinking.
 ```markdown
 ## Heartbeat Checklist
 
-1. Call `feel_desires` to check your current state
-2. If any desire is high, call `introspect` to reflect
+1. Call `attune` to check your current state
+2. If any desire is rising, call `introspect` to reflect
 3. If you want to act on a desire, do so naturally
 4. If nothing needs attention, respond with HEARTBEAT_OK
 ```
@@ -127,9 +127,9 @@ These files are standard OpenClaw workspace files. ego-mcp does **not** require 
 | Put tool names in SOUL.md | SOUL.md = personality, not behavior. Tool references belong in AGENTS.md only |
 | Write detailed thinking methods in AGENTS.md | Thinking guidance is provided by tool responses at the right moment |
 | Create long workflows in skills/ | ego-mcp tools provide progressive disclosure. Complex flows are unnecessary |
-| Describe desire handling rules in prompts | `feel_desires` returns appropriate scaffolding. Duplicating it wastes tokens |
+| Describe desire handling rules in prompts | `attune` returns appropriate scaffolding. Duplicating it wastes tokens |
 | Write question resolution steps in prompts | `introspect` scaffolds include `update_self` instructions when needed |
-| Explain emotion_trend usage in workspace files | `introspect` scaffold guides to `emotion_trend` when relevant |
+| Explain emotional analysis in workspace files | `attune` provides emotional texture and desire currents automatically |
 
 ---
 

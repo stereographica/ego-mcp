@@ -10,7 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from ego_mcp.desire import DESIRES, DesireEngine, _calculate_sigmoid_level
+from ego_mcp.desire import (
+    DESIRES,
+    DesireEngine,
+    _calculate_sigmoid_level,
+    generate_emergent_from_recent_memories,
+)
 from ego_mcp.desire_blend import blend_desires
 from ego_mcp.desire_catalog import (
     DesireConfigurationError,
@@ -18,7 +23,7 @@ from ego_mcp.desire_catalog import (
     desire_catalog_settings_path,
     load_desire_catalog,
 )
-from ego_mcp.types import Emotion, Notion
+from ego_mcp.types import Emotion, EmotionalTrace, Memory, Notion
 
 
 class TestSigmoidCalculation:
@@ -372,8 +377,9 @@ class TestDesireCatalog:
             "satisfaction_hours": 10,
             "maslow_level": 2,
             "sentence": {
-                "medium": "Something new keeps tugging at you.",
-                "high": "You need something unfamiliar.",
+                "rising": "You need something unfamiliar.",
+                "steady": "Something new keeps tugging at you.",
+                "settling": "The craving for novelty has quieted.",
             },
             "implicit_satisfaction": {"recall": 0.25},
         }
@@ -388,6 +394,7 @@ class TestDesireCatalog:
         levels = engine.compute_levels()
         assert "novelty_drive" in levels
         assert engine.satisfy("novelty_drive", quality=0.8) < 1.0
+        # 0.75 with default ema 0.5: 0.75 > 0.5 + 0.15 → rising
         assert (
             blend_desires(
                 {"novelty_drive": 0.75},
@@ -557,6 +564,107 @@ class TestEmergentDesires:
         assert expired == [stale_name]
         assert stale_name not in engine._state
 
+    # --- EMA tracking tests ---
+
+    def test_ema_level_initialized_to_0_5(self, engine: DesireEngine) -> None:
+        """Every fixed desire starts with ema_level=0.5."""
+        for name, state in engine._state.items():
+            if not state.get("is_emergent", False):
+                assert state.get("ema_level") == 0.5, f"{name} missing ema_level"
+                assert state.get("ema_updated_at") == "", f"{name} missing ema_updated_at"
+
+    def test_ema_levels_property(self, engine: DesireEngine) -> None:
+        """ema_levels property returns dict of {name: float}."""
+        ema = engine.ema_levels
+        assert isinstance(ema, dict)
+        for name in DESIRES:
+            assert name in ema
+            assert ema[name] == 0.5
+
+    def test_ema_updated_in_compute_levels(self, engine: DesireEngine) -> None:
+        """compute_levels_with_modulation updates EMA when interval has elapsed."""
+        # Set a desire to have been satisfied long ago so level is high
+        engine._state["curiosity"]["last_satisfied"] = (
+            datetime.now(timezone.utc) - timedelta(hours=48)
+        ).isoformat()
+        # Set ema_updated_at far enough in the past (>30 min)
+        engine._state["curiosity"]["ema_updated_at"] = (
+            datetime.now(timezone.utc) - timedelta(hours=1)
+        ).isoformat()
+        engine._state["curiosity"]["ema_level"] = 0.5
+
+        engine.compute_levels_with_modulation()
+
+        # EMA should have moved toward the high level (alpha=0.3)
+        new_ema = engine._state["curiosity"]["ema_level"]
+        assert new_ema > 0.5, f"EMA should have risen toward high level, got {new_ema}"
+        assert engine._state["curiosity"]["ema_updated_at"] != ""
+
+    def test_ema_alpha_0_3_weight(self, engine: DesireEngine) -> None:
+        """EMA update uses alpha=0.3: new_ema = 0.3*level + 0.7*old_ema."""
+        old_ema = 0.4
+        engine._state["curiosity"]["ema_level"] = old_ema
+        engine._state["curiosity"]["ema_updated_at"] = (
+            datetime.now(timezone.utc) - timedelta(hours=1)
+        ).isoformat()
+        engine._state["curiosity"]["last_satisfied"] = (
+            datetime.now(timezone.utc) - timedelta(hours=48)
+        ).isoformat()
+
+        levels = engine.compute_levels_with_modulation()
+        current_level = levels["curiosity"]
+        expected_ema = round(0.3 * current_level + 0.7 * old_ema, 6)
+        actual_ema = round(engine._state["curiosity"]["ema_level"], 6)
+        assert actual_ema == expected_ema
+
+    def test_ema_not_updated_within_30_min(self, engine: DesireEngine) -> None:
+        """EMA is NOT updated if less than 30 minutes have passed."""
+        engine._state["curiosity"]["ema_level"] = 0.5
+        engine._state["curiosity"]["ema_updated_at"] = (
+            datetime.now(timezone.utc) - timedelta(minutes=10)
+        ).isoformat()
+
+        engine.compute_levels_with_modulation()
+
+        assert engine._state["curiosity"]["ema_level"] == 0.5
+
+    def test_ema_updated_after_30_min(self, engine: DesireEngine) -> None:
+        """EMA IS updated if 30+ minutes have passed."""
+        engine._state["curiosity"]["ema_level"] = 0.5
+        engine._state["curiosity"]["ema_updated_at"] = (
+            datetime.now(timezone.utc) - timedelta(minutes=31)
+        ).isoformat()
+        engine._state["curiosity"]["last_satisfied"] = (
+            datetime.now(timezone.utc) - timedelta(hours=48)
+        ).isoformat()
+
+        engine.compute_levels_with_modulation()
+
+        assert engine._state["curiosity"]["ema_level"] != 0.5
+
+    def test_ema_persisted_in_state_json(self, engine: DesireEngine) -> None:
+        """EMA fields survive save/load cycle."""
+        engine._state["curiosity"]["ema_level"] = 0.65
+        engine._state["curiosity"]["ema_updated_at"] = "2026-01-01T00:00:00+00:00"
+        engine.save_state()
+
+        engine2 = DesireEngine.from_data_dir(engine._state_path.parent)
+        assert engine2._state["curiosity"]["ema_level"] == 0.65
+        assert engine2._state["curiosity"]["ema_updated_at"] == "2026-01-01T00:00:00+00:00"
+
+    def test_ema_first_call_uses_empty_updated_at(self, engine: DesireEngine) -> None:
+        """When ema_updated_at is empty string, EMA should be updated on first call."""
+        assert engine._state["curiosity"]["ema_updated_at"] == ""
+        engine._state["curiosity"]["last_satisfied"] = (
+            datetime.now(timezone.utc) - timedelta(hours=48)
+        ).isoformat()
+
+        engine.compute_levels_with_modulation()
+
+        # First call should always update since ema_updated_at is empty
+        assert engine._state["curiosity"]["ema_updated_at"] != ""
+        assert engine._state["curiosity"]["ema_level"] != 0.5
+
     def test_expire_emergent_desires_removes_stale_satisfied_entries(
         self, engine: DesireEngine
     ) -> None:
@@ -578,3 +686,132 @@ class TestEmergentDesires:
 
         assert expired == [stale_name]
         assert stale_name not in engine._state
+
+
+def _memory_with_emotion(
+    emotion: Emotion,
+    valence: float,
+    hours_ago: float = 1.0,
+) -> Memory:
+    ts = (
+        datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+    ).isoformat()
+    return Memory(
+        id=f"m-{emotion.value}",
+        content=f"memory about {emotion.value}",
+        timestamp=ts,
+        emotional_trace=EmotionalTrace(
+            primary=emotion,
+            valence=valence,
+            intensity=0.6,
+        ),
+    )
+
+
+class TestGenerateEmergentFromRecentMemories:
+    def test_fewer_than_min_memories_returns_none(self, tmp_path: Path) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        mems = [_memory_with_emotion(Emotion.SAD, -0.5)]
+        result = generate_emergent_from_recent_memories(engine, mems)
+        assert result is None
+
+    def test_negative_dominant_emotion_triggers_desire(self, tmp_path: Path) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        mems = [
+            _memory_with_emotion(Emotion.SAD, -0.6, hours_ago=1),
+            _memory_with_emotion(Emotion.SAD, -0.4, hours_ago=2),
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=3),
+        ]
+        result = generate_emergent_from_recent_memories(engine, mems)
+        assert result is not None
+        assert result == "be_with_someone"
+
+    def test_positive_dominant_emotion_triggers_desire(self, tmp_path: Path) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        mems = [
+            _memory_with_emotion(Emotion.EXCITED, 0.7, hours_ago=1),
+            _memory_with_emotion(Emotion.EXCITED, 0.5, hours_ago=2),
+            _memory_with_emotion(Emotion.EXCITED, 0.6, hours_ago=3),
+        ]
+        result = generate_emergent_from_recent_memories(engine, mems)
+        assert result is not None
+        assert result == "grasp_something"
+
+    def test_old_memories_outside_window_excluded(self, tmp_path: Path) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        mems = [
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=1),
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=2),
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=10),  # outside 6h
+        ]
+        result = generate_emergent_from_recent_memories(engine, mems)
+        # Only 2 within window, below min_memories=3
+        assert result is None
+
+    def test_already_active_desire_not_duplicated(self, tmp_path: Path) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        engine._state["be_with_someone"] = {
+            "is_emergent": True,
+            "created": datetime.now(timezone.utc).isoformat(),
+            "last_satisfied": "",
+            "satisfaction_quality": 0.5,
+            "boost": 0.0,
+            "satisfaction_hours": 24.0,
+        }
+        mems = [
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=1),
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=2),
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=3),
+        ]
+        result = generate_emergent_from_recent_memories(engine, mems)
+        assert result is None
+
+    def test_mixed_emotions_uses_majority(self, tmp_path: Path) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        mems = [
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=1),
+            _memory_with_emotion(Emotion.SAD, -0.6, hours_ago=2),
+            _memory_with_emotion(Emotion.HAPPY, 0.5, hours_ago=3),
+            _memory_with_emotion(Emotion.SAD, -0.4, hours_ago=4),
+        ]
+        result = generate_emergent_from_recent_memories(engine, mems)
+        assert result == "be_with_someone"
+
+    def test_unmapped_emotion_returns_none(self, tmp_path: Path) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        mems = [
+            _memory_with_emotion(Emotion.NEUTRAL, 0.0, hours_ago=1),
+            _memory_with_emotion(Emotion.NEUTRAL, 0.0, hours_ago=2),
+            _memory_with_emotion(Emotion.NEUTRAL, 0.0, hours_ago=3),
+        ]
+        result = generate_emergent_from_recent_memories(engine, mems)
+        assert result is None
+
+    def test_reads_min_recent_memories_from_catalog(self, tmp_path: Path) -> None:
+        """min_memories defaults to catalog.emergent.min_recent_memories."""
+        catalog = default_desire_catalog()
+        payload = catalog.model_dump(mode="json", exclude_none=True)
+        payload["emergent"]["min_recent_memories"] = 2
+        settings_dir = tmp_path / "settings"
+        settings_dir.mkdir()
+        (settings_dir / "desires.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        engine = DesireEngine.from_data_dir(tmp_path)
+        # Only 2 memories — would fail with default min_memories=3, but succeeds with 2
+        mems = [
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=1),
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=2),
+        ]
+        result = generate_emergent_from_recent_memories(engine, mems)
+        assert result is not None
+
+    def test_explicit_min_memories_overrides_catalog(self, tmp_path: Path) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        mems = [
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=1),
+            _memory_with_emotion(Emotion.SAD, -0.5, hours_ago=2),
+        ]
+        # Explicit override to 2 — should succeed
+        result = generate_emergent_from_recent_memories(engine, mems, min_memories=2)
+        assert result is not None

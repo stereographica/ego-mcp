@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -311,6 +312,241 @@ class TestDesireStateSplitMigration:
 
         payload = json.loads((tmp_path / "desire_state.json").read_text(encoding="utf-8"))
         assert set(payload.keys()) == {"curiosity", "You want to feel safe."}
+
+
+class TestDesireCatalogV2Migration:
+    """Tests for 0007_desire_catalog_v2 migration."""
+
+    @pytest.fixture
+    def migration_mod(self) -> object:
+        return __import__(
+            "ego_mcp.migrations.0007_desire_catalog_v2",
+            fromlist=["up", "migrate_catalog_v1_to_v2"],
+        )
+
+    def _catalog_path(self, data_dir: Path) -> Path:
+        return data_dir / "settings" / "desires.json"
+
+    def _write_catalog(self, data_dir: Path, payload: dict[str, Any]) -> None:
+        path = self._catalog_path(data_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _read_catalog(self, data_dir: Path) -> dict[str, Any]:
+        result: dict[str, Any] = json.loads(self._catalog_path(data_dir).read_text(encoding="utf-8"))
+        return result
+
+    def test_medium_becomes_steady_and_high_becomes_rising(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        self._write_catalog(tmp_path, {
+            "version": 1,
+            "fixed_desires": {
+                "curiosity": {
+                    "satisfaction_hours": 18.0,
+                    "maslow_level": 4,
+                    "sentence": {
+                        "medium": "A quiet wondering.",
+                        "high": "Something caught your attention.",
+                    },
+                    "implicit_satisfaction": {},
+                }
+            },
+            "emergent": {"satisfaction_hours": 24.0, "expiry_hours": 72.0, "satisfied_ttl_hours": 168.0},
+        })
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read_catalog(tmp_path)
+        sentence = result["fixed_desires"]["curiosity"]["sentence"]
+        assert sentence["steady"] == "A quiet wondering."
+        assert sentence["rising"] == "Something caught your attention."
+        assert sentence["settling"] == ""
+        assert "medium" not in sentence
+        assert "high" not in sentence
+
+    def test_settling_placeholder_is_empty_string(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        self._write_catalog(tmp_path, {
+            "version": 1,
+            "fixed_desires": {
+                "curiosity": {
+                    "satisfaction_hours": 18.0,
+                    "maslow_level": 4,
+                    "sentence": {"medium": "m", "high": "h"},
+                    "implicit_satisfaction": {},
+                }
+            },
+            "emergent": {"satisfaction_hours": 24.0, "expiry_hours": 72.0, "satisfied_ttl_hours": 168.0},
+        })
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read_catalog(tmp_path)
+        assert result["fixed_desires"]["curiosity"]["sentence"]["settling"] == ""
+
+    def test_satisfaction_signals_default_empty_list(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        self._write_catalog(tmp_path, {
+            "version": 1,
+            "fixed_desires": {
+                "curiosity": {
+                    "satisfaction_hours": 18.0,
+                    "maslow_level": 4,
+                    "sentence": {"medium": "m", "high": "h"},
+                    "implicit_satisfaction": {},
+                }
+            },
+            "emergent": {"satisfaction_hours": 24.0, "expiry_hours": 72.0, "satisfied_ttl_hours": 168.0},
+        })
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read_catalog(tmp_path)
+        assert result["fixed_desires"]["curiosity"]["satisfaction_signals"] == []
+
+    def test_implicit_satisfaction_tool_rename(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        self._write_catalog(tmp_path, {
+            "version": 1,
+            "fixed_desires": {
+                "pattern_seeking": {
+                    "satisfaction_hours": 72.0,
+                    "maslow_level": 2,
+                    "sentence": {"medium": "m", "high": "h"},
+                    "implicit_satisfaction": {"emotion_trend": 0.3, "introspect": 0.2},
+                }
+            },
+            "emergent": {"satisfaction_hours": 24.0, "expiry_hours": 72.0, "satisfied_ttl_hours": 168.0},
+        })
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read_catalog(tmp_path)
+        implicit = result["fixed_desires"]["pattern_seeking"]["implicit_satisfaction"]
+        assert "attune" in implicit
+        assert implicit["attune"] == 0.3
+        assert "emotion_trend" not in implicit
+        assert implicit["introspect"] == 0.2
+
+    def test_implicit_satisfaction_feel_desires_renamed(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        self._write_catalog(tmp_path, {
+            "version": 1,
+            "fixed_desires": {
+                "curiosity": {
+                    "satisfaction_hours": 18.0,
+                    "maslow_level": 4,
+                    "sentence": {"medium": "m", "high": "h"},
+                    "implicit_satisfaction": {"feel_desires": 0.5},
+                }
+            },
+            "emergent": {"satisfaction_hours": 24.0, "expiry_hours": 72.0, "satisfied_ttl_hours": 168.0},
+        })
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read_catalog(tmp_path)
+        implicit = result["fixed_desires"]["curiosity"]["implicit_satisfaction"]
+        assert "attune" in implicit
+        assert "feel_desires" not in implicit
+
+    def test_implicit_rules_tool_rename(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        self._write_catalog(tmp_path, {
+            "version": 1,
+            "fixed_desires": {},
+            "implicit_rules": [
+                {
+                    "tool": "emotion_trend",
+                    "effects": [{"id": "pattern_seeking", "quality": 0.3}],
+                },
+                {
+                    "tool": "remember",
+                    "when": {"category": "introspection"},
+                    "effects": [{"id": "cognitive_coherence", "quality": 0.4}],
+                },
+            ],
+            "emergent": {"satisfaction_hours": 24.0, "expiry_hours": 72.0, "satisfied_ttl_hours": 168.0},
+        })
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read_catalog(tmp_path)
+        assert result["implicit_rules"][0]["tool"] == "attune"
+        assert result["implicit_rules"][1]["tool"] == "remember"
+
+    def test_version_updated_to_2(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        self._write_catalog(tmp_path, {
+            "version": 1,
+            "fixed_desires": {},
+            "emergent": {"satisfaction_hours": 24.0, "expiry_hours": 72.0, "satisfied_ttl_hours": 168.0},
+        })
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read_catalog(tmp_path)
+        assert result["version"] == 2
+
+    def test_idempotent_when_already_v2(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        v2_catalog = {
+            "version": 2,
+            "fixed_desires": {
+                "curiosity": {
+                    "satisfaction_hours": 18.0,
+                    "maslow_level": 4,
+                    "sentence": {"rising": "r", "steady": "s", "settling": "t"},
+                    "implicit_satisfaction": {},
+                    "satisfaction_signals": ["finding an answer"],
+                }
+            },
+            "emergent": {"satisfaction_hours": 24.0, "expiry_hours": 72.0, "satisfied_ttl_hours": 168.0},
+        }
+        self._write_catalog(tmp_path, v2_catalog)
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read_catalog(tmp_path)
+        assert result == v2_catalog
+
+    def test_noop_when_catalog_file_missing(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        # No desires.json at all
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+        assert not self._catalog_path(tmp_path).exists()
+
+    def test_backup_created(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        self._write_catalog(tmp_path, {
+            "version": 1,
+            "fixed_desires": {
+                "curiosity": {
+                    "satisfaction_hours": 18.0,
+                    "maslow_level": 4,
+                    "sentence": {"medium": "m", "high": "h"},
+                    "implicit_satisfaction": {},
+                }
+            },
+            "emergent": {"satisfaction_hours": 24.0, "expiry_hours": 72.0, "satisfied_ttl_hours": 168.0},
+        })
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        backup_path = tmp_path / "settings" / "desires.pre_0007_catalog_v2.json"
+        assert backup_path.exists()
+        backup = json.loads(backup_path.read_text(encoding="utf-8"))
+        assert backup["version"] == 1
 
 
 class TestEmergentDesireIdMigration:

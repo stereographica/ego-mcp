@@ -7,12 +7,12 @@ import re
 import pytest
 
 from ego_mcp.scaffolds import (
-    SCAFFOLD_AM_I_GENUINE,
+    SCAFFOLD_ATTUNE,
     SCAFFOLD_CONSIDER_THEM,
+    SCAFFOLD_CONSOLIDATE,
     SCAFFOLD_CURATE_NOTIONS,
-    SCAFFOLD_EMOTION_TREND,
-    SCAFFOLD_FEEL_DESIRES,
     SCAFFOLD_INTROSPECT,
+    SCAFFOLD_PAUSE,
     SCAFFOLD_REMEMBER,
     SCAFFOLD_WAKE_UP,
     compose_response,
@@ -20,83 +20,120 @@ from ego_mcp.scaffolds import (
     render_with_data,
 )
 
-ALL_SCAFFOLDS = [
+# Surface tool names that must never appear in scaffolds.
+_SURFACE_TOOL_NAMES = {
+    "wake_up",
+    "attune",
+    "introspect",
+    "pause",
+    "consider_them",
+    "curate_notions",
+    "remember",
+    "recall",
+    "consolidate",
+}
+
+# Backend tool names that *may* appear in scaffolds.
+_BACKEND_TOOL_NAMES = {
+    "create_episode",
+    "get_episode",
+    "update_self",
+    "update_relationship",
+    "link_memories",
+    "configure_desires",
+}
+
+# Imperative verbs that should not start scaffold sentences.
+_IMPERATIVE_STARTS = re.compile(
+    r"(?:^|\n)\s*(?:Try|Consider|Use|Run|Start|Save|Check|Remember|Reflect)\b",
+    re.IGNORECASE,
+)
+
+ALL_SURFACE_SCAFFOLDS = [
     SCAFFOLD_WAKE_UP,
-    SCAFFOLD_FEEL_DESIRES,
+    SCAFFOLD_ATTUNE,
     SCAFFOLD_INTROSPECT,
     SCAFFOLD_REMEMBER,
     SCAFFOLD_CONSIDER_THEM,
-    SCAFFOLD_AM_I_GENUINE,
-    SCAFFOLD_EMOTION_TREND,
+    SCAFFOLD_PAUSE,
     SCAFFOLD_CURATE_NOTIONS,
+    SCAFFOLD_CONSOLIDATE,
 ]
 
 
-class TestScaffoldConstants:
-    """Each constant is non-empty."""
+class TestScaffoldDesignPrinciples:
+    """§12.1 design principles: no imperatives, no surface tool names, first-person."""
 
     def test_all_non_empty(self) -> None:
-        for scaffold in ALL_SCAFFOLDS:
-            assert len(scaffold.strip()) > 0, f"Empty scaffold: {scaffold!r}"
+        for scaffold in ALL_SURFACE_SCAFFOLDS:
+            assert len(scaffold.strip()) > 0
 
     def test_no_japanese(self) -> None:
-        """All scaffolds must be English only (no CJK characters)."""
         cjk_pattern = re.compile(r"[\u3000-\u9fff\uf900-\ufaff]")
-        for scaffold in ALL_SCAFFOLDS:
+        for scaffold in ALL_SURFACE_SCAFFOLDS:
             assert not cjk_pattern.search(scaffold), (
                 f"Japanese found in scaffold: {scaffold!r}"
             )
 
-    def test_wake_up_mentions_private_memory_option(self) -> None:
-        assert "remember(private=true)" in SCAFFOLD_WAKE_UP
+    def test_no_imperative_verbs(self) -> None:
+        for scaffold in ALL_SURFACE_SCAFFOLDS:
+            match = _IMPERATIVE_STARTS.search(scaffold)
+            assert match is None, (
+                f"Imperative verb found: {match.group()!r} in {scaffold!r}"
+            )
 
-    def test_introspect_mentions_emotion_trend(self) -> None:
-        assert "Use emotion_trend" in SCAFFOLD_INTROSPECT
+    def test_no_surface_tool_names(self) -> None:
+        for scaffold in ALL_SURFACE_SCAFFOLDS:
+            for name in _SURFACE_TOOL_NAMES:
+                assert name not in scaffold.lower(), (
+                    f"Surface tool name '{name}' found in scaffold: {scaffold!r}"
+                )
 
-    def test_introspect_mentions_genuinely_new_insight_before_remember(self) -> None:
-        assert "genuinely new insight" in SCAFFOLD_INTROSPECT
+    def test_backend_tool_names_allowed_in_introspect(self) -> None:
+        assert "create_episode" in SCAFFOLD_INTROSPECT
+        assert "get_episode" in SCAFFOLD_INTROSPECT
 
-    def test_feel_desires_uses_awareness_prompt_for_satisfy_desire(self) -> None:
-        assert (
-            "Does any urge feel quieter than before? If something feels settled, "
-            "acknowledge it with satisfy_desire."
-        ) in SCAFFOLD_FEEL_DESIRES
-        assert "After acting on a desire, use satisfy_desire." not in SCAFFOLD_FEEL_DESIRES
+    def test_backend_tool_names_allowed_in_remember(self) -> None:
+        assert "create_episode" in SCAFFOLD_REMEMBER
 
-    def test_feel_desires_mentions_predictions(self) -> None:
-        assert "predictions" in SCAFFOLD_FEEL_DESIRES
+    def test_backend_tool_names_allowed_in_consolidate(self) -> None:
+        assert "create_episode" in SCAFFOLD_CONSOLIDATE
 
-    def test_introspect_mentions_predictability(self) -> None:
-        assert "predictability" in SCAFFOLD_INTROSPECT
-        assert "Do your notions still ring true" in SCAFFOLD_INTROSPECT
 
-    def test_consider_them_mentions_predictability(self) -> None:
-        assert "predictability" in SCAFFOLD_CONSIDER_THEM
+class TestScaffoldContent:
+    """Verify key content of each scaffold per §12.2."""
 
-    def test_remember_mentions_causal_link_prompt(self) -> None:
-        assert "link_memories" in SCAFFOLD_REMEMBER
-        lowered = SCAFFOLD_REMEMBER.lower()
-        assert "caused" in lowered or "led to" in lowered
+    def test_wake_up_reflective(self) -> None:
+        assert "stayed with me" in SCAFFOLD_WAKE_UP.lower()
 
-    def test_remember_mentions_post_hoc_satisfy_desire_prompt(self) -> None:
-        assert "satisfy" in SCAFFOLD_REMEMBER
-        assert "Did this action" in SCAFFOLD_REMEMBER
+    def test_attune_self_inquiry(self) -> None:
+        assert "actually feeling" in SCAFFOLD_ATTUNE.lower()
 
-    def test_am_i_genuine_mentions_alignment_with_beliefs(self) -> None:
-        assert "align with what you've come to believe" in SCAFFOLD_AM_I_GENUINE
+    def test_introspect_accumulation(self) -> None:
+        assert "accumulating" in SCAFFOLD_INTROSPECT.lower()
 
-    def test_curate_notions_scaffold_mentions_redundancy_and_labels(self) -> None:
-        assert "redundant or outdated" in SCAFFOLD_CURATE_NOTIONS
-        assert "combined into a stronger concept" in SCAFFOLD_CURATE_NOTIONS
-        assert "accurately capture the underlying insight" in SCAFFOLD_CURATE_NOTIONS
+    def test_pause_self_check(self) -> None:
+        assert "template" in SCAFFOLD_PAUSE.lower()
+        assert "mine" in SCAFFOLD_PAUSE.lower()
+
+    def test_consider_them_empathy(self) -> None:
+        assert "what would I need" in SCAFFOLD_CONSIDER_THEM
+
+    def test_remember_connection(self) -> None:
+        assert "connect" in SCAFFOLD_REMEMBER.lower()
+
+    def test_curate_notions_ring_true(self) -> None:
+        assert "ring true" in SCAFFOLD_CURATE_NOTIONS.lower()
+
+    def test_consolidate_story(self) -> None:
+        assert "story" in SCAFFOLD_CONSOLIDATE.lower()
 
 
 class TestRender:
     """render() replaces {companion_name}."""
 
     def test_replace_companion_name(self) -> None:
-        result = render(SCAFFOLD_FEEL_DESIRES, "Senpai")
-        assert "Senpai" in result
+        result = render(SCAFFOLD_ATTUNE, "Senpai")
         assert "{companion_name}" not in result
 
     def test_no_placeholder_unchanged(self) -> None:
@@ -118,15 +155,7 @@ class TestDataScaffoldFormat:
 
     @pytest.mark.parametrize(
         "template",
-        [
-            SCAFFOLD_WAKE_UP,
-            SCAFFOLD_FEEL_DESIRES,
-            SCAFFOLD_INTROSPECT,
-            SCAFFOLD_CONSIDER_THEM,
-            SCAFFOLD_AM_I_GENUINE,
-            SCAFFOLD_EMOTION_TREND,
-            SCAFFOLD_CURATE_NOTIONS,
-        ],
+        ALL_SURFACE_SCAFFOLDS,
     )
     def test_each_template_supports_data_scaffold_format(self, template: str) -> None:
         data = "runtime-data"

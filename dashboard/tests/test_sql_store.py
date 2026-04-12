@@ -6,7 +6,7 @@ from typing import Any, Literal, cast
 
 import pytest
 
-from ego_dashboard.constants import DESIRE_METRIC_KEYS
+from ego_dashboard.constants import DESIRE_METRIC_KEYS, DESIRE_TELEMETRY_TOOL_NAMES
 from ego_dashboard.desire_catalog import DesireCatalog, DesireCatalogItem
 from ego_dashboard.sql_store import SqlTelemetryStore
 
@@ -256,6 +256,11 @@ def test_sql_store_initialize_ingest_and_checkpoint_methods(
     assert any("CREATE TABLE IF NOT EXISTS dashboard_migrations" in sql for sql, _ in statements)
     assert any(
         "numeric_metrics = numeric_metrics - 'tool_output_chars'" in sql for sql, _ in statements
+    )
+    assert any(
+        "numeric_metrics = numeric_metrics - 'tool_output_chars'" in sql
+        and params == (list(DESIRE_TELEMETRY_TOOL_NAMES),)
+        for sql, params in statements
     )
     assert any("INSERT INTO dashboard_migrations" in sql for sql, _ in statements)
     assert any(
@@ -700,6 +705,68 @@ def test_desire_metric_keys_reads_dynamic_keys_from_feel_desires_events(
     assert keys == ["You want to feel safe.", "curiosity"]
 
 
+def test_desire_metric_keys_reads_dynamic_keys_from_attune_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executed: list[tuple[str, tuple[Any, ...] | None]] = []
+
+    class _CapturingCursor(_FakeCursor):
+        def __init__(self) -> None:
+            super().__init__(
+                rows=[],
+                all_rows=[
+                    (
+                        {
+                            "curiosity": 0.7,
+                            "You want to feel safe.": 0.4,
+                            "impulse_boost_amount": 0.2,
+                        },
+                    )
+                ],
+            )
+
+        def execute(self, *args: object, **kwargs: object) -> None:
+            query = args[0] if args else kwargs.get("query")
+            params = args[1] if len(args) > 1 else kwargs.get("params")
+            sql = str(query)
+            tuple_params = params if isinstance(params, tuple) else None
+            executed.append((sql, tuple_params))
+
+    class _CapturingConnection(_FakeConnection):
+        def __init__(self) -> None:
+            self._cursor = _CapturingCursor()
+
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(None),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _CapturingConnection(),
+    )
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+
+    keys = store.desire_metric_keys(
+        datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 12, 10, tzinfo=UTC),
+    )
+
+    assert keys == ["You want to feel safe.", "curiosity"]
+    desire_queries = [
+        params
+        for sql, params in executed
+        if "tool_name = ANY(%s)" in sql and "event_type = ANY(%s)" in sql
+    ]
+    assert desire_queries == [
+        (
+            datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+            datetime(2026, 1, 1, 12, 10, tzinfo=UTC),
+            list(DESIRE_TELEMETRY_TOOL_NAMES),
+            ["tool_call_completed", "tool_call_failed"],
+        )
+    ]
+
+
 def test_current_and_desire_keys_follow_catalog_and_hide_removed_legacy_fixed_desires(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -768,6 +835,76 @@ def test_current_and_desire_keys_follow_catalog_and_hide_removed_legacy_fixed_de
     )
     keys = store.desire_metric_keys(latest_ts - timedelta(minutes=5), latest_ts)
     assert keys == ["You want to feel safe.", "custom_focus", "social_thirst"]
+
+
+def test_current_uses_latest_attune_desire_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest_ts = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    executed: list[tuple[str, tuple[Any, ...] | None]] = []
+
+    class _CapturingCursor(_FakeCursor):
+        def execute(self, *args: object, **kwargs: object) -> None:
+            query = args[0] if args else kwargs.get("query")
+            params = args[1] if len(args) > 1 else kwargs.get("params")
+            sql = str(query)
+            tuple_params = params if isinstance(params, tuple) else None
+            executed.append((sql, tuple_params))
+
+    class _CapturingConnection(_FakeConnection):
+        def __init__(self) -> None:
+            self._cursor = _CapturingCursor(
+                [
+                    (1, 0),
+                    (5, 0),
+                    (0, 0),
+                    (0, 0),
+                    None,
+                    None,
+                    (
+                        {
+                            "curiosity": 0.8,
+                            "You want to feel safe.": 0.55,
+                            "impulse_boost_amount": 0.15,
+                        },
+                    ),
+                ]
+            )
+
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.Redis.from_url",
+        lambda *_args, **_kwargs: _FakeRedis(
+            json.dumps(
+                {
+                    "ts": latest_ts.isoformat(),
+                    "tool_name": "attune",
+                    "private": False,
+                }
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "ego_dashboard.sql_store.psycopg.connect",
+        lambda *_args, **_kwargs: _CapturingConnection(),
+    )
+
+    store = SqlTelemetryStore("postgresql://unused", "redis://unused")
+    current = store.current()
+
+    assert current["latest_desires"] == {"curiosity": 0.8}
+    assert current["latest_emergent_desires"] == {"You want to feel safe.": 0.55}
+    desire_queries = [
+        params
+        for sql, params in executed
+        if "SELECT numeric_metrics" in sql and "tool_name = ANY(%s)" in sql
+    ]
+    assert desire_queries == [
+        (
+            latest_ts,
+            list(DESIRE_TELEMETRY_TOOL_NAMES),
+            ["tool_call_completed", "tool_call_failed"],
+        )
+    ]
 
 
 def test_notion_history_prefers_per_notion_confidence_mapping(

@@ -12,3 +12,16 @@ DESIRE_METRIC_KEYS: tuple[str, ...] = (
     "expression",
     "curiosity",
 )
+
+# ego-mcp used `feel_desires` historically, then moved desire telemetry into `attune`.
+# Dashboard readers need to understand both so historical and v1.0.0 data render together.
+DESIRE_TELEMETRY_TOOL_NAMES: tuple[str, ...] = (
+    "feel_desires",
+    "attune",
+)
+
+# Only terminal events carry computed desire metrics.
+DESIRE_TERMINAL_EVENT_TYPES: tuple[str, ...] = (
+    "tool_call_completed",
+    "tool_call_failed",
+)

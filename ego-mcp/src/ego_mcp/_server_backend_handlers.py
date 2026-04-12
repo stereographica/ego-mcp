@@ -8,12 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from ego_mcp import timezone_utils
 from ego_mcp._server_context import _relationship_store
 from ego_mcp._server_emotion_formatting import (
-    _format_month_emotion_layer,
-    _format_recent_emotion_layer,
-    _format_week_emotion_layer,
     _relative_time,
     _truncate_for_quote,
 )
@@ -25,7 +21,6 @@ from ego_mcp._server_runtime import (
 from ego_mcp._server_tools import _FIELD_ALIASES
 from ego_mcp.config import EgoConfig
 from ego_mcp.consolidation import ConsolidationEngine
-from ego_mcp.desire import DesireEngine
 from ego_mcp.episode import EpisodeStore
 from ego_mcp.memory import MemoryStore
 from ego_mcp.notion import (
@@ -36,7 +31,6 @@ from ego_mcp.notion import (
 )
 from ego_mcp.scaffolds import (
     SCAFFOLD_CURATE_NOTIONS,
-    SCAFFOLD_EMOTION_TREND,
     compose_response,
 )
 from ego_mcp.self_model import SelfModelStore
@@ -67,14 +61,6 @@ def _set_tool_context(name: str, context: dict[str, object]) -> None:
 
 def pop_tool_context(name: str) -> dict[str, object]:
     return _last_tool_context.pop(name, {})
-
-
-def _handle_satisfy_desire(desire: DesireEngine, args: dict[str, Any]) -> str:
-    """Satisfy a desire."""
-    name = args["name"]
-    quality = args.get("quality", 0.7)
-    new_level = desire.satisfy(name, quality)
-    return f"{name} satisfied (quality: {quality}). New level: {new_level:.2f}"
 
 
 def _load_person_memory_ids(memory: MemoryStore) -> dict[str, set[str]]:
@@ -328,8 +314,16 @@ def _handle_update_relationship(config: EgoConfig, args: dict[str, Any]) -> str:
     relationship_store = _relationship_store(config)
     try:
         relationship_store.update(person, {field_name: value})
-    except (ValueError, TypeError) as exc:
-        return f"Error: {exc}"
+    except ValueError as exc:
+        msg = str(exc)
+        if "Invalid" in msg and "field" in msg:
+            return (
+                f"I don't have a sense of '{original_field}' for relationships. "
+                f"What I can reflect on: {', '.join(sorted(_FIELD_ALIASES.values()))}."
+            )
+        return msg
+    except TypeError:
+        return f"The value for '{original_field}' doesn't quite fit — it may need a different type."
     return f"Updated {person}.{field_name}"
 
 
@@ -366,8 +360,16 @@ def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
 
     try:
         store.update({field_name: value})
-    except (ValueError, TypeError) as exc:
-        return f"Error: {exc}"
+    except ValueError as exc:
+        msg = str(exc)
+        if "Invalid" in msg and "field" in msg:
+            return (
+                f"I don't have a sense of '{field_name}' in my self-model. "
+                f"What I can reflect on: {', '.join(sorted(_SELF_FIELD_ALIASES.values()))}."
+            )
+        return msg
+    except TypeError:
+        return f"The value for '{field_name}' doesn't quite fit — it may need a different type."
     return f"Updated self.{field_name}"
 
 
@@ -439,32 +441,6 @@ def _handle_curate_notions(args: dict[str, Any], notion_store: NotionStore) -> s
         return _compose(f"Renamed {notion_id} to {new_label}")
 
     return _compose(f"Unknown action: {action}")
-
-
-async def _handle_emotion_trend(memory: MemoryStore) -> str:
-    """Analyze emotional patterns over time with graceful degradation."""
-    memories = await memory.list_recent(n=200)
-    total = len(memories)
-    if total == 0:
-        return compose_response("No emotional history yet.", SCAFFOLD_EMOTION_TREND)
-
-    if total < 5:
-        unique_emotions = sorted({m.emotional_trace.primary.value for m in memories})
-        data = (
-            f"Still early - only {total} memories so far.\n"
-            f"Emotions felt: {', '.join(unique_emotions)}\n"
-            "Too few data points for trends."
-        )
-        return compose_response(data, SCAFFOLD_EMOTION_TREND)
-
-    now = timezone_utils.now()
-    sections = [_format_recent_emotion_layer(memories, now=now)]
-    if total >= 15:
-        sections.append(_format_week_emotion_layer(memories, now=now))
-    if total >= 30:
-        sections.append(_format_month_emotion_layer(memories, now=now))
-
-    return compose_response("\n\n".join(sections), SCAFFOLD_EMOTION_TREND)
 
 
 async def _handle_get_episode(

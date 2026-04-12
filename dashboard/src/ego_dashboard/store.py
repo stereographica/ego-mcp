@@ -5,6 +5,7 @@ from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
+from ego_dashboard.constants import DESIRE_TELEMETRY_TOOL_NAMES, DESIRE_TERMINAL_EVENT_TYPES
 from ego_dashboard.desire_catalog import DesireCatalog, default_desire_catalog
 from ego_dashboard.models import DashboardEvent, LogEvent
 from ego_dashboard.telemetry_identity import dashboard_event_dedupe_key, log_event_dedupe_key
@@ -80,18 +81,23 @@ class TelemetryStore:
                 break
         return latest
 
-    def _latest_desire_metrics(self) -> dict[str, float]:
-        source = next(
-            (event for event in reversed(self._events) if event.tool_name == "feel_desires"),
-            None,
-        )
-        if source is None:
+    def _desire_metrics_for_event(self, event: DashboardEvent) -> dict[str, float]:
+        if event.tool_name not in DESIRE_TELEMETRY_TOOL_NAMES:
+            return {}
+        if event.event_type not in DESIRE_TERMINAL_EVENT_TYPES:
             return {}
         desire_metrics: dict[str, float] = {}
-        for key, value in source.numeric_metrics.items():
+        for key, value in event.numeric_metrics.items():
             if self._desire_catalog.is_visible_desire_metric(key):
                 desire_metrics[key] = float(value)
         return desire_metrics
+
+    def _latest_desire_metrics(self) -> dict[str, float]:
+        for event in reversed(self._events):
+            desire_metrics = self._desire_metrics_for_event(event)
+            if desire_metrics:
+                return desire_metrics
+        return {}
 
     def _bucket_events(
         self, events: list[DashboardEvent], start: datetime, end: datetime, bucket: str
@@ -257,11 +263,7 @@ class TelemetryStore:
     def desire_metric_keys(self, start: datetime, end: datetime) -> list[str]:
         keys: set[str] = set()
         for event in self._filtered(start, end):
-            if event.tool_name != "feel_desires":
-                continue
-            for key in event.numeric_metrics:
-                if self._desire_catalog.is_visible_desire_metric(key):
-                    keys.add(key)
+            keys.update(self._desire_metrics_for_event(event))
         return sorted(keys)
 
     def current(self) -> dict[str, object]:

@@ -7,17 +7,17 @@ from typing import Any, Awaitable, Callable
 
 import ego_mcp._server_backend_handlers as _backend_handlers_module
 import ego_mcp._server_emotion_formatting as _emotion_formatting_module
+import ego_mcp._server_surface_attune as _surface_attune_module
 import ego_mcp._server_surface_core as _surface_core_module
 import ego_mcp._server_surface_memory as _surface_memory_module
+from ego_mcp._server_backend_configure_desires import _handle_configure_desires
 from ego_mcp._server_backend_handlers import (
     _handle_consolidate,
     _handle_create_episode,
     _handle_curate_notions,
-    _handle_emotion_trend,
     _handle_forget,
     _handle_get_episode,
     _handle_link_memories,
-    _handle_satisfy_desire,
     _handle_update_relationship,
     _handle_update_self,
 )
@@ -50,10 +50,10 @@ from ego_mcp._server_emotion_formatting import (
 from ego_mcp._server_runtime import configure_runtime_accessors
 from ego_mcp._server_surface_handlers import (
     _REMEMBER_DUPLICATE_PREFIX,
-    _handle_am_i_genuine,
+    _handle_attune,
     _handle_consider_them,
-    _handle_feel_desires,
     _handle_introspect,
+    _handle_pause,
     _handle_recall,
     _handle_remember,
     _handle_wake_up,
@@ -74,6 +74,10 @@ def configure_test_overrides(
     """Apply server-module overrides to split handler modules."""
     _surface_core_module.configure_overrides(
         relationship_snapshot=relationship_snapshot,
+        derive_desire_modulation=derive_desire_modulation,
+        get_body_state_fn=get_body_state,
+    )
+    _surface_attune_module.configure_overrides(
         derive_desire_modulation=derive_desire_modulation,
         get_body_state_fn=get_body_state,
     )
@@ -113,20 +117,19 @@ __all__ = [
     "_relationship_snapshot",
     "_derive_desire_modulation",
     "_handle_wake_up",
-    "_handle_feel_desires",
+    "_handle_attune",
     "_handle_introspect",
     "_handle_consider_them",
     "_handle_remember",
     "_handle_recall",
-    "_handle_am_i_genuine",
-    "_handle_satisfy_desire",
+    "_handle_pause",
     "_handle_consolidate",
     "_handle_curate_notions",
+    "_handle_configure_desires",
     "_handle_forget",
     "_handle_link_memories",
     "_handle_update_relationship",
     "_handle_update_self",
-    "_handle_emotion_trend",
     "_handle_get_episode",
     "_handle_create_episode",
     "configure_runtime_accessors",

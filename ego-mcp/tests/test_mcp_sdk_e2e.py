@@ -16,19 +16,18 @@ from mcp.types import InitializeResult, TextContent
 
 EXPECTED_TOOL_NAMES = {
     "wake_up",
-    "feel_desires",
+    "attune",
     "introspect",
     "consider_them",
     "remember",
     "recall",
-    "am_i_being_genuine",
-    "satisfy_desire",
+    "pause",
+    "configure_desires",
     "consolidate",
     "forget",
     "link_memories",
     "update_relationship",
     "update_self",
-    "emotion_trend",
     "get_episode",
     "create_episode",
     "curate_notions",
@@ -81,7 +80,7 @@ async def test_sdk_list_tools_matches_contract(tmp_path: Path) -> None:
 @pytest.mark.anyio
 async def test_sdk_call_tool_returns_scaffolded_text(tmp_path: Path) -> None:
     async with _open_session(tmp_path) as (session, _init):
-        result = await session.call_tool("am_i_being_genuine", {})
+        result = await session.call_tool("pause", {})
         texts = _extract_texts(result)
         assert len(texts) == 1
         assert "Self-check triggered." in texts[0]
@@ -95,7 +94,7 @@ async def test_sdk_wake_up_smoke(tmp_path: Path) -> None:
         texts = _extract_texts(result)
         assert len(texts) == 1
         assert "No introspection yet." in texts[0]
-        assert "Desires:" in texts[0]
+        assert "Desire currents:" in texts[0]
 
 
 @pytest.mark.anyio
