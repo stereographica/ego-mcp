@@ -69,6 +69,7 @@ _summarize_conversation_tendency = _handlers._summarize_conversation_tendency
 _infer_topics_from_memories = _handlers._infer_topics_from_memories
 _relationship_snapshot = _handlers._relationship_snapshot
 _derive_desire_modulation = _handlers._derive_desire_modulation
+_handle_configure_desires_impl = _handlers._handle_configure_desires
 
 
 def _sync_handler_overrides() -> None:
@@ -136,11 +137,11 @@ async def _handle_wake_up(
     return await _handlers._handle_wake_up(config, memory, desire)
 
 
-async def _handle_feel_desires(
+async def _handle_attune(
     config: EgoConfig, memory: MemoryStore, desire: DesireEngine
 ) -> str:
     _sync_handler_overrides()
-    return await _handlers._handle_feel_desires(config, memory, desire)
+    return await _handlers._handle_attune(config, memory, desire)
 
 
 async def _handle_introspect(
@@ -164,9 +165,10 @@ async def _handle_remember(
     config: EgoConfig,
     memory: MemoryStore,
     args: dict[str, Any],
+    **kwargs: Any,
 ) -> str:
     _sync_handler_overrides()
-    return await _handlers._handle_remember(config, memory, args)
+    return await _handlers._handle_remember(config, memory, args, **kwargs)
 
 
 async def _handle_recall(
@@ -176,12 +178,8 @@ async def _handle_recall(
     return await _handlers._handle_recall(config, memory, args)
 
 
-def _handle_am_i_genuine() -> str:
-    return _handlers._handle_am_i_genuine()
-
-
-def _handle_satisfy_desire(desire: DesireEngine, args: dict[str, Any]) -> str:
-    return _handlers._handle_satisfy_desire(desire, args)
+def _handle_pause() -> str:
+    return _handlers._handle_pause()
 
 
 async def _handle_consolidate(
@@ -210,9 +208,10 @@ def _handle_curate_notions(args: dict[str, Any], notion_store: NotionStore) -> s
     return _handlers._handle_curate_notions(args, notion_store)
 
 
-async def _handle_emotion_trend(memory: MemoryStore) -> str:
-    _sync_handler_overrides()
-    return await _handlers._handle_emotion_trend(memory)
+def _handle_configure_desires(config: EgoConfig, args: dict[str, Any]) -> str:
+    from ego_mcp.desire_catalog import desire_catalog_settings_path
+    catalog_path = desire_catalog_settings_path(config.data_dir)
+    return _handle_configure_desires_impl(str(catalog_path), args)
 
 
 async def _handle_get_episode(
@@ -296,7 +295,7 @@ async def _completion_log_context(
     tool_metadata = get_tool_metadata()
     extra.update(tool_metadata)
     desire_levels = tool_metadata.get("desire_levels")
-    if name == "feel_desires" and isinstance(desire_levels, dict):
+    if name == "attune" and isinstance(desire_levels, dict):
         for key, value in desire_levels.items():
             if isinstance(key, str) and isinstance(value, (int, float)):
                 extra[key] = float(value)
@@ -331,7 +330,7 @@ async def _completion_log_context(
             extra["shared_episodes_count"] = len(relationship.shared_episode_ids)
         except Exception:
             logger.debug("Skipped relationship telemetry snapshot", exc_info=True)
-    if name == "feel_desires" and desire is not None and "desire_levels" not in tool_metadata:
+    if name == "attune" and desire is not None and "desire_levels" not in tool_metadata:
         for key, value in desire.compute_levels().items():
             extra[key] = float(value)
     return extra
@@ -402,7 +401,7 @@ async def _dispatch(
     safe_args = _sanitize_tool_args_for_logging(name, args)
     logger.debug("Routing tool call", extra={"tool_name": name, "tool_args": safe_args})
 
-    if name in {"wake_up", "feel_desires", "introspect", "satisfy_desire"}:
+    if name in {"wake_up", "attune", "introspect"}:
         desire.require_valid_catalog()
 
     def _safe_satisfy_implicit(
@@ -426,8 +425,10 @@ async def _dispatch(
         result = await _handle_wake_up(config, memory, desire)
         _safe_satisfy_implicit("wake_up")
         return result
-    elif name == "feel_desires":
-        return await _handle_feel_desires(config, memory, desire)
+    elif name == "attune":
+        result = await _handle_attune(config, memory, desire)
+        _safe_satisfy_implicit("attune")
+        return result
     elif name == "introspect":
         result = await _handle_introspect(config, memory, desire)
         _safe_satisfy_implicit("introspect")
@@ -437,7 +438,13 @@ async def _dispatch(
         _safe_satisfy_implicit("consider_them")
         return result
     elif name == "remember":
-        result = await _handle_remember(config, memory, args)
+        result = await _handle_remember(
+            config,
+            memory,
+            args,
+            desire_engine=desire,
+            embed_fn=getattr(memory, "_embedding_fn", None),
+        )
         if not result.startswith(_REMEMBER_DUPLICATE_PREFIX):
             _safe_satisfy_implicit("remember", category=args.get("category"))
         return result
@@ -445,11 +452,9 @@ async def _dispatch(
         result = await _handle_recall(config, memory, args)
         _safe_satisfy_implicit("recall")
         return result
-    elif name == "am_i_being_genuine":
-        return _handle_am_i_genuine()
+    elif name == "pause":
+        return _handle_pause()
 
-    elif name == "satisfy_desire":
-        return _handle_satisfy_desire(desire, args)
     elif name == "consolidate":
         result = await _handle_consolidate(memory, consolidation)
         _safe_satisfy_implicit("consolidate")
@@ -466,10 +471,8 @@ async def _dispatch(
         result = _handle_update_self(config, args)
         _safe_satisfy_implicit("update_self")
         return result
-    elif name == "emotion_trend":
-        result = await _handle_emotion_trend(memory)
-        _safe_satisfy_implicit("emotion_trend")
-        return result
+    elif name == "configure_desires":
+        return _handle_configure_desires(config, args)
     elif name == "get_episode":
         return await _handle_get_episode(episodes, memory, args)
     elif name == "create_episode":

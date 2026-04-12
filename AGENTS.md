@@ -47,10 +47,11 @@ uv run python -m ego_mcp
 ### Tool Usage Flow (Minimal)
 
 - Session start: `wake_up` -> `introspect` -> save reflection with `remember`
-- Heartbeat: `feel_desires` -> if needed `introspect` -> act or `HEARTBEAT_OK`
-- Before important responses: `consider_them` -> `am_i_being_genuine`
+- Heartbeat: `attune` -> if needed `introspect` -> act or `HEARTBEAT_OK`
+- Before important responses: `consider_them` -> `pause`
 - After significant experiences: `remember`
 - Periodic self-maintenance: `consolidate` -> if notions feel cluttered `curate_notions`
+- Desire configuration: `configure_desires` (check/show/set_sentence/set_signals)
 
 ## dashboard
 

@@ -1,7 +1,7 @@
 # ego-mcp Tool Reference
 
-> Complete reference for all 17 ego-mcp tools.
-> Surface tools (7) are always visible. Backend tools (10) are guided by surface tool responses.
+> Complete reference for all 16 ego-mcp tools.
+> Surface tools (7) are always visible. Backend tools (9) are guided by surface tool responses.
 
 ---
 
@@ -41,11 +41,11 @@ If something is hard to say yet, you can keep it with remember(private=true).
 
 ---
 
-### 2. `feel_desires`
+### 2. `attune`
 
-**Description:** Check current desire levels and get guidance on what to do.
+**Description:** Unified emotional awareness: texture + desires + interests + body sense.
 
-**When to call:** During heartbeat checks, or before deciding on an action.
+**When to call:** During heartbeat checks, or when you want to sense your current emotional and motivational state.
 
 **inputSchema:**
 
@@ -60,19 +60,23 @@ If something is hard to say yet, you can keep it with remember(private=true).
 **Response example:**
 
 ```
-You need to know something. You want to reach out.
-Something else stirs, but you can't name it.
+Emotional texture (past 3 days):
+  Peak: moved(0.9) — watching sunset together [2d ago]
+  Undercurrent: nostalgic
+
+Desire currents: You need to know something (rising). You want to reach out (steady).
+Emergent pull: Something about this pattern keeps drawing you in.
+Current interests: OpenClaw config, sunset memories, heartbeat tuning
+Body sense: time: morning, load: low
 
 ---
-What is your strongest urge? Should you act on it now?
-Consider Master's current situation. Act naturally. Restraint is also a choice.
-
-Something feels unresolved. You can't quite name it, but there's a nagging feeling.
-Consider running introspect to see if anything surfaces.
+What's actually pulling at you — and what can wait?
+If something keeps surfacing, maybe it's worth sitting with.
 ```
 
-> Desire output uses experiential blend language (e.g., "You need to know something"). Numeric values are still sent to Dashboard telemetry.
-> The "nagging feeling" scaffold appears when fading high-importance questions boost `cognitive_coherence`.
+> Desire output uses 3-direction experiential blend language (rising/steady/settling relative to EMA baseline). Numeric values are still sent to Dashboard telemetry.
+> Emergent pull section only appears when emergent desires are active.
+> Current interests are derived from recent memories, notions, and emergent desires.
 > If `${EGO_MCP_DATA_DIR}/settings/desires.json` is invalid, this tool returns an MCP error that includes the schema error path and reason.
 
 ---
@@ -96,13 +100,16 @@ Consider running introspect to see if anything surfaces.
 **Response example:**
 
 ```
-Recent memories:
-- [yesterday] Discussed OpenClaw config with master (emotion: focused)
-- [2d ago] Watched sunset together (emotion: moved)
+This week:
+  Dominant: curious(5.2), happy(3.8)
+  Undercurrent: anxious(2.0)
+  Shift: neutral → curious (gradual engagement)
 
-Something catches your attention. You want to reach out.
+This month:
+  Tone: a quietly content month.
+  Peak: moved(0.9) — watching sunset [Feb 18]
 
-Conceptual framework:
+Notion landscape:
 - "continuity matters (curious)" confidence: 0.9 → "steady shelter"
 - "steady shelter" confidence: 0.8
 
@@ -114,17 +121,22 @@ Resurfacing (you'd almost forgotten):
 - [q_ghi789] What's the optimal heartbeat interval? (importance: 4, dormant 12 days)
   ↑ Triggered by recent memory about heartbeat config
 
-Recent tendency: leaning toward technical topics, tone=focused.
+Recent episodes:
+- [ep_x1y2z3] First setup of ego-mcp (2 weeks ago, 5 memories)
+
+Desire trend:
+  curiosity: rising, expression: settling
+
+Desire currents: Something catches your attention. You want to reach out.
 
 ---
-Reflect on these in your own words. How do you feel right now?
-If this is a genuinely new insight, save with remember (category: introspection).
-If your self-understanding changed, use update_self.
-Use emotion_trend for a deeper look at your emotional patterns.
-If memory feels fragmented, run consolidate.
-Were your recent expectations met? If things went as predicted, consider satisfying predictability.
+What's been on your mind — and what keeps coming back?
+If this is something new, save it with remember (category: introspection).
+If your self-understanding changed, update_self.
+If memory feels fragmented, consolidate.
 Do your notions still ring true, or has something shifted?
 To resolve a question: update_self(field="resolve_question", value="<question_id>")
+Threads worth revisiting? get_episode can fill in the details.
 ```
 
 > The "Resurfacing" section only appears when `cognitive_coherence` >= 0.6 or when a related memory was recently saved.
@@ -246,6 +258,11 @@ If you're sharing a meaningful moment, capture it with remember(shared_with=...)
       "type": "array",
       "items": { "type": "string" },
       "description": "Freeform tags for this memory (used in Notion reinforcement/weakening)."
+    },
+    "satisfies": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Desire IDs to explicitly satisfy (skip auto-inference)."
     }
   },
   "required": ["content"]
@@ -259,18 +276,19 @@ If you're sharing a meaningful moment, capture it with remember(shared_with=...)
 **Response example:**
 
 ```
-Saved (id: mem_a1b2c3d4). Linked to 3 existing memories.
-Most related:
-- [3d ago] Watched sunset together (similarity: 0.87)
-- [1w ago] Talked about beauty of nature (similarity: 0.72)
-- [2w ago] Felt nostalgic about shared moments (similarity: 0.65)
+Saved (mem_a1b2c3d4).
+Watched sunset together [3d ago] — that same feeling of being moved.
+Talked about beauty of nature [1w ago] — connected by a shared thread.
 
-💭 This triggered a forgotten question: "What's the optimal heartbeat interval?"
-   (dormant for 12 days, importance: 4)
+This triggered a forgotten question: "What's the optimal heartbeat interval?"
+(dormant for 12 days, importance: 4)
+
+Something quieted — a little lighter now.
 
 ---
 Do any of these connections surprise you? Is there a pattern forming?
 That old question seems relevant again — worth revisiting?
+If these memories belong together, create_episode can tie them into a narrative.
 ```
 
 **Response example (near-duplicate blocked):**
@@ -291,7 +309,8 @@ If your understanding has deepened, try expressing what changed specifically.
 > **Remember behavior:**
 > - **Tags parameter**: Freeform tags can be attached to memories. Tags are used in Notion reinforcement/weakening (matching tag overlap triggers confidence updates).
 > - **Episodic resurfacing**: When saving, dormant (decay < 0.3) memories with high semantic similarity may resurface in the response, incrementing their access_count (making them harder to forget).
-> - **Scaffold additions**: Prompts for causal linking (`link_memories`) and post-hoc desire satisfaction (`satisfy_desire`) are included.
+> - **Desire auto-satisfaction**: When the saved memory has positive valence and sufficient intensity, desires whose `satisfaction_signals` semantically match the content are partially satisfied automatically. Explicit `satisfies` parameter bypasses auto-inference.
+> - **Scaffold additions**: Prompts for causal linking (`link_memories`) and episode creation (`create_episode`) are included.
 >
 > Saved memories are automatically logged to `memory/YYYY-MM-DD.md` when workspace sync is enabled.
 > If `category=introspection`, `memory/inner-monologue-latest.md` is also updated.
@@ -303,10 +322,9 @@ If your understanding has deepened, try expressing what changed specifically.
 **Response example (shared episode):**
 
 ```
-Saved (id: mem_a1b2c3d4). Linked to 2 existing memories.
-Most related:
-- [3h ago] Debugging the auth module together (similarity: 0.82)
-- [1d ago] Pair programming session (similarity: 0.71)
+Saved (mem_a1b2c3d4).
+Debugging the auth module together [3h ago] — same collaborative energy.
+Pair programming session [1d ago] — a shared thread.
 
 Shared episode created: ep_x1y2z3 (3 memories, with Master)
 
@@ -410,9 +428,9 @@ If you found a new relation, use link_memories.
 
 ---
 
-### 7. `am_i_being_genuine`
+### 7. `pause`
 
-**Description:** Check if your response is authentic.
+**Description:** Authenticity self-check before responding.
 
 **When to call:** Before responding in important conversations; when you suspect you might be falling into template behavior.
 
@@ -436,11 +454,8 @@ Your convictions:
 - "steady shelter"
 
 ---
-Is this truly your own words?
-Are you falling into a template response?
-Are you answering what they actually need?
-Is there something more honest you could say?
-Does your response align with what you've come to believe?
+What are they actually asking for — and what aren't they saying?
+If I were them, what would I need right now?
 ```
 
 > When no conviction exists yet, the data section stays as just `Self-check triggered.`
@@ -451,16 +466,11 @@ Does your response align with what you've come to believe?
 
 Backend tools are guided by surface tool responses. They appear in the system prompt but are designed to be used only when a surface tool suggests them.
 
-### 8. `satisfy_desire`
+### 8. `configure_desires`
 
-**Description:** Mark a desire as satisfied.
+**Description:** View and edit desire sentence templates and satisfaction signals.
 
-**When to call:** When `feel_desires` indicates a high desire and you've acted on it.
-
-`name` can target any fixed desire ID that exists under `fixed_desires` in `settings/desires.json`.
-It can also target active emergent desire IDs such as `grasp_something`.
-For backward compatibility, legacy emergent sentences such as `You want to grasp something.` are also accepted.
-Any other value, including omitted built-in fixed desires, is treated as nonexistent.
+**When to call:** After `attune` indicates incomplete desire configuration, or to customize desire expression.
 
 **inputSchema:**
 
@@ -468,25 +478,46 @@ Any other value, including omitted built-in fixed desires, is treated as nonexis
 {
   "type": "object",
   "properties": {
-    "name": {
-      "type": "string"
+    "action": {
+      "type": "string",
+      "enum": ["check", "show", "set_sentence", "set_signals"]
     },
-    "quality": {
-      "type": "number",
-      "default": 0.7
+    "desire_id": {
+      "type": "string",
+      "description": "Desire ID (required for show/set_sentence/set_signals)"
+    },
+    "direction": {
+      "type": "string",
+      "enum": ["rising", "steady", "settling"],
+      "description": "Sentence direction (for set_sentence)"
+    },
+    "sentence": {
+      "type": "string",
+      "description": "New sentence template (for set_sentence)"
+    },
+    "signals": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Satisfaction signals (for set_signals)"
     }
   },
-  "required": ["name"]
+  "required": ["action"]
 }
 ```
 
-**Response example:**
+**Response example (`action="check"`):**
 
 ```
-curiosity satisfied (quality: 0.7). New level: 0.25
+Incomplete configuration:
+- curiosity: missing settling sentence
+- expression: missing satisfaction_signals
 ```
 
-> If the desire catalog is invalid, this tool returns an MCP error instead of mutating state.
+**Response example (`action="set_sentence"`):**
+
+```
+Updated curiosity.settling: "The itch to know has settled for now."
+```
 
 ---
 
@@ -715,58 +746,7 @@ Updated self.discovered_values
 
 ---
 
-### 14. `emotion_trend`
-
-**Description:** Analyze emotional patterns over time.
-
-**When to call:** When `introspect` suggests deeper emotional analysis.
-
-**inputSchema:**
-
-```json
-{
-  "type": "object",
-  "properties": {},
-  "required": []
-}
-```
-
-**Response example (30+ memories):**
-
-```
-Recent (past 3 days):
-  Peak: moved(0.9) — watching sunset together [2d ago]
-  - yesterday: curious → contentment (coding together)
-  - 2d ago: deeply moved watching sunset
-  Undercurrent: nostalgic
-
-This week:
-  Dominant: curious(5.2), happy(3.8)
-  Undercurrent: anxious(2.0)
-  Shift: neutral → curious (gradual engagement)
-
-This month:
-  Tone: a quietly content month.
-  Peak: moved(0.9) — watching sunset [Feb 18]
-  End: curious — coding session [yesterday]
-  [fading] anxious appeared briefly but is fading from memory.
-
----
-What patterns do you notice? Any surprises?
-Are the undercurrents telling you something the surface emotions aren't?
-If something feels unresolved, consider running introspect.
-```
-
-> Output adapts to available data (graceful degradation):
-> - 0 memories: "No emotional history yet."
-> - 1-4: emotion list only
-> - 5-14: Recent layer only
-> - 15-29: Recent + This week
-> - 30+: All 3 layers
-
----
-
-### 15. `get_episode`
+### 14. `get_episode`
 
 **Description:** Get episode details.
 
@@ -798,7 +778,7 @@ Importance: 4
 
 ---
 
-### 16. `create_episode`
+### 15. `create_episode`
 
 **Description:** Create episode from memories.
 
@@ -830,7 +810,7 @@ Created episode ep_a1b2c3 with 4 memories.
 
 ---
 
-### 17. `curate_notions`
+### 16. `curate_notions`
 
 **Description:** List, merge, relabel, or delete notions.
 
@@ -921,13 +901,13 @@ Does every label accurately capture the underlying insight?
 
 ```
 Session Start:
-  wake_up → introspect → [emotion_trend] → remember
+  wake_up → introspect → remember
 
 Heartbeat:
-  feel_desires → [introspect] → act or HEARTBEAT_OK
+  attune → [introspect] → act or HEARTBEAT_OK
 
 Before Responding:
-  consider_them → [am_i_being_genuine]
+  consider_them → [pause]
 
 After Significant Experience:
   remember → [create_episode]
@@ -945,9 +925,6 @@ Self-Update:
 Relationship Update:
   consider_them → [update_relationship]
 
-Desire Management:
-  feel_desires → [satisfy_desire]
-
-Emotional Analysis:
-  introspect → [emotion_trend]
+Desire Configuration:
+  configure_desires(action="check") → [set_sentence] → [set_signals]
 ```

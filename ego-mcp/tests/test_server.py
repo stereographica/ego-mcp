@@ -13,6 +13,7 @@ import pytest
 from mcp.types import TextContent
 
 import ego_mcp._server_backend_handlers as backend_handlers_mod
+import ego_mcp._server_surface_attune as attune_surface_mod
 import ego_mcp._server_surface_core as core_surface_mod
 import ego_mcp._server_surface_memory as memory_surface_mod
 import ego_mcp.server as server_mod
@@ -75,7 +76,7 @@ class TestImplicitSatisfactionFromServer:
         before = _seed_high_desire(desire, "expression")
 
         async def fake_handle_remember(
-            _config: object, _memory: object, _args: dict[str, object]
+            _config: object, _memory: object, _args: dict[str, object], **kwargs: object
         ) -> str:
             return "saved"
 
@@ -106,6 +107,7 @@ class TestImplicitSatisfactionFromServer:
             _config: object,
             _memory: object,
             _args: dict[str, object],
+            **kwargs: object,
         ) -> str:
             return "saved despite invalid desires"
 
@@ -160,7 +162,7 @@ class TestImplicitSatisfactionFromServer:
         before = _seed_high_desire(desire, "expression")
 
         async def fake_handle_remember(
-            _config: object, _memory: object, _args: dict[str, object]
+            _config: object, _memory: object, _args: dict[str, object], **kwargs: object
         ) -> str:
             return "Not saved — very similar memory already exists."
 
@@ -524,7 +526,7 @@ class TestImplicitSatisfactionFromServer:
         assert "Impressions of Master:" not in text
 
     @pytest.mark.asyncio
-    async def test_completion_log_context_emits_snapshot_for_non_feel_desires(
+    async def test_completion_log_context_emits_snapshot_for_non_attune(
         self, desire: DesireEngine
     ) -> None:
         class FakeMemoryStore:
@@ -734,7 +736,7 @@ class TestImplicitSatisfactionFromServer:
         assert extra["arousal"] == 0.2
 
     @pytest.mark.asyncio
-    async def test_handle_feel_desires_records_telemetry_and_blends_output(
+    async def test_handle_attune_records_telemetry_and_blends_output(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from ego_mcp.types import Notion
@@ -765,12 +767,22 @@ class TestImplicitSatisfactionFromServer:
                 return {"curiosity": 0.15}
 
         class FakeDesire:
+            _state: dict[str, Any] = {}
+
             def generate_emergent_desires(self, notions: list[Notion]) -> list[str]:
                 assert len(notions) == 1
                 return ["feel_safe"]
 
             def expire_emergent_desires(self) -> list[str]:
                 return ["old emergent desire"]
+
+            @property
+            def ema_levels(self) -> dict[str, float]:
+                return {}
+
+            @property
+            def catalog(self) -> None:
+                return None
 
             def compute_levels_with_modulation(
                 self,
@@ -789,40 +801,51 @@ class TestImplicitSatisfactionFromServer:
                     "cognitive_coherence": 0.3,
                 }
 
-        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
+        class FakeMemoryStore:
+            async def list_recent(self, n: int = 30) -> list[Memory]:
+                return []
+
+        monkeypatch.setattr(attune_surface_mod, "get_notion_store", lambda: FakeNotionStore())
         monkeypatch.setattr(
-            core_surface_mod, "get_impulse_manager", lambda: FakeImpulseManager()
+            attune_surface_mod, "get_impulse_manager", lambda: FakeImpulseManager()
         )
+
         async def fake_derive_desire_modulation(
             _memory: object,
+            *_args: Any,
+            **_kwargs: Any,
         ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
             return {}, {}, {}
 
-        monkeypatch.setattr(server_mod, "_derive_desire_modulation", fake_derive_desire_modulation)
         monkeypatch.setattr(
-            server_mod, "get_body_state", lambda: {"time_phase": "morning", "system_load": "low"}
+            attune_surface_mod,
+            "_derive_desire_modulation_override",
+            fake_derive_desire_modulation,
+        )
+        monkeypatch.setattr(
+            attune_surface_mod,
+            "_get_body_state_override",
+            lambda: {"time_phase": "morning", "system_load": "low"},
         )
 
         config = SimpleNamespace(companion_name="Master", data_dir=tmp_path)
-        text = await server_mod._handle_feel_desires(
+        text = await attune_surface_mod._handle_attune(
             cast(Any, config),
-            cast(Any, object()),
+            cast(Any, FakeMemoryStore()),
             cast(Any, FakeDesire()),
         )
 
         metadata = get_tool_metadata()
-        assert "You need to know something." in text
+        assert "---" in text
+        assert "Desire currents:" in text
+        assert "Recent" in text
         assert metadata["emergent_desire_created"] == "feel_safe"
         assert metadata["emergent_desire_expired"] == "old emergent desire"
-        assert metadata["impulse_boost_triggered"] is True
-        assert metadata["impulse_source_memory_id"] == "mem_proust"
-        assert metadata["impulse_boosted_desire"] == "curiosity"
-        assert metadata["impulse_boost_amount"] == 0.15
         desire_levels = cast(dict[str, float], metadata["desire_levels"])
         assert desire_levels["curiosity"] == 0.8
 
     @pytest.mark.asyncio
-    async def test_handle_feel_desires_does_not_reintroduce_removed_fixed_desires(
+    async def test_handle_attune_does_not_reintroduce_removed_fixed_desires(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -852,32 +875,41 @@ class TestImplicitSatisfactionFromServer:
 
         async def fake_derive_desire_modulation(
             _memory: object,
+            *_args: Any,
+            **_kwargs: Any,
         ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
             return {}, {}, {}
 
-        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
+        class FakeMemoryStore:
+            async def list_recent(self, n: int = 30) -> list[Memory]:
+                return []
+
+        monkeypatch.setattr(attune_surface_mod, "get_notion_store", lambda: FakeNotionStore())
         monkeypatch.setattr(
-            core_surface_mod,
+            attune_surface_mod,
             "get_impulse_manager",
             lambda: FakeImpulseManager(),
         )
-        monkeypatch.setattr(server_mod, "_derive_desire_modulation", fake_derive_desire_modulation)
         monkeypatch.setattr(
-            server_mod,
-            "get_body_state",
+            attune_surface_mod,
+            "_derive_desire_modulation_override",
+            fake_derive_desire_modulation,
+        )
+        monkeypatch.setattr(
+            attune_surface_mod,
+            "_get_body_state_override",
             lambda: {"time_phase": "morning", "system_load": "low"},
         )
 
-        text = await server_mod._handle_feel_desires(
+        text = await attune_surface_mod._handle_attune(
             cast(Any, SimpleNamespace(companion_name="Master", data_dir=tmp_path)),
-            cast(Any, object()),
+            cast(Any, FakeMemoryStore()),
             desire,
         )
 
         metadata = get_tool_metadata()
         desire_levels = cast(dict[str, float], metadata["desire_levels"])
         assert "curiosity" not in desire_levels
-        assert metadata["impulse_boost_triggered"] is False
         assert "You need to know something." not in text
 
     @pytest.mark.asyncio
@@ -929,6 +961,28 @@ class TestImplicitSatisfactionFromServer:
 
 
 class TestWakeUpServerHandler:
+    """Tests for the rewritten _handle_wake_up() which outputs emotional texture,
+    embers, Proust recall, introspection, desire currents, emergent pull, and
+    relationship snapshot."""
+
+    @staticmethod
+    def _patch_wake_up_deps(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Monkeypatch heavy dependencies that _handle_wake_up calls so the
+        tests stay focused on structure and output text."""
+        # generate_embers -> no embers
+        monkeypatch.setattr(core_surface_mod, "generate_embers", lambda *_a, **_k: [])
+        # find_proust_memory -> no involuntary recall
+        async def _no_proust(*_a: Any, **_k: Any) -> None:
+            return None
+
+        monkeypatch.setattr(core_surface_mod, "find_proust_memory", _no_proust)
+        # get_notion_store -> empty (used by _list_notions_safe)
+        class _EmptyNotionStore:
+            def list_all(self) -> list[Notion]:
+                return []
+
+        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: _EmptyNotionStore())
+
     @pytest.mark.asyncio
     async def test_handle_wake_up_prefers_workspace_monologue(
         self,
@@ -938,11 +992,20 @@ class TestWakeUpServerHandler:
             def read_latest_monologue(self) -> tuple[str | None, str | None]:
                 return ("A synced introspection note", "workspace-note")
 
+        call_log: list[dict[str, Any]] = []
+
         class FakeMemoryStore:
-            async def list_recent(self, **_kwargs: Any) -> list[Memory]:
-                pytest.fail("list_recent should not be used when workspace monologue exists")
+            async def list_recent(
+                self, n: int = 10, category_filter: str | None = None
+            ) -> list[Memory]:
+                call_log.append({"n": n, "category_filter": category_filter})
+                return []
 
         class FakeDesire:
+            _state: dict[str, Any] = {}
+            ema_levels: dict[str, float] = {}
+            catalog = None
+
             def compute_levels_with_modulation(self) -> dict[str, float]:
                 return {"curiosity": 0.8}
 
@@ -951,7 +1014,8 @@ class TestWakeUpServerHandler:
         ) -> str:
             return "relationship snapshot"
 
-        monkeypatch.setattr(server_mod, "_workspace_sync", FakeSync())
+        self._patch_wake_up_deps(monkeypatch)
+        monkeypatch.setattr(core_surface_mod, "get_workspace_sync", lambda: FakeSync())
         monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
 
         text = await server_mod._handle_wake_up(
@@ -962,9 +1026,13 @@ class TestWakeUpServerHandler:
 
         assert "Last introspection (workspace-note)" in text
         assert "A synced introspection note" in text
-        assert "Desires: You need to know something." in text
+        assert "Desire currents:" in text
         assert "[high]" not in text
         assert "relationship snapshot" in text
+        # First call should be n=30 for emotional texture
+        assert call_log[0]["n"] == 30
+        # No second list_recent call for introspection (workspace provided it)
+        assert all(c.get("category_filter") != "introspection" for c in call_log)
 
     @pytest.mark.asyncio
     async def test_handle_wake_up_falls_back_to_recent_introspection(
@@ -984,13 +1052,19 @@ class TestWakeUpServerHandler:
 
         class FakeMemoryStore:
             async def list_recent(
-                self, n: int = 1, category_filter: str | None = None
+                self, n: int = 10, category_filter: str | None = None
             ) -> list[Memory]:
-                assert n == 1
-                assert category_filter == "introspection"
-                return [introspection]
+                if n == 30 and category_filter is None:
+                    return []  # emotional texture query
+                if n == 1 and category_filter == "introspection":
+                    return [introspection]
+                return []
 
         class FakeDesire:
+            _state: dict[str, Any] = {}
+            ema_levels: dict[str, float] = {}
+            catalog = None
+
             def compute_levels_with_modulation(self) -> dict[str, float]:
                 return {"cognitive_coherence": 0.75}
 
@@ -999,7 +1073,8 @@ class TestWakeUpServerHandler:
         ) -> str:
             return "relationship snapshot"
 
-        monkeypatch.setattr(server_mod, "_workspace_sync", FakeSync())
+        self._patch_wake_up_deps(monkeypatch)
+        monkeypatch.setattr(core_surface_mod, "get_workspace_sync", lambda: FakeSync())
         monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
 
         text = await server_mod._handle_wake_up(
@@ -1010,7 +1085,7 @@ class TestWakeUpServerHandler:
 
         assert "Last introspection (2026-02-20T12:34)" in text
         assert "Remember this introspection fallback" in text
-        assert "Desires: You need things to make sense." in text
+        assert "Desire currents:" in text
         assert "[mid]" not in text
 
     @pytest.mark.asyncio
@@ -1024,13 +1099,15 @@ class TestWakeUpServerHandler:
 
         class FakeMemoryStore:
             async def list_recent(
-                self, n: int = 1, category_filter: str | None = None
+                self, n: int = 10, category_filter: str | None = None
             ) -> list[Memory]:
-                assert n == 1
-                assert category_filter == "introspection"
                 return []
 
         class FakeDesire:
+            _state: dict[str, Any] = {}
+            ema_levels: dict[str, float] = {}
+            catalog = None
+
             def compute_levels_with_modulation(self) -> dict[str, float]:
                 return {"expression": 0.45}
 
@@ -1039,7 +1116,8 @@ class TestWakeUpServerHandler:
         ) -> str:
             return "relationship snapshot"
 
-        monkeypatch.setattr(server_mod, "_workspace_sync", FakeSync())
+        self._patch_wake_up_deps(monkeypatch)
+        monkeypatch.setattr(core_surface_mod, "get_workspace_sync", lambda: FakeSync())
         monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
 
         text = await server_mod._handle_wake_up(
@@ -1049,96 +1127,8 @@ class TestWakeUpServerHandler:
         )
 
         assert "No introspection yet." in text
-        assert "Desires: Something wants to come out." in text
+        assert "Desire currents:" in text
         assert "[low]" not in text
-
-    @pytest.mark.asyncio
-    async def test_handle_wake_up_includes_notion_baseline(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        class FakeSync:
-            def read_latest_monologue(self) -> tuple[str | None, str | None]:
-                return (None, None)
-
-        class FakeMemoryStore:
-            async def list_recent(
-                self, n: int = 1, category_filter: str | None = None
-            ) -> list[Memory]:
-                assert n == 1
-                assert category_filter == "introspection"
-                return []
-
-        class FakeDesire:
-            def compute_levels_with_modulation(self) -> dict[str, float]:
-                return {"expression": 0.45}
-
-        class FakeNotionStore:
-            def list_all(self) -> list[Notion]:
-                return [
-                    Notion(id="n1", emotion_tone=Emotion.CURIOUS, confidence=0.8),
-                    Notion(id="n2", emotion_tone=Emotion.CURIOUS, confidence=0.7),
-                    Notion(id="n3", emotion_tone=Emotion.CONTENTMENT, confidence=0.6),
-                ]
-
-        async def fake_relationship_snapshot(
-            _config: object, _memory: object, _person: str
-        ) -> str:
-            return "relationship snapshot"
-
-        monkeypatch.setattr(server_mod, "_workspace_sync", FakeSync())
-        monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
-        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
-
-        text = await server_mod._handle_wake_up(
-            cast(Any, SimpleNamespace(companion_name="Master")),
-            cast(Any, FakeMemoryStore()),
-            cast(Any, FakeDesire()),
-        )
-
-        assert "Notion baseline: curious(2), contentment(1)" in text
-
-    @pytest.mark.asyncio
-    async def test_handle_wake_up_omits_notion_baseline_when_store_is_empty(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        class FakeSync:
-            def read_latest_monologue(self) -> tuple[str | None, str | None]:
-                return (None, None)
-
-        class FakeMemoryStore:
-            async def list_recent(
-                self, n: int = 1, category_filter: str | None = None
-            ) -> list[Memory]:
-                assert n == 1
-                assert category_filter == "introspection"
-                return []
-
-        class FakeDesire:
-            def compute_levels_with_modulation(self) -> dict[str, float]:
-                return {"expression": 0.45}
-
-        class FakeNotionStore:
-            def list_all(self) -> list[Notion]:
-                return []
-
-        async def fake_relationship_snapshot(
-            _config: object, _memory: object, _person: str
-        ) -> str:
-            return "relationship snapshot"
-
-        monkeypatch.setattr(server_mod, "_workspace_sync", FakeSync())
-        monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
-        monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
-
-        text = await server_mod._handle_wake_up(
-            cast(Any, SimpleNamespace(companion_name="Master")),
-            cast(Any, FakeMemoryStore()),
-            cast(Any, FakeDesire()),
-        )
-
-        assert "Notion baseline:" not in text
 
     @pytest.mark.asyncio
     async def test_handle_introspect_uses_blended_desire_language(
@@ -1152,6 +1142,10 @@ class TestWakeUpServerHandler:
                 return []
 
         class FakeDesire:
+            @property
+            def ema_levels(self) -> dict[str, float]:
+                return {"social_thirst": 0.5}
+
             def compute_levels_with_modulation(
                 self,
                 *,
@@ -1185,7 +1179,7 @@ class TestWakeUpServerHandler:
             cast(Any, FakeDesire()),
         )
 
-        assert "Desires: You want some company." in text
+        assert "Desire currents: That quiet wish for company." in text
         assert "[high]" not in text
         assert "[mid]" not in text
         assert "[low]" not in text
@@ -1242,6 +1236,10 @@ class TestWakeUpServerHandler:
                 return []
 
         class FakeDesire:
+            @property
+            def ema_levels(self) -> dict[str, float]:
+                return {"social_thirst": 0.5}
+
             def compute_levels_with_modulation(
                 self,
                 *,
@@ -1292,7 +1290,7 @@ class TestWakeUpServerHandler:
             cast(Any, FakeDesire()),
         )
 
-        assert "Conceptual framework:" in text
+        assert "Notion landscape:" in text
         assert '- "Pattern seeking" confidence: 0.8 → "Continuity"' in text
         assert '- "Continuity" confidence: 0.8 → "Pattern seeking"' in text
 
@@ -1415,7 +1413,7 @@ class TestForgetToolServerHandlers:
         assert "use forget to remove it" in text
         assert "If both have value, consider which perspective to keep." in text
 
-    def test_handle_am_i_genuine_includes_convictions(
+    def test_handle_pause_includes_convictions(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -1432,12 +1430,12 @@ class TestForgetToolServerHandlers:
 
         monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
 
-        text = core_surface_mod._handle_am_i_genuine()
+        text = core_surface_mod._handle_pause()
 
         assert "Your convictions:" in text
         assert "Continuity matters" in text
 
-    def test_handle_am_i_genuine_falls_back_without_convictions(
+    def test_handle_pause_falls_back_without_convictions(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -1454,7 +1452,7 @@ class TestForgetToolServerHandlers:
 
         monkeypatch.setattr(core_surface_mod, "get_notion_store", lambda: FakeNotionStore())
 
-        text = core_surface_mod._handle_am_i_genuine()
+        text = core_surface_mod._handle_pause()
 
         assert "Self-check triggered." in text
         assert "Your convictions:" not in text
@@ -1493,7 +1491,7 @@ class TestForgetToolServerHandlers:
         assert "person=Master" in text
         assert "age=2d ago" in text
         assert "---" in text
-        assert "Which notions feel redundant or outdated?" in text
+        assert "Which of these still ring true?" in text
         assert "Deleted notion_1" in deleted
         assert store.get_by_id("notion_1") is None
 

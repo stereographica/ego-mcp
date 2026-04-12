@@ -21,8 +21,8 @@ SURFACE_TOOLS: list[Tool] = [
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
     Tool(
-        name="feel_desires",
-        description="Check current desires.",
+        name="attune",
+        description="Check emotional state, desires, and current interests.",
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
     Tool(
@@ -86,6 +86,13 @@ SURFACE_TOOLS: list[Tool] = [
                         "Keep this memory internal."
                     ),
                 },
+                "satisfies": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Desire IDs to explicitly satisfy (skip auto-inference)."
+                    ),
+                },
             },
             "required": ["content"],
         },
@@ -132,25 +139,13 @@ SURFACE_TOOLS: list[Tool] = [
         },
     ),
     Tool(
-        name="am_i_being_genuine",
+        name="pause",
         description="Check authenticity.",
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
 ]
 
 BACKEND_TOOLS: list[Tool] = [
-    Tool(
-        name="satisfy_desire",
-        description="Mark a desire as satisfied.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"},
-                "quality": {"type": "number", "default": 0.7},
-            },
-            "required": ["name"],
-        },
-    ),
     Tool(
         name="consolidate",
         description="Run consolidation.",
@@ -216,11 +211,6 @@ BACKEND_TOOLS: list[Tool] = [
         },
     ),
     Tool(
-        name="emotion_trend",
-        description="Analyze emotional trends.",
-        inputSchema={"type": "object", "properties": {}, "required": []},
-    ),
-    Tool(
         name="get_episode",
         description="Get episode details.",
         inputSchema={
@@ -268,6 +258,35 @@ BACKEND_TOOLS: list[Tool] = [
                 "person": {
                     "type": "string",
                     "description": "Associate person.",
+                },
+            },
+            "required": ["action"],
+        },
+    ),
+    Tool(
+        name="configure_desires",
+        description="View or configure desire settings.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["check", "set_sentence", "set_signals", "show"],
+                },
+                "desire_id": {"type": "string", "description": "Desire ID."},
+                "direction": {
+                    "type": "string",
+                    "enum": ["rising", "steady", "settling"],
+                    "description": "Direction for set_sentence.",
+                },
+                "sentence": {
+                    "type": "string",
+                    "description": "Sentence text for set_sentence.",
+                },
+                "signals": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Satisfaction signals for set_signals.",
                 },
             },
             "required": ["action"],

@@ -245,26 +245,28 @@ def _format_week_emotion_layer(memories: list[Memory], now: datetime) -> str:
     week = _memories_within_days(memories, 7, now=now)
     lines = ["This week:"]
     if not week:
-        lines.append("  Dominant: not enough recent data")
+        lines.append("  Not enough recent data.")
         return "\n".join(lines)
 
     weighted = count_emotions_weighted(week)
     dominant = sorted(weighted.items(), key=lambda item: item[1], reverse=True)[:2]
     if dominant:
-        lines.append(
-            "  Dominant: " + ", ".join(f"{name}({score:.1f})" for name, score in dominant)
-        )
+        names = " and ".join(name for name, _ in dominant)
+        lines.append(f"  The surface has been mostly {names}.")
 
     secondary_counts = _secondary_weighted_counts(week)
     if secondary_counts:
-        under_name, under_score = max(secondary_counts.items(), key=lambda item: item[1])
-        lines.append(f"  Undercurrent: {under_name}({under_score:.1f})")
+        under_name, _ = max(secondary_counts.items(), key=lambda item: item[1])
+        lines.append(f"  Underneath, a thread of {under_name}.")
 
     chronological = sorted(week, key=lambda m: str(m.timestamp))
     if chronological:
         first_emotion = chronological[0].emotional_trace.primary.value
         last_emotion = chronological[-1].emotional_trace.primary.value
-        lines.append(f"  Shift: {first_emotion} -> {last_emotion}")
+        if first_emotion != last_emotion:
+            lines.append(
+                f"  The week started {first_emotion} and settled into {last_emotion}."
+            )
 
     run_emotion = ""
     run_length = 0
@@ -280,7 +282,7 @@ def _format_week_emotion_layer(memories: list[Memory], now: datetime) -> str:
             cluster_emotion = current
             break
     if cluster_emotion:
-        lines.append(f"  ! Cluster detected: {cluster_emotion} repeated 3+ times")
+        lines.append(f"  A recurring note of {cluster_emotion}.")
 
     return "\n".join(lines)
 
@@ -326,7 +328,7 @@ def _format_month_emotion_layer(memories: list[Memory], now: datetime) -> str:
             ) / len(candidate_memories)
     if fading_emotion and candidate_decay <= 0.5:
         lines.append(
-            f"  [fading] {fading_emotion} appears mostly in older memories and is fading."
+            f"  {fading_emotion.capitalize()} appears mostly in older memories and is fading."
         )
 
     return "\n".join(lines)

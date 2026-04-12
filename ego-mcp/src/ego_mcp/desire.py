@@ -23,7 +23,7 @@ from ego_mcp.emergent_desires import (
     EmergentDesireDefinition,
     canonical_emergent_desire_id,
 )
-from ego_mcp.types import Emotion, Notion
+from ego_mcp.types import Emotion, Memory, Notion
 
 DESIRES: dict[str, dict[str, Any]] = default_desire_catalog().legacy_desires()
 IMPLICIT_SATISFACTION_MAP: dict[str, list[tuple[str, float]]] = {}
@@ -54,6 +54,90 @@ def _emergent_template_for_notion(notion: Notion) -> EmergentDesireDefinition | 
     if emotion == Emotion.NOSTALGIC:
         return EMERGENT_DESIRE_BY_ID["go_back_to_something"]
     return None
+
+
+def _emergent_template_for_emotion(
+    emotion: Emotion, valence: float
+) -> EmergentDesireDefinition | None:
+    """Map an emotion + valence pair to an emergent desire definition.
+
+    Uses the same mapping as ``_emergent_template_for_notion`` but
+    accepts raw emotion/valence rather than a Notion object.
+    """
+    if emotion in {Emotion.MELANCHOLY, Emotion.SAD} and valence < 0:
+        return EMERGENT_DESIRE_BY_ID["be_with_someone"]
+    if emotion == Emotion.FRUSTRATED and valence < 0:
+        return EMERGENT_DESIRE_BY_ID["get_away_from_something"]
+    if emotion == Emotion.ANXIOUS and valence < 0:
+        return EMERGENT_DESIRE_BY_ID["feel_safe"]
+    if emotion in {Emotion.EXCITED, Emotion.CURIOUS} and valence > 0:
+        return EMERGENT_DESIRE_BY_ID["grasp_something"]
+    if emotion in {Emotion.HAPPY, Emotion.CONTENTMENT} and valence > 0:
+        return EMERGENT_DESIRE_BY_ID["stay_in_this"]
+    if emotion == Emotion.NOSTALGIC:
+        return EMERGENT_DESIRE_BY_ID["go_back_to_something"]
+    return None
+
+
+def generate_emergent_from_recent_memories(
+    engine: DesireEngine,
+    memories: list[Memory],
+    window_hours: float = 6.0,
+    min_memories: int = 3,
+) -> str | None:
+    """Generate an emergent desire from a short-term emotion flow.
+
+    Analyses recent memories within *window_hours*, finds the dominant
+    emotion + average valence, and maps it to an emergent desire.
+    Returns the desire ID if created, or ``None``.
+    """
+    from collections import Counter
+
+    now = timezone_utils.now()
+    recent: list[Memory] = []
+    for mem in memories:
+        if not mem.timestamp:
+            continue
+        try:
+            ts = datetime.fromisoformat(mem.timestamp)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=now.tzinfo)
+            age_hours = (now - ts).total_seconds() / 3600
+            if age_hours <= window_hours:
+                recent.append(mem)
+        except ValueError:
+            continue
+
+    if len(recent) < min_memories:
+        return None
+
+    emotion_counts: Counter[Emotion] = Counter()
+    valence_sum = 0.0
+    for mem in recent:
+        emotion_counts[mem.emotional_trace.primary] += 1
+        valence_sum += mem.emotional_trace.valence
+
+    dominant_emotion = emotion_counts.most_common(1)[0][0]
+    avg_valence = valence_sum / len(recent)
+
+    definition = _emergent_template_for_emotion(dominant_emotion, avg_valence)
+    if definition is None:
+        return None
+
+    if engine._is_known_desire(definition.id):
+        return None
+
+    catalog = engine.require_valid_catalog()
+    engine._state[definition.id] = {
+        "last_satisfied": "",
+        "satisfaction_quality": 0.5,
+        "boost": 0.0,
+        "is_emergent": True,
+        "created": now.isoformat(),
+        "satisfaction_hours": catalog.emergent.satisfaction_hours,
+    }
+    engine.save_state()
+    return definition.id
 
 
 def _calculate_sigmoid_level(
@@ -128,6 +212,8 @@ class DesireEngine:
                 "boost": 0.0,
                 "is_emergent": False,
                 "created": "",
+                "ema_level": 0.5,
+                "ema_updated_at": "",
             }
             for name in catalog.fixed_desires
         }
@@ -316,7 +402,48 @@ class DesireEngine:
                 ),
             )
             levels[name] = round(level, 3)
+
+        # Update EMA for each desire (gated by 30-min interval)
+        ema_changed = False
+        for name, level in levels.items():
+            if name not in self._state:
+                continue
+            desire_state = self._state[name]
+            if desire_state.get("is_emergent", False):
+                continue
+            old_ema = float(desire_state.get("ema_level", 0.5))
+            updated_at_str = str(desire_state.get("ema_updated_at", ""))
+            should_update = True
+            if updated_at_str:
+                try:
+                    updated_at = datetime.fromisoformat(updated_at_str)
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.replace(
+                            tzinfo=timezone_utils.app_timezone()
+                        )
+                    minutes_since = (now - updated_at).total_seconds() / 60
+                    if minutes_since < 30:
+                        should_update = False
+                except ValueError:
+                    pass
+            if should_update:
+                new_ema = 0.3 * level + 0.7 * old_ema
+                desire_state["ema_level"] = new_ema
+                desire_state["ema_updated_at"] = now.isoformat()
+                ema_changed = True
+        if ema_changed:
+            self.save_state()
+
         return levels
+
+    @property
+    def ema_levels(self) -> dict[str, float]:
+        """Return current EMA baseline levels for all fixed desires."""
+        return {
+            name: float(state.get("ema_level", 0.5))
+            for name, state in self._state.items()
+            if isinstance(state, dict) and not state.get("is_emergent", False)
+        }
 
     def satisfy(self, name: str, quality: float = 0.7) -> float:
         """Mark a desire as satisfied. Returns new level."""

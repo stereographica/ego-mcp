@@ -6,8 +6,8 @@ ego-mcp provides AI agents with persistent memory, abstract desires, and cogniti
 
 ## Features
 
-- **7 Surface Tools** — `wake_up`, `feel_desires`, `introspect`, `consider_them`, `remember`, `recall`, `am_i_being_genuine`
-- **9 Backend Tools** — `satisfy_desire`, `consolidate`, `forget`, `link_memories`, `update_relationship`, `update_self`, `emotion_trend`, `get_episode`, `create_episode`
+- **7 Surface Tools** — `wake_up`, `attune`, `introspect`, `consider_them`, `remember`, `recall`, `pause`
+- **9 Backend Tools** — `configure_desires`, `consolidate`, `forget`, `link_memories`, `update_relationship`, `update_self`, `curate_notions`, `get_episode`, `create_episode`
 - **Progressive Disclosure** — Surface tools guide the AI to backend tools as needed
 - **Cognitive Scaffolding** — Tool responses include thinking frameworks, not just data
 - **All English Responses** — Saves 2-3x tokens compared to Japanese
@@ -44,32 +44,33 @@ export EGO_MCP_WORKSPACE_DIR="/path/to/openclaw-workspace"
 ### 3. Verify
 
 ```bash
-uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 0.6.2
+uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 1.0.0
 uv run python -m ego_mcp  # Starts the server
 ```
 
 ### 4. Desire Catalog
 
-Starting with `ego-mcp` v0.6.0, fixed desire definitions are stored in `${EGO_MCP_DATA_DIR}/settings/desires.json`.
+Fixed desire definitions are stored in `${EGO_MCP_DATA_DIR}/settings/desires.json`.
 If `settings/` or `settings/desires.json` does not exist at startup, the server generates the current default file directly from the Python schema.
 
-State is now stored separately in `${EGO_MCP_DATA_DIR}/desire_state.json`.
-The old `${EGO_MCP_DATA_DIR}/desires.json` from v0.5.x and earlier is treated as legacy state and safely copied into `desire_state.json` on first startup.
+State is stored separately in `${EGO_MCP_DATA_DIR}/desire_state.json`.
 
 `settings/desires.json` overview:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "fixed_desires": {
     "information_hunger": {
       "display_name": "information hunger",
       "satisfaction_hours": 12,
       "maslow_level": 1,
       "sentence": {
-        "medium": "You want to take something in.",
-        "high": "You're starving for input."
+        "rising": "You're starving for input.",
+        "steady": "You want to take something in.",
+        "settling": "That last intake still lingers."
       },
+      "satisfaction_signals": ["learned something new", "read an article"],
       "implicit_satisfaction": {
         "recall": 0.3
       }
@@ -96,8 +97,8 @@ Top-level keys:
 
 | Key | Type | Required | Description |
 |---|---|---|---|
-| `version` | integer | Yes | Schema version. The current and only valid value is `1`. |
-| `fixed_desires` | object | Yes | Map of fixed desire IDs to their configuration. The object key itself is the desire ID used internally by `ego-mcp`, the dashboard, telemetry, and `satisfy_desire`. |
+| `version` | integer | Yes | Schema version. Current valid value is `2`. |
+| `fixed_desires` | object | Yes | Map of fixed desire IDs to their configuration. The object key itself is the desire ID used internally by `ego-mcp`, the dashboard, and telemetry. |
 | `implicit_rules` | array | Yes | Conditional implicit-satisfaction rules that apply only when a tool call matches a specific condition. Use this for cases that cannot be expressed by a simple per-tool mapping inside one desire. |
 | `emergent` | object | Yes | Timing parameters for emergent desires that are generated from notions rather than listed in `fixed_desires`. |
 
@@ -109,15 +110,17 @@ Top-level keys:
 | `display_name` | string or null | No | Human-readable label used in the dashboard. If omitted, the default catalog uses the desire ID with underscores replaced by spaces. |
 | `satisfaction_hours` | number | Yes | How long the desire takes to naturally rise back toward full pressure after being satisfied. Must be greater than `0`. Smaller values make the desire return faster. |
 | `maslow_level` | integer | Yes | Ordering/grouping level for fixed desires. Must be `>= 1`. The dashboard sorts fixed desires by `(maslow_level, id)`. |
-| `sentence` | object | Yes | Language templates used by deterministic desire blending in `wake_up`, `feel_desires`, `introspect`, and dashboard summaries. |
+| `sentence` | object | Yes | Language templates used by deterministic desire blending in `wake_up`, `attune`, `introspect`, and dashboard summaries. |
+| `satisfaction_signals` | array of string | No | Semantic descriptions of what satisfies this desire. Used by auto-inference in `remember`. Defaults to empty. |
 | `implicit_satisfaction` | object | No | Map from tool name to implicit satisfaction quality for this desire. Each key is a tool name such as `recall` or `consider_them`; each value must be within `0 < quality <= 1`. If omitted, it defaults to an empty object. |
 
 `fixed_desires.<desire_id>.sentence` keys:
 
 | Key | Type | Required | Description |
 |---|---|---|---|
-| `medium` | string | Yes | Sentence used when the desire is present but not at the highest pressure tier. |
-| `high` | string | Yes | Sentence used when the desire is one of the strongest current pressures. |
+| `rising` | string | Yes | Sentence used when the desire is growing stronger (level > EMA baseline + 0.15). |
+| `steady` | string | Yes | Sentence used when the desire is at a stable level. |
+| `settling` | string | Yes | Sentence used when the desire is easing (level < EMA baseline - 0.15). |
 
 `implicit_rules` entry keys:
 
@@ -163,12 +166,12 @@ Editing rules:
 - If you omit a built-in desire, it is hidden in both `ego-mcp` and the dashboard, and any historical state for it is treated as nonexistent.
 - You can adjust the wording, `satisfaction_hours`, and `implicit_satisfaction` of built-in desires.
 - You can add custom fixed desires under `fixed_desires`.
-- `sentence.medium` and `sentence.high` are reflected in the blended language used by the dashboard, `wake_up`, `feel_desires`, and `introspect`.
+- `sentence.rising`, `sentence.steady`, and `sentence.settling` are reflected in the blended language used by the dashboard, `wake_up`, `attune`, and `introspect`.
 
 If the settings violate the schema:
 
 - The server still starts.
-- `wake_up`, `feel_desires`, `introspect`, and `satisfy_desire` return an MCP tool error so the LLM can see the configuration problem.
+- `wake_up`, `attune`, and `introspect` return an MCP tool error so the LLM can see the configuration problem.
 - Tools such as `remember`, where desire updates are only a side effect, continue their main work and skip only the implicit desire update.
 
 ## Connecting to Claude Code
@@ -275,24 +278,24 @@ References:
 | Tool | Description |
 |---|---|
 | `wake_up` | Start a session. Returns last introspection + desire summary |
-| `feel_desires` | Check desire levels with action guidance |
-| `introspect` | Get reflection materials: memories, desires, open questions |
+| `attune` | Unified emotional awareness: texture + desires + interests + body sense |
+| `introspect` | Get reflection materials: emotional layers, desires, open questions |
 | `consider_them` | Think about someone — ToM framework |
 | `remember` | Save a memory with emotion and importance |
 | `recall` | Recall related memories by context |
-| `am_i_being_genuine` | Authenticity self-check |
+| `pause` | Authenticity self-check |
 
 ### Backend Tools (guided by surface tools)
 
 | Tool | Description |
 |---|---|
-| `satisfy_desire` | Mark a desire as satisfied |
+| `configure_desires` | Check/set desire sentence templates and satisfaction signals |
 | `consolidate` | Run memory consolidation |
 | `forget` | Delete a memory by ID |
 | `link_memories` | Link two memories |
 | `update_relationship` | Update relationship model |
 | `update_self` | Update self model |
-| `emotion_trend` | Analyze emotional patterns over time |
+| `curate_notions` | Merge, prune, or reinforce notions |
 | `get_episode` | Get episode details |
 | `create_episode` | Create episode from memories |
 
@@ -312,11 +315,10 @@ uv run mypy src/ego_mcp/
 
 ## Troubleshooting
 
-### Upgrading from v0.5.x
+### Upgrading from v0.6.x
 
-When upgrading from v0.5.x or earlier, you do not need to delete the existing `${EGO_MCP_DATA_DIR}/desires.json`.
-v0.6.0 reads that file as legacy state and migrates it into `${EGO_MCP_DATA_DIR}/desire_state.json`.
-The dashboard also reads `${EGO_MCP_DATA_DIR}/settings/desires.json` as the source of truth for the fixed desire catalog.
+See [docs/migration-v1.0.0.md](docs/migration-v1.0.0.md) for the v0.6.x → v1.0.0 migration guide.
+The server runs automatic migrations on startup. If you have a customized `settings/desires.json`, you may need to manually set `settling` sentence templates and `satisfaction_signals` via `configure_desires(action="check")`.
 
 ### `hashlib blake2*` error when running `uv`
 

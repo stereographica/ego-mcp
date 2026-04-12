@@ -26,6 +26,8 @@ from ego_mcp._server_runtime import (
     update_tool_metadata,
 )
 from ego_mcp.config import EgoConfig
+from ego_mcp.desire import DesireEngine
+from ego_mcp.desire_satisfaction import infer_desire_satisfaction
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
 from ego_mcp.notion import update_notion_from_memory
@@ -131,6 +133,9 @@ async def _handle_remember(
     config: EgoConfig,
     memory: MemoryStore,
     args: dict[str, Any],
+    *,
+    desire_engine: DesireEngine | None = None,
+    embed_fn: Callable[[list[str]], list[list[float]]] | None = None,
 ) -> str:
     """Save a memory with auto-linking."""
     _set_tool_context("remember", {})
@@ -143,7 +148,11 @@ async def _handle_remember(
         if "intensity" in args
         else defaults[0]
     )
-    importance = args.get("importance", 3)
+    raw_importance = args.get("importance", 3)
+    try:
+        importance = max(1, min(5, int(raw_importance)))
+    except (TypeError, ValueError):
+        importance = 3
     category = args.get("category", "daily")
     valence = (
         _float_or_default(args.get("valence"), defaults[1])
@@ -160,6 +169,7 @@ async def _handle_remember(
     tags = _normalize_tags(args.get("tags"))
     shared_with_raw = args.get("shared_with")
     related_memories_raw = args.get("related_memories")
+    satisfies_raw = args.get("satisfies")
 
     mem, num_links, linked_results, duplicate_of = await memory.save_with_auto_link(
         content=content,
@@ -175,19 +185,15 @@ async def _handle_remember(
         private=private,
     )
     if mem is None and duplicate_of is not None:
-        similarity = max(0.0, min(1.0, 1.0 - duplicate_of.distance))
         age = _call_relative_time(duplicate_of.memory.timestamp)
         snippet = _truncate_for_quote(duplicate_of.memory.content, limit=120)
         data = (
             f"{_REMEMBER_DUPLICATE_PREFIX}\n"
-            f"Existing (id: {duplicate_of.memory.id}, {age}): {snippet}\n"
-            f"Similarity: {similarity:.2f}\n"
-            "If this is a meaningful update, use recall to review the existing "
-            "memory and consider whether the new perspective adds value."
+            f"Existing ({duplicate_of.memory.id}, {age}): {snippet}"
         )
         scaffold = (
             "Is there truly something new here, or is this a repetition?\n"
-            "If your understanding has deepened, try expressing what changed specifically."
+            "If something has deepened, what changed?"
         )
         return compose_response(data, scaffold)
 
@@ -215,24 +221,20 @@ async def _handle_remember(
         exclude_ids={mem.id},
     )
     top_links = sorted(linked_results, key=lambda r: r.distance)[:3]
-    if top_links or resurfaced:
-        link_lines = ["Most related:"]
-        for linked_result in top_links:
-            age = _call_relative_time(linked_result.memory.timestamp)
-            snippet = _truncate_for_quote(linked_result.memory.content, limit=70)
-            similarity = max(0.0, min(1.0, 1.0 - linked_result.distance))
-            link_lines.append(
-                f"- [{age}] {snippet} (similarity: {similarity:.2f})"
+    resonance_lines: list[str] = []
+    all_echoes = [*top_links, *resurfaced]
+    for i, echo in enumerate(all_echoes[:2]):
+        age = _call_relative_time(echo.memory.timestamp)
+        snippet = _truncate_for_quote(echo.memory.content, limit=70)
+        if i == 0:
+            resonance_lines.append(
+                f"This echoes something from [{age}]: {snippet}"
             )
-        for resurfaced_result in resurfaced:
-            age = _call_relative_time(resurfaced_result.memory.timestamp)
-            snippet = _truncate_for_quote(resurfaced_result.memory.content, limit=70)
-            link_lines.append(
-                f"- [{age}] {snippet} (decay: {resurfaced_result.decay:.2f})"
+        else:
+            resonance_lines.append(
+                f"And faintly, something from [{age}]: {snippet}"
             )
-        link_section = "\n".join(link_lines)
-    else:
-        link_section = "No similar memories found yet."
+    link_section = "\n".join(resonance_lines) if resonance_lines else ""
 
     forgotten_section = ""
     related_questions = _find_related_forgotten_questions(memory, mem.content)
@@ -291,10 +293,48 @@ async def _handle_remember(
         except Exception as exc:
             logger.warning("Shared episode creation failed: %s", exc)
 
-    data = (
-        f"Saved (id: {mem.id}). Linked to {num_links} existing memories.{sync_note}\n"
-        f"{link_section}{forgotten_section}{shared_episode_section}"
-    )
+    desire_settling_section = ""
+    if desire_engine is not None:
+        satisfies_explicit: list[str] = []
+        if isinstance(satisfies_raw, list):
+            satisfies_explicit = [
+                s.strip() for s in satisfies_raw if isinstance(s, str) and s.strip()
+            ]
+        if satisfies_explicit:
+            for desire_id in satisfies_explicit:
+                try:
+                    desire_engine.satisfy(desire_id, quality=0.5)
+                except ValueError:
+                    logger.warning("Unknown desire in satisfies: %s", desire_id)
+            desire_settling_section = "Putting this into words eased something."
+        elif embed_fn is not None:
+            catalog = getattr(desire_engine, "catalog", None)
+            if catalog is not None:
+                inferred = infer_desire_satisfaction(
+                    content, valence, intensity, catalog, embed_fn
+                )
+                for desire_id, quality in inferred:
+                    try:
+                        desire_engine.satisfy(desire_id, quality=quality)
+                    except ValueError:
+                        logger.warning(
+                            "Inferred unknown desire: %s", desire_id
+                        )
+                if inferred:
+                    desire_settling_section = (
+                        "Something quieted — a little lighter now."
+                    )
+
+    data_parts = [f"Saved ({mem.id}).{sync_note}"]
+    if link_section:
+        data_parts.append(link_section)
+    if forgotten_section:
+        data_parts.append(forgotten_section.strip())
+    if shared_episode_section:
+        data_parts.append(shared_episode_section.strip())
+    if desire_settling_section:
+        data_parts.append(desire_settling_section)
+    data = "\n".join(data_parts)
     if shared_with_provided:
         scaffold = (
             "You recorded a shared experience. Does this change how you understand "

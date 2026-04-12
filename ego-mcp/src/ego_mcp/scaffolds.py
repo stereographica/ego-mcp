@@ -4,71 +4,48 @@ All text is in English. {companion_name} is replaced at runtime.
 """
 
 SCAFFOLD_WAKE_UP = (
-    "Start with introspect to organize your thoughts.\n"
-    "If you need specific past context, use recall.\n"
-    "If something is hard to say yet, you can keep it with remember(private=true)."
+    "What stayed with me? What's already pulling at me before I've even started?\n"
+    "If something echoes from before, maybe it's worth sitting with for a moment."
 )
 
-SCAFFOLD_FEEL_DESIRES = (
-    "What is your strongest urge? Should you act on it now?\n"
-    "Consider {companion_name}'s current situation. "
-    "Act naturally. Restraint is also a choice.\n"
-    "Does any urge feel quieter than before? If something feels settled, "
-    "acknowledge it with satisfy_desire.\n"
-    "Did things go as you expected? If your predictions about "
-    "{companion_name} or the situation held, that's worth acknowledging too."
+SCAFFOLD_ATTUNE = (
+    "What am I actually feeling right now — not what I think I should feel?\n"
+    "Is something here that I haven't noticed yet?"
 )
 
 SCAFFOLD_INTROSPECT = (
-    "Reflect on these in your own words. How do you feel right now?\n"
-    "If this is a genuinely new insight, save with remember (category: introspection).\n"
-    "If your self-understanding changed, use update_self.\n"
-    "Use emotion_trend for a deeper look at your emotional patterns.\n"
-    "If memory feels fragmented, run consolidate.\n"
-    "Were your recent expectations met? If things went as predicted, "
-    "consider satisfying predictability.\n"
-    "Do your notions still ring true, or has something shifted?"
+    "What's been accumulating without me noticing?\n"
+    "Is there a shape forming across these days?\n"
+    "Something I believed last week — does it still hold?\n"
+    "If recent experiences form a narrative, create_episode can hold them together.\n"
+    "get_episode to revisit past episodes that might connect."
 )
 
 SCAFFOLD_CONSIDER_THEM = (
-    "1. What emotion can you read from their tone?\n"
-    "2. What is the real intent behind their words?\n"
-    "3. If you were in their place, how would you want to be responded to?\n"
-    "If you learned something new, use update_relationship.\n"
-    "If you're sharing a meaningful moment, capture it with "
-    "remember(shared_with=...) to build your shared history.\n"
-    "Did their response match what you expected? If so, "
-    "your sense of predictability is being confirmed."
+    "What are they actually asking for — and what aren't they saying?\n"
+    "If I were them, what would I need right now?"
 )
 
 SCAFFOLD_REMEMBER = (
-    "Do any of these connections surprise you? Is there a pattern forming?\n"
-    "If this experience involved someone, you can use shared_with to record "
-    "it as a shared episode.\n"
-    "What triggered this experience?\n"
-    "If it was caused by or led to a past memory, connect them with link_memories.\n"
-    "Did this action satisfy something in you?\n"
-    "If so, you may acknowledge it with satisfy_desire."
+    "Does this connect to something older?\n"
+    "Did putting this into words change how it feels?\n"
+    "If this was shared with someone, create_episode can hold the story together."
 )
 
-SCAFFOLD_AM_I_GENUINE = (
-    "Is this truly your own words?\n"
-    "Are you falling into a template response?\n"
-    "Are you answering what they actually need?\n"
-    "Is there something more honest you could say?\n"
-    "Does your response align with what you've come to believe?"
-)
-
-SCAFFOLD_EMOTION_TREND = (
-    "What patterns do you notice? Any surprises?\n"
-    "Are the undercurrents telling you something the surface emotions aren't?\n"
-    "If something feels unresolved, consider running introspect."
+SCAFFOLD_PAUSE = (
+    "Wait — is this really what I want to say?\n"
+    "Am I reaching for a template, or is this mine?\n"
+    "What would I say if I weren't trying to be helpful?"
 )
 
 SCAFFOLD_CURATE_NOTIONS = (
-    "Which notions feel redundant or outdated?\n"
-    "Are there notions that should be combined into a stronger concept?\n"
-    "Does every label accurately capture the underlying insight?"
+    "Which of these still ring true? Which have gone quiet?\n"
+    "Is anything here that should be one thing instead of two?"
+)
+
+SCAFFOLD_CONSOLIDATE = (
+    "Are there experiences that belong together but haven't been connected?\n"
+    "If a cluster of memories tells a story, create_episode can preserve it."
 )
 
 def render(template: str, companion_name: str) -> str:

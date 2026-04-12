@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ego-mcp"
-version = "0.6.2"
+version = "1.0.0"
 description = "Cognitive scaffolding MCP server for LLM personality continuity"
 requires-python = ">=3.14"
 dependencies = [
@@ -46,6 +46,12 @@ target-version = "py314"
 
 [tool.ruff.lint]
 extend-ignore = ["I"]
+
+[tool.coverage.run]
+omit = [
+    "src/ego_mcp/__main__.py",
+    "src/ego_mcp/local_chromadb.py",
+]
 
 [tool.isort]
 profile = "black"
