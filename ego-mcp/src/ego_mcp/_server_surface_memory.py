@@ -27,7 +27,7 @@ from ego_mcp._server_runtime import (
 )
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
-from ego_mcp.desire_satisfaction import infer_desire_satisfaction
+from ego_mcp.desire_satisfaction import SignalEmbeddingCache, infer_desire_satisfaction
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
 from ego_mcp.notion import update_notion_from_memory
@@ -136,6 +136,7 @@ async def _handle_remember(
     *,
     desire_engine: DesireEngine | None = None,
     embed_fn: Callable[[list[str]], list[list[float]]] | None = None,
+    signal_cache: SignalEmbeddingCache | None = None,
 ) -> str:
     """Save a memory with auto-linking."""
     _set_tool_context("remember", {})
@@ -314,7 +315,8 @@ async def _handle_remember(
             catalog = getattr(desire_engine, "catalog", None)
             if catalog is not None:
                 inferred = infer_desire_satisfaction(
-                    content, valence, intensity, catalog, embed_fn
+                    content, valence, intensity, catalog, embed_fn,
+                    signal_cache=signal_cache,
                 )
                 for desire_id, quality in inferred:
                     try:

@@ -21,6 +21,7 @@ from ego_mcp.config import EgoConfig
 from ego_mcp.consolidation import ConsolidationEngine
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_catalog import DesireConfigurationError
+from ego_mcp.desire_satisfaction import SignalEmbeddingCache
 from ego_mcp.embedding import EgoEmbeddingFunction, create_embedding_provider
 from ego_mcp.episode import EpisodeStore
 from ego_mcp.impulse import ImpulseManager
@@ -44,6 +45,7 @@ _consolidation: ConsolidationEngine | None = None
 _workspace_sync: WorkspaceMemorySync | None = None
 _notions: NotionStore | None = None
 _impulse: ImpulseManager | None = None
+_signal_cache: SignalEmbeddingCache | None = None
 
 # --- Re-exported handler/helper symbols for compatibility with tests ---
 _REMEMBER_DUPLICATE_PREFIX = _handlers._REMEMBER_DUPLICATE_PREFIX
@@ -444,6 +446,7 @@ async def _dispatch(
             args,
             desire_engine=desire,
             embed_fn=getattr(memory, "_embedding_fn", None),
+            signal_cache=_signal_cache,
         )
         if not result.startswith(_REMEMBER_DUPLICATE_PREFIX):
             _safe_satisfy_implicit("remember", category=args.get("category"))
@@ -487,7 +490,7 @@ async def _dispatch(
 
 def init_server(config: EgoConfig | None = None) -> None:
     """Initialize all dependencies. Called from main() or tests."""
-    global _config, _memory, _desire, _episodes, _consolidation, _workspace_sync, _notions, _impulse
+    global _config, _memory, _desire, _episodes, _consolidation, _workspace_sync, _notions, _impulse, _signal_cache
 
     if config is None:
         config = EgoConfig.from_env()
@@ -507,6 +510,9 @@ def init_server(config: EgoConfig | None = None) -> None:
     _memory.connect()
 
     _desire = DesireEngine.from_data_dir(config.data_dir)
+    _signal_cache = SignalEmbeddingCache(
+        config.data_dir / "cache" / "signal_embeddings.json"
+    )
 
     client = _memory.get_client()
     episodes_collection = client.get_or_create_collection(
