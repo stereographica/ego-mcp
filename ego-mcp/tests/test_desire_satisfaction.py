@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +15,12 @@ from ego_mcp.desire_catalog import (
     FixedDesireConfig,
     default_desire_catalog,
 )
-from ego_mcp.desire_satisfaction import _cosine_similarity, infer_desire_satisfaction
+from ego_mcp.desire_satisfaction import (
+    SignalEmbeddingCache,
+    _compute_fingerprint,
+    _cosine_similarity,
+    infer_desire_satisfaction,
+)
 
 
 def _make_catalog(
@@ -185,3 +192,146 @@ class TestInferDesireSatisfaction:
 
         results = infer_desire_satisfaction("c", 0.5, 0.5, catalog, embed)
         assert isinstance(results, list)
+
+    def test_with_signal_cache_produces_same_results(self, tmp_path: Path) -> None:
+        """Cache path should produce identical results to uncached."""
+        catalog = _make_catalog({"desire_a": ["matching signal"]})
+        cache = SignalEmbeddingCache(tmp_path / "cache.json")
+
+        def embed(texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0] for _ in texts]
+
+        uncached = infer_desire_satisfaction("content", 0.5, 0.5, catalog, embed)
+        cached = infer_desire_satisfaction(
+            "content", 0.5, 0.5, catalog, embed, signal_cache=cache
+        )
+        assert cached == uncached
+
+
+class TestSignalEmbeddingCache:
+    def test_disk_persistence(self, tmp_path: Path) -> None:
+        """Embeddings should survive across cache instances."""
+        cache_path = tmp_path / "cache.json"
+        catalog = _make_catalog({"d1": ["sig1"]})
+        call_count = 0
+
+        def embed(texts: list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            return [[1.0, 0.0] for _ in texts]
+
+        cache1 = SignalEmbeddingCache(cache_path)
+        signals1, embs1 = cache1.get(catalog, embed)
+        assert call_count == 1
+        assert cache_path.exists()
+
+        # New instance should load from disk, no embed call
+        cache2 = SignalEmbeddingCache(cache_path)
+        signals2, embs2 = cache2.get(catalog, embed)
+        assert call_count == 1  # no additional API call
+        assert signals1 == signals2
+        assert embs1 == embs2
+
+    def test_in_memory_hit(self, tmp_path: Path) -> None:
+        """Repeated calls on same instance should not re-embed."""
+        catalog = _make_catalog({"d1": ["sig1"]})
+        call_count = 0
+
+        def embed(texts: list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            return [[1.0, 0.0] for _ in texts]
+
+        cache = SignalEmbeddingCache(tmp_path / "cache.json")
+        cache.get(catalog, embed)
+        cache.get(catalog, embed)
+        cache.get(catalog, embed)
+        assert call_count == 1
+
+    def test_fingerprint_invalidation_on_catalog_change(
+        self, tmp_path: Path
+    ) -> None:
+        """Changing catalog signals should invalidate the cache."""
+        cache_path = tmp_path / "cache.json"
+        catalog_v1 = _make_catalog({"d1": ["signal_a"]})
+        catalog_v2 = _make_catalog({"d1": ["signal_b"]})
+        call_count = 0
+
+        def embed(texts: list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            return [[1.0, 0.0] for _ in texts]
+
+        cache = SignalEmbeddingCache(cache_path)
+        cache.get(catalog_v1, embed)
+        assert call_count == 1
+
+        cache.get(catalog_v2, embed)
+        assert call_count == 2  # re-embedded due to fingerprint change
+
+    def test_empty_signals(self, tmp_path: Path) -> None:
+        """Catalog with no signals should return empty without crash."""
+        catalog = _make_catalog({"d1": []})
+        cache = SignalEmbeddingCache(tmp_path / "cache.json")
+
+        def embed(texts: list[str]) -> list[list[float]]:
+            return [[0.0]] * len(texts)
+
+        signals, embs = cache.get(catalog, embed)
+        assert signals == []
+        assert embs == []
+
+    def test_corrupted_cache_file(self, tmp_path: Path) -> None:
+        """Corrupted cache file should be handled gracefully."""
+        cache_path = tmp_path / "cache.json"
+        cache_path.write_text("not valid json", encoding="utf-8")
+
+        catalog = _make_catalog({"d1": ["sig"]})
+        call_count = 0
+
+        def embed(texts: list[str]) -> list[list[float]]:
+            nonlocal call_count
+            call_count += 1
+            return [[1.0, 0.0] for _ in texts]
+
+        cache = SignalEmbeddingCache(cache_path)
+        signals, embs = cache.get(catalog, embed)
+        assert call_count == 1
+        assert len(signals) == 1
+
+    def test_disk_persistence_across_restart(self, tmp_path: Path) -> None:
+        """Verify JSON structure written to disk is valid and complete."""
+        cache_path = tmp_path / "cache.json"
+        catalog = _make_catalog({"d1": ["sig1"], "d2": ["sig2a", "sig2b"]})
+
+        def embed(texts: list[str]) -> list[list[float]]:
+            return [[float(i), 0.0] for i in range(len(texts))]
+
+        cache = SignalEmbeddingCache(cache_path)
+        cache.get(catalog, embed)
+
+        with open(cache_path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        assert "fingerprint" in data
+        assert "signals" in data
+        assert "embeddings" in data
+        assert len(data["signals"]) == 3
+        assert len(data["embeddings"]) == 3
+
+
+class TestComputeFingerprint:
+    def test_deterministic(self) -> None:
+        catalog = _make_catalog({"d1": ["a", "b"], "d2": ["c"]})
+        assert _compute_fingerprint(catalog) == _compute_fingerprint(catalog)
+
+    def test_order_independent(self) -> None:
+        """Fingerprint should be the same regardless of dict insertion order."""
+        cat1 = _make_catalog({"a": ["x", "y"], "b": ["z"]})
+        cat2 = _make_catalog({"b": ["z"], "a": ["y", "x"]})
+        assert _compute_fingerprint(cat1) == _compute_fingerprint(cat2)
+
+    def test_different_signals_different_fingerprint(self) -> None:
+        cat1 = _make_catalog({"d1": ["signal_a"]})
+        cat2 = _make_catalog({"d1": ["signal_b"]})
+        assert _compute_fingerprint(cat1) != _compute_fingerprint(cat2)

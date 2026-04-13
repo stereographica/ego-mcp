@@ -266,7 +266,7 @@ class TestHandleRememberDesireSatisfaction:
         monkeypatch.setattr(
             mem_mod,
             "infer_desire_satisfaction",
-            lambda content, valence, intensity, cat, fn: [(target_desire, 0.4)],
+            lambda content, valence, intensity, cat, fn, **kw: [(target_desire, 0.4)],
         )
 
         def fake_embed(texts: list[str]) -> list[list[float]]:
@@ -307,7 +307,7 @@ class TestHandleRememberDesireSatisfaction:
         monkeypatch.setattr(
             mem_mod,
             "infer_desire_satisfaction",
-            lambda content, valence, intensity, cat, fn: [(target_desire, 0.4)],
+            lambda content, valence, intensity, cat, fn, **kw: [(target_desire, 0.4)],
         )
 
         def fake_embed(texts: list[str]) -> list[list[float]]:
@@ -341,7 +341,7 @@ class TestHandleRememberDesireSatisfaction:
         monkeypatch.setattr(
             mem_mod,
             "infer_desire_satisfaction",
-            lambda content, valence, intensity, cat, fn: [],
+            lambda content, valence, intensity, cat, fn, **kw: [],
         )
 
         def fake_embed(texts: list[str]) -> list[list[float]]:
