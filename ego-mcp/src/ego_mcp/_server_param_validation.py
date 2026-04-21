@@ -11,6 +11,7 @@ strings. General JSON Schema type checking is out of scope.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -55,7 +56,7 @@ def _excerpt(value: str) -> str:
 
 def _describe_type(schema: dict[str, Any]) -> str:
     if "enum" in schema and isinstance(schema["enum"], list):
-        return "one of " + " | ".join(repr(v) for v in schema["enum"])
+        return "one of " + " | ".join(json.dumps(v) for v in schema["enum"])
     if "oneOf" in schema:
         return "string or array of strings"
     t = schema.get("type")
@@ -116,7 +117,7 @@ def _example_call(tool: Tool) -> str:
 
 def _example_value(prop_schema: dict[str, Any]) -> str:
     if "enum" in prop_schema and isinstance(prop_schema["enum"], list) and prop_schema["enum"]:
-        return repr(prop_schema["enum"][0])
+        return json.dumps(prop_schema["enum"][0])
     t = prop_schema.get("type")
     if t == "string":
         return '"..."'

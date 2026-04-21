@@ -145,11 +145,31 @@ class TestValidateToolArguments:
 
     def test_configure_desires_enum_rendered_in_expected_shape(self) -> None:
         # When the schema has `enum`, the expected-shape section should
-        # surface the allowed values rather than a bare type.
+        # surface the allowed values as valid JSON string literals so an
+        # LLM copying the sample produces a valid payload.
         with pytest.raises(ToolParameterFormatError) as exc_info:
             validate_tool_arguments(
                 "configure_desires", {"action": "<action>check</action>"}
             )
         message = str(exc_info.value)
-        assert "'check'" in message
-        assert "'set_sentence'" in message
+        assert '"check"' in message
+        assert '"set_sentence"' in message
+        # Double-quoted, not Python repr's single quotes.
+        assert "'check'" not in message
+
+    def test_enum_example_value_is_valid_json(self) -> None:
+        # The sample "Example of a correct call" must actually parse as
+        # JSON — otherwise an LLM mimicking it produces another malformed
+        # request and loops.
+        import json as _json
+        import re as _re
+
+        with pytest.raises(ToolParameterFormatError) as exc_info:
+            validate_tool_arguments(
+                "curate_notions", {"action": "<action>list</action>"}
+            )
+        message = str(exc_info.value)
+        match = _re.search(r"Example of a correct call:\n(\s*\{.*\})", message)
+        assert match is not None, message
+        parsed = _json.loads(match.group(1).strip())
+        assert parsed["action"] == "list"
