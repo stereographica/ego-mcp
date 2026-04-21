@@ -28,6 +28,40 @@ class TestValidateToolArguments:
         with pytest.raises(ToolParameterFormatError):
             validate_tool_arguments("forget", {"memory_id": "<memory_id/>"})
 
+    def test_rejects_named_tag_with_attributes(self) -> None:
+        # XML wrappers occasionally arrive with attributes
+        # (e.g. `<content type="text">...</content>`); the malformed
+        # payload must still be flagged so the model can self-correct.
+        with pytest.raises(ToolParameterFormatError) as exc_info:
+            validate_tool_arguments(
+                "remember",
+                {"content": '<content type="text">hello</content>'},
+            )
+        message = str(exc_info.value)
+        assert "`content`" in message
+
+    def test_rejects_self_closing_named_tag_with_attributes(self) -> None:
+        with pytest.raises(ToolParameterFormatError):
+            validate_tool_arguments(
+                "forget", {"memory_id": '<memory_id ref="abc"/>'}
+            )
+
+    def test_rejects_named_tag_with_whitespace_in_closing(self) -> None:
+        # Some serializers emit `</content >` with trailing whitespace
+        # before the closing `>`; treat it the same as `</content>`.
+        with pytest.raises(ToolParameterFormatError):
+            validate_tool_arguments(
+                "remember", {"content": "<content>hi</content >"}
+            )
+
+    def test_sibling_tag_name_prefix_does_not_match(self) -> None:
+        # `<contentx>` is a different tag name and must not collide with
+        # `content`. The attribute branch requires a leading whitespace
+        # separator, so this stays a non-match.
+        validate_tool_arguments(
+            "remember", {"content": "<contentx>noise</contentx>"}
+        )
+
     def test_rejects_xml_wrapping_numeric_parameter(self) -> None:
         with pytest.raises(ToolParameterFormatError) as exc_info:
             validate_tool_arguments(

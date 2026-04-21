@@ -42,8 +42,20 @@ _TOOL_INDEX: dict[str, Tool] = _build_tool_schema_index()
 
 
 def _matches_named_tag(value: str, tag: str) -> bool:
-    """Detect ``<tag>...</tag>`` or ``<tag/>`` for an exact tag name."""
-    pattern = rf"<{re.escape(tag)}\s*(?:/>|>.*?</{re.escape(tag)}>)"
+    """Detect ``<tag>...</tag>`` or ``<tag/>`` for an exact tag name.
+
+    Allows optional attributes on the opening tag so wrappers like
+    ``<content type="text">hello</content>`` are still flagged. The
+    attribute span is anchored to a leading whitespace character so
+    sibling tag names (``<contentx>``) don't accidentally match.
+    """
+    escaped = re.escape(tag)
+    pattern = (
+        rf"<{escaped}"
+        rf"(?:\s[^>]*?)?"  # optional attributes (must start with whitespace)
+        rf"\s*"
+        rf"(?:/>|>.*?</{escaped}\s*>)"
+    )
     return re.search(pattern, value, flags=re.DOTALL) is not None
 
 
