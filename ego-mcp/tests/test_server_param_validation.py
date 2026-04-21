@@ -110,6 +110,17 @@ class TestValidateToolArguments:
             {"field": "bio", "value": "<user>Alice</user> says hi"},
         )
 
+    def test_allows_sibling_parameter_tag_name_in_content(self) -> None:
+        # `content` intentionally quoting another parameter name like
+        # `emotion` must not be flagged. The scanner only matches a tag
+        # against its own enclosing key.
+        validate_tool_arguments(
+            "remember", {"content": "<emotion>joy</emotion>"}
+        )
+        validate_tool_arguments(
+            "recall", {"context": "look up <category>daily</category> notes"}
+        )
+
     def test_valid_consider_them_passes(self) -> None:
         validate_tool_arguments("consider_them", {"person": "Alice"})
 

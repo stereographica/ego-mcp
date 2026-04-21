@@ -141,42 +141,34 @@ def _find_offenders(tool_name: str, args: dict[str, Any]) -> list[tuple[str, str
     """Return a list of ``(param_name, excerpt)`` tuples for XML-shaped values.
 
     Detection is deliberately narrow: a value is flagged only when it
-    contains an XML tag whose name is **also a parameter name of this
-    tool, or a key of the enclosing dict**. That combination is the
-    specific wrapper misuse we want to catch (e.g. ``content`` →
-    ``"<content>...</content>"``). Free-form text that merely *mentions*
-    HTML/XML (``"Use <div> and <span>"``) or stores an intentional XML
-    snippet (``"<note>memo</note>"``) is left alone.
+    contains an XML tag whose name matches **the argument's own key**
+    (or, for items inside an array, the array's key). That is the
+    single unambiguous wrapper-misuse signal — e.g. ``content`` →
+    ``"<content>...</content>"``. Values that merely *mention* tags
+    whose names happen to collide with *other* tool parameters
+    (``remember.content = "<emotion>joy</emotion>"``) are treated as
+    legitimate user content and accepted.
     """
-    tool = _TOOL_INDEX.get(tool_name)
-    known_params: set[str] = set()
-    if tool is not None:
-        known_params = set((tool.inputSchema or {}).get("properties", {}).keys())
+    if _TOOL_INDEX.get(tool_name) is None:
+        return []
 
     offenders: list[tuple[str, str]] = []
 
-    def _scan(key: str, value: Any, tag_candidates: set[str]) -> None:
+    def _scan(key: str, value: Any, tag: str) -> None:
         if isinstance(value, str):
-            for tag in tag_candidates:
-                if _matches_named_tag(value, tag):
-                    offenders.append((key, _excerpt(value)))
-                    return
+            if _matches_named_tag(value, tag):
+                offenders.append((key, _excerpt(value)))
         elif isinstance(value, dict):
-            # Allow the nested dict's own keys to act as tag candidates:
-            # ``body_state.time_phase = "<time_phase>..."`` is a clear
-            # misuse even though ``time_phase`` isn't a top-level param.
+            # Each nested entry is checked against its own key name only.
             for sub_key, sub_value in value.items():
-                _scan(
-                    f"{key}.{sub_key}",
-                    sub_value,
-                    tag_candidates | {sub_key},
-                )
+                _scan(f"{key}.{sub_key}", sub_value, sub_key)
         elif isinstance(value, list):
+            # Array items inherit the array's key as their tag candidate.
             for idx, item in enumerate(value):
-                _scan(f"{key}[{idx}]", item, tag_candidates)
+                _scan(f"{key}[{idx}]", item, tag)
 
     for key, value in args.items():
-        _scan(key, value, known_params)
+        _scan(key, value, key)
 
     return offenders
 
