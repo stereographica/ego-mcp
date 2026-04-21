@@ -14,6 +14,10 @@ import ego_mcp._server_handlers as _handlers
 from ego_mcp._server_backend_handlers import (
     pop_tool_context as pop_backend_tool_context,
 )
+from ego_mcp._server_param_validation import (
+    ToolParameterFormatError,
+    validate_tool_arguments,
+)
 from ego_mcp._server_runtime import get_tool_metadata, reset_tool_metadata
 from ego_mcp._server_surface_memory import pop_tool_context as pop_memory_tool_context
 from ego_mcp._server_tools import BACKEND_TOOLS, SURFACE_TOOLS
@@ -402,6 +406,19 @@ async def _dispatch(
     """Route tool call to handler."""
     safe_args = _sanitize_tool_args_for_logging(name, args)
     logger.debug("Routing tool call", extra={"tool_name": name, "tool_args": safe_args})
+
+    try:
+        validate_tool_arguments(name, args)
+    except ToolParameterFormatError as exc:
+        logger.warning(
+            "Rejected tool call with XML-formatted parameters",
+            extra={
+                "tool_name": name,
+                "tool_args": safe_args,
+                **_tool_log_context(),
+            },
+        )
+        return str(exc)
 
     if name in {"wake_up", "attune", "introspect"}:
         desire.require_valid_catalog()

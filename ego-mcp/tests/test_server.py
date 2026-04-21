@@ -1601,3 +1601,39 @@ class TestForgetToolServerHandlers:
         assert "Episode: ep_1" in text
         assert "Memories: 1" in text
         assert "Note: 1 memory(ies) no longer exist." in text
+
+
+class TestParameterFormatValidation:
+    @pytest.mark.asyncio
+    async def test_call_tool_returns_error_text_for_xml_arguments(
+        self,
+        desire: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        before = _seed_high_desire(desire, "expression")
+
+        handler_calls: list[dict[str, object]] = []
+
+        async def spy_handle_remember(
+            _config: object,
+            _memory: object,
+            args: dict[str, object],
+            **_kwargs: object,
+        ) -> str:
+            handler_calls.append(args)
+            return "should not be reached"
+
+        monkeypatch.setattr(server_mod, "_handle_remember", spy_handle_remember)
+
+        result = await server_mod.call_tool(
+            "remember",
+            {"content": "<content>hello</content>"},
+        )
+
+        assert isinstance(result[0], TextContent)
+        assert "[parameter_format_error]" in result[0].text
+        assert "`remember`" in result[0].text
+        assert "`content`" in result[0].text
+        # Downstream handler must not be invoked and desire must not shift.
+        assert handler_calls == []
+        assert desire.compute_levels()["expression"] == pytest.approx(before)
