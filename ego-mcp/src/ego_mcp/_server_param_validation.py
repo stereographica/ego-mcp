@@ -39,35 +39,11 @@ def _build_tool_schema_index() -> dict[str, Tool]:
 
 _TOOL_INDEX: dict[str, Tool] = _build_tool_schema_index()
 
-_ANY_TAG_RE = re.compile(r"<([A-Za-z_][A-Za-z0-9_]*)\s*(/?)>")
-_WHOLE_WRAPPED_RE = re.compile(
-    r"^\s*<([A-Za-z_][A-Za-z0-9_]*)\s*>.*</\1\s*>\s*$",
-    re.DOTALL,
-)
-
 
 def _matches_named_tag(value: str, tag: str) -> bool:
     """Detect ``<tag>...</tag>`` or ``<tag/>`` for an exact tag name."""
     pattern = rf"<{re.escape(tag)}\s*(?:/>|>.*?</{re.escape(tag)}>)"
     return re.search(pattern, value, flags=re.DOTALL) is not None
-
-
-def _looks_like_xml_blob(value: str) -> bool:
-    """Heuristic: the value is a multi-tag XML blob, not prose.
-
-    Requires at least two distinct tag-like opens whose names are all
-    alphanumeric/underscore. This avoids false-positives on natural
-    sentences like ``"a < b < c"``.
-    """
-    matches = _ANY_TAG_RE.findall(value)
-    if len(matches) < 2:
-        return False
-    return all(bool(name) for name, _ in matches)
-
-
-def _is_wholly_wrapped_in_tag(value: str) -> bool:
-    """The entire string is ``<tag>...</tag>`` — clear XML misuse."""
-    return _WHOLE_WRAPPED_RE.match(value) is not None
 
 
 def _excerpt(value: str) -> str:
@@ -163,8 +139,13 @@ def _example_value(prop_schema: dict[str, Any]) -> str:
 def _find_offenders(tool_name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
     """Return a list of ``(param_name, excerpt)`` tuples for XML-shaped values.
 
-    ``param_name`` is the dict key whose value looks like XML. The excerpt
-    is a truncated view of the offending string.
+    Detection is deliberately narrow: a value is flagged only when it
+    contains an XML tag whose name is **also a parameter name of this
+    tool, or a key of the enclosing dict**. That combination is the
+    specific wrapper misuse we want to catch (e.g. ``content`` →
+    ``"<content>...</content>"``). Free-form text that merely *mentions*
+    HTML/XML (``"Use <div> and <span>"``) or stores an intentional XML
+    snippet (``"<note>memo</note>"``) is left alone.
     """
     tool = _TOOL_INDEX.get(tool_name)
     known_params: set[str] = set()
@@ -173,24 +154,28 @@ def _find_offenders(tool_name: str, args: dict[str, Any]) -> list[tuple[str, str
 
     offenders: list[tuple[str, str]] = []
 
-    def _scan(key: str, value: Any) -> None:
+    def _scan(key: str, value: Any, tag_candidates: set[str]) -> None:
         if isinstance(value, str):
-            for param in known_params:
-                if _matches_named_tag(value, param):
+            for tag in tag_candidates:
+                if _matches_named_tag(value, tag):
                     offenders.append((key, _excerpt(value)))
                     return
-            if _looks_like_xml_blob(value) or _is_wholly_wrapped_in_tag(value):
-                offenders.append((key, _excerpt(value)))
-                return
         elif isinstance(value, dict):
+            # Allow the nested dict's own keys to act as tag candidates:
+            # ``body_state.time_phase = "<time_phase>..."`` is a clear
+            # misuse even though ``time_phase`` isn't a top-level param.
             for sub_key, sub_value in value.items():
-                _scan(f"{key}.{sub_key}", sub_value)
+                _scan(
+                    f"{key}.{sub_key}",
+                    sub_value,
+                    tag_candidates | {sub_key},
+                )
         elif isinstance(value, list):
             for idx, item in enumerate(value):
-                _scan(f"{key}[{idx}]", item)
+                _scan(f"{key}[{idx}]", item, tag_candidates)
 
     for key, value in args.items():
-        _scan(key, value)
+        _scan(key, value, known_params)
 
     return offenders
 

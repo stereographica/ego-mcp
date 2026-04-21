@@ -28,14 +28,6 @@ class TestValidateToolArguments:
         with pytest.raises(ToolParameterFormatError):
             validate_tool_arguments("forget", {"memory_id": "<memory_id/>"})
 
-    def test_rejects_multiple_xml_tags_even_when_names_unknown(self) -> None:
-        # `forget` only knows `memory_id`; but multi-tag XML blob is still
-        # a clear XML misuse.
-        with pytest.raises(ToolParameterFormatError):
-            validate_tool_arguments(
-                "forget", {"memory_id": "<id>42</id><type>x</type>"}
-            )
-
     def test_rejects_xml_wrapping_numeric_parameter(self) -> None:
         with pytest.raises(ToolParameterFormatError) as exc_info:
             validate_tool_arguments(
@@ -93,6 +85,29 @@ class TestValidateToolArguments:
         # Prose with `<` characters must not trip the validator.
         validate_tool_arguments(
             "remember", {"content": "a < b < c and 3 > 2, but not <3"}
+        )
+
+    def test_allows_html_snippets_mentioned_in_content(self) -> None:
+        # Content that legitimately mentions HTML/XML tags (but none
+        # whose name is a `remember` parameter) must be accepted.
+        validate_tool_arguments(
+            "remember",
+            {"content": "Use <div> and <span> for inline HTML structure."},
+        )
+
+    def test_allows_intentional_xml_snippet_when_tag_not_a_parameter(self) -> None:
+        # Saving an XML snippet as a memory is legitimate when the tag
+        # name doesn't collide with a tool parameter.
+        validate_tool_arguments(
+            "remember", {"content": "<note>important memo</note>"}
+        )
+
+    def test_allows_update_self_value_containing_html(self) -> None:
+        # `update_self.value` accepts any type; an HTML-like string whose
+        # tag names aren't parameter names must pass.
+        validate_tool_arguments(
+            "update_self",
+            {"field": "bio", "value": "<user>Alice</user> says hi"},
         )
 
     def test_valid_consider_them_passes(self) -> None:
