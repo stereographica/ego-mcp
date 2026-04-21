@@ -135,8 +135,6 @@ class MemoryStore:
             try:
                 state_obj = BodyState(
                     time_phase=str(body_state.get("time_phase", "unknown")),
-                    system_load=str(body_state.get("system_load", "unknown")),
-                    uptime_hours=float(body_state.get("uptime_hours", 0.0)),
                 )
             except (TypeError, ValueError):
                 state_obj = None

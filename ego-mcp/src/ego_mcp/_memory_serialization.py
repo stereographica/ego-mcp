@@ -29,13 +29,7 @@ def memory_to_chromadb(memory: Memory) -> dict[str, Any]:
         "valence": float(memory.emotional_trace.valence),
         "arousal": float(memory.emotional_trace.arousal),
         "body_state": (
-            json.dumps(
-                {
-                    "time_phase": body_state.time_phase,
-                    "system_load": body_state.system_load,
-                    "uptime_hours": body_state.uptime_hours,
-                }
-            )
+            json.dumps({"time_phase": body_state.time_phase})
             if body_state is not None
             else ""
         ),
@@ -100,10 +94,8 @@ def memory_from_chromadb(
             if isinstance(payload, dict):
                 body_state = BodyState(
                     time_phase=str(payload.get("time_phase", "unknown")),
-                    system_load=str(payload.get("system_load", "unknown")),
-                    uptime_hours=float(payload.get("uptime_hours", 0.0)),
                 )
-        except (json.JSONDecodeError, TypeError, ValueError):
+        except (json.JSONDecodeError, TypeError):
             body_state = None
 
     private_raw = metadata.get("is_private", False)

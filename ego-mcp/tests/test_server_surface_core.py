@@ -50,7 +50,7 @@ def _override_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(core_mod, "_relationship_snapshot_override", fake_relationship_snapshot)
     monkeypatch.setattr(core_mod, "_derive_desire_modulation_override", fake_derive)
-    monkeypatch.setattr(core_mod, "_get_body_state_override", lambda: {"time_phase": "morning", "system_load": "low"})
+    monkeypatch.setattr(core_mod, "_get_body_state_override", lambda: {"time_phase": "morning"})
 
 
 class TestSanitizeImpulseEvent:

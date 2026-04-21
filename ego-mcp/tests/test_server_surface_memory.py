@@ -72,7 +72,7 @@ class TestCallGetBodyState:
 
     def test_uses_override_when_set(self) -> None:
         configure_overrides(
-            get_body_state_fn=lambda: {"time_phase": "test", "system_load": "low"}
+            get_body_state_fn=lambda: {"time_phase": "test"}
         )
         result = _call_get_body_state()
         assert result["time_phase"] == "test"
@@ -172,7 +172,7 @@ def _mock_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         mem_mod,
         "_call_get_body_state",
-        lambda: {"time_phase": "morning", "system_load": "low"},
+        lambda: {"time_phase": "morning"},
     )
 
     # Patch find_resurfacing_memories to return empty

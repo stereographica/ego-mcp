@@ -825,7 +825,7 @@ class TestImplicitSatisfactionFromServer:
         monkeypatch.setattr(
             attune_surface_mod,
             "_get_body_state_override",
-            lambda: {"time_phase": "morning", "system_load": "low"},
+            lambda: {"time_phase": "morning"},
         )
 
         config = SimpleNamespace(companion_name="Master", data_dir=tmp_path)
@@ -898,7 +898,7 @@ class TestImplicitSatisfactionFromServer:
         monkeypatch.setattr(
             attune_surface_mod,
             "_get_body_state_override",
-            lambda: {"time_phase": "morning", "system_load": "low"},
+            lambda: {"time_phase": "morning"},
         )
 
         text = await attune_surface_mod._handle_attune(

@@ -88,17 +88,19 @@ class TestMemoryFromChromadbBodyState:
         )
         assert mem.emotional_trace.body_state is None
 
-    def test_body_state_with_bad_uptime_hours_ignored(self) -> None:
-        bad_body = json.dumps(
+    def test_body_state_ignores_legacy_fields(self) -> None:
+        """Legacy payloads with removed fields still deserialize time_phase."""
+        legacy_body = json.dumps(
             {
                 "time_phase": "morning",
                 "system_load": "low",
-                "uptime_hours": "not_a_number",
+                "uptime_hours": 1.5,
             }
         )
         mem = memory_from_chromadb(
             "m8",
             "content",
-            {"body_state": bad_body, "timestamp": "2026-01-01T00:00:00Z"},
+            {"body_state": legacy_body, "timestamp": "2026-01-01T00:00:00Z"},
         )
-        assert mem.emotional_trace.body_state is None
+        assert mem.emotional_trace.body_state is not None
+        assert mem.emotional_trace.body_state.time_phase == "morning"

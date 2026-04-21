@@ -75,8 +75,6 @@ class BodyState:
     """Internal body state (interoception)."""
 
     time_phase: str = "unknown"
-    system_load: str = "unknown"
-    uptime_hours: float = 0.0
 
 
 @dataclass

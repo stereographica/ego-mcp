@@ -393,11 +393,7 @@ class TestAttune:
         monkeypatch.setattr(
             server_mod,
             "get_body_state",
-            lambda: {
-                "time_phase": "late_night",
-                "system_load": "high",
-                "uptime_hours": "1.0",
-            },
+            lambda: {"time_phase": "late_night"},
         )
         result = await _call(
             "attune", {}, config, memory, desire, episodes, consolidation
@@ -1428,8 +1424,6 @@ class TestRecall:
                 "intensity": 0.9,
                 "body_state": {
                     "time_phase": "night",
-                    "system_load": "medium",
-                    "uptime_hours": 2.0,
                 },
             },
             config,

@@ -60,7 +60,7 @@ def _override_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         attune_mod,
         "_get_body_state_override",
-        lambda: {"time_phase": "morning", "system_load": "low"},
+        lambda: {"time_phase": "morning"},
     )
 
 
@@ -407,7 +407,7 @@ class TestCallGetBodyState:
         monkeypatch.setattr(
             attune_mod,
             "get_body_state",
-            lambda: {"time_phase": "afternoon", "system_load": "low"},
+            lambda: {"time_phase": "afternoon"},
         )
         result = attune_mod._call_get_body_state()
         assert result["time_phase"] == "afternoon"
