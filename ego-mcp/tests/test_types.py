@@ -75,8 +75,6 @@ class TestDataclassDefaults:
     def test_body_state(self) -> None:
         bs = BodyState()
         assert bs.time_phase == "unknown"
-        assert bs.system_load == "unknown"
-        assert bs.uptime_hours == 0.0
 
     def test_emotional_trace(self) -> None:
         et = EmotionalTrace()

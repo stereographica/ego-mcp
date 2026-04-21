@@ -484,8 +484,15 @@ class TestResurfacingAndRecall:
 
     @pytest.mark.asyncio
     async def test_recall_candidate_pool_includes_dormant_memories_for_hopfield(
-        self,
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        from datetime import datetime, timezone
+
+        from ego_mcp import timezone_utils
+
+        fixed_now = datetime(2026, 2, 27, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
         rows = [
             (
                 f"mem_recent_{index}",

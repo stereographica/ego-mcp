@@ -129,7 +129,6 @@ async def _handle_attune(
     # Body sense adjustments
     body_state = _call_get_body_state()
     phase = body_state.get("time_phase", "unknown")
-    load = body_state.get("system_load", "unknown")
 
     if phase == "late_night":
         if "cognitive_coherence" in levels:
@@ -143,12 +142,6 @@ async def _handle_attune(
     elif phase == "morning":
         if "curiosity" in levels:
             levels["curiosity"] = round(min(1.0, levels["curiosity"] + 0.05), 3)
-
-    if load == "high":
-        levels = {
-            name: round(max(0.0, min(1.0, level * 0.9)), 3)
-            for name, level in levels.items()
-        }
 
     desire_text = blend_desires(
         levels,
@@ -178,12 +171,7 @@ async def _handle_attune(
     )
 
     # 5. Body sense text
-    body_parts: list[str] = []
-    if phase != "unknown":
-        body_parts.append(f"time: {phase}")
-    if load != "unknown":
-        body_parts.append(f"load: {load}")
-    body_text = ", ".join(body_parts) if body_parts else ""
+    body_text = f"time: {phase}" if phase != "unknown" else ""
 
     # Compose output
     sections: list[str] = []

@@ -179,8 +179,6 @@ class TestMemorySave:
             arousal=0.3,
             body_state={
                 "time_phase": "evening",
-                "system_load": "low",
-                "uptime_hours": 1.5,
             },
         )
         loaded = await store.get_by_id(mem.id)

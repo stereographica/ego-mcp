@@ -72,7 +72,7 @@ Combines the functionality of `feel_desires` and `emotion_trend` into a single u
 - Desire currents (3-direction: rising/steady/settling, relative to EMA baseline)
 - Emergent desire pull
 - Current interests (derived from recent memories and notions)
-- Body sense (time phase, system load)
+- Body sense (time phase)
 
 ### `configure_desires` Tool
 
