@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import collections.abc
 import inspect
 import logging
+import typing
 from types import ModuleType
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_typing_bytestring_compat() -> None:
+    """Restore ``typing.ByteString`` removed in Python 3.14.
+
+    The ``overrides`` 7.7.0 transitive dependency references
+    ``typing.ByteString`` at import time, which breaks on Python 3.14 where
+    the alias has been removed. Re-aliasing it to ``collections.abc.Buffer``
+    matches the migration recommended by PEP 688.
+    """
+    if not hasattr(typing, "ByteString"):
+        setattr(typing, "ByteString", collections.abc.Buffer)
 
 
 def ensure_chromadb_pydantic_compat() -> None:
@@ -38,6 +52,7 @@ def ensure_chromadb_pydantic_compat() -> None:
 
 def load_chromadb() -> ModuleType:
     """Load ChromaDB module with a local fallback on import failure."""
+    ensure_typing_bytestring_compat()
     ensure_chromadb_pydantic_compat()
     try:
         import chromadb
