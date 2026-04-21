@@ -19,7 +19,6 @@ from mcp.types import Tool
 
 from ego_mcp._server_tools import BACKEND_TOOLS, SURFACE_TOOLS
 
-_EXCERPT_LIMIT = 120
 _ERROR_MARKER = "[parameter_format_error]"
 
 
@@ -42,12 +41,15 @@ _TOOL_INDEX: dict[str, Tool] = _build_tool_schema_index()
 
 
 def _matches_named_tag(value: str, tag: str) -> bool:
-    """Detect ``<tag>...</tag>`` or ``<tag/>`` for an exact tag name.
+    """Return ``True`` if ``value`` is *wholly* an XML wrapper for ``tag``.
 
-    Allows optional attributes on the opening tag so wrappers like
-    ``<content type="text">hello</content>`` are still flagged. The
-    attribute span is anchored to a leading whitespace character so
-    sibling tag names (``<contentx>``) don't accidentally match.
+    The match is anchored: after stripping surrounding whitespace the
+    entire value must be ``<tag>...</tag>`` or ``<tag/>`` (optionally
+    with attributes). A wrapper embedded inside longer free text —
+    e.g. ``"see <content>foo</content> for an example"`` — is
+    legitimate prose and must not be flagged. Attribute spans are
+    anchored to a leading whitespace so sibling names like
+    ``<contentx>`` don't collapse onto ``<content>``.
     """
     escaped = re.escape(tag)
     pattern = (
@@ -56,14 +58,7 @@ def _matches_named_tag(value: str, tag: str) -> bool:
         rf"\s*"
         rf"(?:/>|>.*?</{escaped}\s*>)"
     )
-    return re.search(pattern, value, flags=re.DOTALL) is not None
-
-
-def _excerpt(value: str) -> str:
-    collapsed = " ".join(value.split())
-    if len(collapsed) <= _EXCERPT_LIMIT:
-        return collapsed
-    return collapsed[:_EXCERPT_LIMIT] + "..."
+    return re.fullmatch(pattern, value.strip(), flags=re.DOTALL) is not None
 
 
 def _describe_type(schema: dict[str, Any]) -> str:
@@ -158,42 +153,41 @@ def _example_value(prop_schema: dict[str, Any]) -> str:
     return '"..."'
 
 
-def _find_offenders(tool_name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
-    """Return a list of ``(param_name, excerpt)`` tuples for XML-shaped values.
+def _find_offenders(tool_name: str, args: dict[str, Any]) -> list[str]:
+    """Return the names of top-level args whose value is an XML wrapper.
 
     Detection is intentionally limited to **top-level string arguments**:
     a value is flagged only when it's a string at the top level of
-    ``args`` and contains ``<key>...</key>`` (or ``<key/>``) for its own
-    key. Nested dicts and array items are not recursed into — free-form
-    parameters such as ``update_self.value`` or ``remember.body_state``
-    can carry arbitrary user payloads where same-named tags are
-    legitimate data, and there is no reliable way to tell apart "the LLM
-    wrapped a parameter in XML" from "the user really wants to store
-    this XML-looking string" without a strict schema for the nested
-    shape. The top-level check covers the dominant LLM failure mode.
+    ``args`` and is wholly ``<key>...</key>`` (or ``<key/>``) for its
+    own key. Nested dicts and array items are not recursed into —
+    free-form parameters such as ``update_self.value`` or
+    ``remember.body_state`` can carry arbitrary user payloads where
+    same-named tags are legitimate data, and there is no reliable way
+    to tell "the LLM wrapped a parameter in XML" apart from "the user
+    really wants to store this XML-looking string" without a strict
+    schema for the nested shape. The top-level check covers the
+    dominant LLM failure mode.
     """
     if _TOOL_INDEX.get(tool_name) is None:
         return []
 
-    offenders: list[tuple[str, str]] = []
+    offenders: list[str] = []
     for key, value in args.items():
         if isinstance(value, str) and _matches_named_tag(value, key):
-            offenders.append((key, _excerpt(value)))
+            offenders.append(key)
     return offenders
 
 
 def _format_correction_message(
     tool_name: str,
-    offenders: list[tuple[str, str]],
+    offenders: list[str],
     tool: Tool,
 ) -> str:
-    offender_lines: list[str] = []
-    for name, excerpt in offenders:
-        # `json.dumps` keeps the message in the same JSON-style quoting
-        # convention as the example block, and preserves non-ASCII
-        # characters readably (`ensure_ascii=False`).
-        quoted = json.dumps(excerpt, ensure_ascii=False)
-        offender_lines.append(f"  - `{name}`: {quoted}")
+    # Only report parameter *names*, never the offending value content.
+    # The correction string is returned as tool output and may be
+    # persisted in logs, so echoing the value would leak payloads for
+    # tools like `remember` that accept `private=true` memories.
+    offender_lines = [f"  - `{name}`" for name in offenders]
 
     required_list, optional_list = _partition_params(tool)
     required_str = ", ".join(required_list) if required_list else "(none)"
@@ -203,7 +197,7 @@ def _format_correction_message(
         [
             f"{_ERROR_MARKER} Tool `{tool_name}` expects JSON arguments, not XML.",
             "",
-            "Offending parameter(s) (value contains XML-style tags):",
+            "Offending parameter(s) (value is wrapped in a same-named XML tag):",
             *offender_lines,
             "",
             "Do NOT wrap values in XML tags. Pass a JSON object whose keys are",

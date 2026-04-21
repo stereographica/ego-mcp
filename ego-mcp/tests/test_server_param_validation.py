@@ -187,14 +187,27 @@ class TestValidateToolArguments:
         for optional in ("emotion", "importance", "category"):
             assert optional in message
 
-    def test_excerpt_is_truncated(self) -> None:
+    def test_error_message_does_not_echo_offending_value(self) -> None:
+        # The correction string is returned as normal tool output and
+        # may be persisted in logs. `remember` can carry `private=true`
+        # memory text, so we must never echo the value content — only
+        # parameter names.
+        secret = "super-secret-passphrase-98765"
+        with pytest.raises(ToolParameterFormatError) as exc_info:
+            validate_tool_arguments(
+                "remember", {"content": f"<content>{secret}</content>"}
+            )
+        message = str(exc_info.value)
+        assert secret not in message
+        assert "`content`" in message
+
+    def test_error_message_does_not_echo_long_offending_value(self) -> None:
         long_value = "<content>" + ("x" * 500) + "</content>"
         with pytest.raises(ToolParameterFormatError) as exc_info:
             validate_tool_arguments("remember", {"content": long_value})
         message = str(exc_info.value)
-        assert "..." in message
-        # Excerpt shouldn't dump the entire payload
-        assert message.count("x") < 200
+        # No value echoed at all — not even an excerpt.
+        assert "x" * 20 not in message
 
     def test_configure_desires_enum_rendered_in_expected_shape(self) -> None:
         # When the schema has `enum`, the expected-shape section should
@@ -243,14 +256,36 @@ class TestValidateToolArguments:
         # The variants come from the schema, joined with " or ".
         assert "string or array of string" in message
 
-    def test_offender_excerpt_uses_double_quotes_and_keeps_unicode(self) -> None:
-        # The excerpt should be JSON-quoted (double quotes) for
-        # consistency with the example block, and non-ASCII characters
-        # should remain readable rather than be backslash-escaped.
+    def test_error_message_does_not_echo_unicode_offending_value(self) -> None:
+        # Same privacy rule for non-ASCII content: the message must
+        # report the parameter name without reproducing the value.
         with pytest.raises(ToolParameterFormatError) as exc_info:
             validate_tool_arguments(
                 "remember", {"content": "<content>今日は雨</content>"}
             )
         message = str(exc_info.value)
-        assert '"<content>今日は雨</content>"' in message
-        assert "\\u" not in message
+        assert "今日は雨" not in message
+        assert "`content`" in message
+
+    def test_allows_embedded_wrapper_substring(self) -> None:
+        # A value that *mentions* `<content>...</content>` inside longer
+        # free text (documentation, code samples, tutorials) is not a
+        # wrapper misuse — only the whole trimmed value counts. This
+        # avoids rejecting legitimate prose.
+        validate_tool_arguments(
+            "remember",
+            {
+                "content": (
+                    "Here's how it renders: <content>hi</content> "
+                    "— mentioned in a tutorial."
+                )
+            },
+        )
+
+    def test_rejects_wrapper_with_surrounding_whitespace(self) -> None:
+        # Incidental whitespace around a wrapper still counts as
+        # wrapper misuse; the fullmatch check trims before comparing.
+        with pytest.raises(ToolParameterFormatError):
+            validate_tool_arguments(
+                "remember", {"content": "  <content>hi</content>\n"}
+            )
