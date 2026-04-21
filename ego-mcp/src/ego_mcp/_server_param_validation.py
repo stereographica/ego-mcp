@@ -57,8 +57,17 @@ def _excerpt(value: str) -> str:
 def _describe_type(schema: dict[str, Any]) -> str:
     if "enum" in schema and isinstance(schema["enum"], list):
         return "one of " + " | ".join(json.dumps(v) for v in schema["enum"])
-    if "oneOf" in schema:
-        return "string or array of strings"
+    if "oneOf" in schema and isinstance(schema["oneOf"], list):
+        # De-duplicate while preserving order so e.g.
+        # `oneOf: [string, array<string>]` reads cleanly.
+        seen: set[str] = set()
+        unique: list[str] = []
+        for variant in schema["oneOf"]:
+            described = _describe_type(variant or {})
+            if described not in seen:
+                seen.add(described)
+                unique.append(described)
+        return " or ".join(unique) if unique else "any"
     t = schema.get("type")
     if t == "array":
         item_t = schema.get("items", {}).get("type", "any")
@@ -140,36 +149,24 @@ def _example_value(prop_schema: dict[str, Any]) -> str:
 def _find_offenders(tool_name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
     """Return a list of ``(param_name, excerpt)`` tuples for XML-shaped values.
 
-    Detection is deliberately narrow: a value is flagged only when it
-    contains an XML tag whose name matches **the argument's own key**
-    (or, for items inside an array, the array's key). That is the
-    single unambiguous wrapper-misuse signal — e.g. ``content`` →
-    ``"<content>...</content>"``. Values that merely *mention* tags
-    whose names happen to collide with *other* tool parameters
-    (``remember.content = "<emotion>joy</emotion>"``) are treated as
-    legitimate user content and accepted.
+    Detection is intentionally limited to **top-level string arguments**:
+    a value is flagged only when it's a string at the top level of
+    ``args`` and contains ``<key>...</key>`` (or ``<key/>``) for its own
+    key. Nested dicts and array items are not recursed into — free-form
+    parameters such as ``update_self.value`` or ``remember.body_state``
+    can carry arbitrary user payloads where same-named tags are
+    legitimate data, and there is no reliable way to tell apart "the LLM
+    wrapped a parameter in XML" from "the user really wants to store
+    this XML-looking string" without a strict schema for the nested
+    shape. The top-level check covers the dominant LLM failure mode.
     """
     if _TOOL_INDEX.get(tool_name) is None:
         return []
 
     offenders: list[tuple[str, str]] = []
-
-    def _scan(key: str, value: Any, tag: str) -> None:
-        if isinstance(value, str):
-            if _matches_named_tag(value, tag):
-                offenders.append((key, _excerpt(value)))
-        elif isinstance(value, dict):
-            # Each nested entry is checked against its own key name only.
-            for sub_key, sub_value in value.items():
-                _scan(f"{key}.{sub_key}", sub_value, sub_key)
-        elif isinstance(value, list):
-            # Array items inherit the array's key as their tag candidate.
-            for idx, item in enumerate(value):
-                _scan(f"{key}[{idx}]", item, tag)
-
     for key, value in args.items():
-        _scan(key, value, key)
-
+        if isinstance(value, str) and _matches_named_tag(value, key):
+            offenders.append((key, _excerpt(value)))
     return offenders
 
 
@@ -180,7 +177,11 @@ def _format_correction_message(
 ) -> str:
     offender_lines: list[str] = []
     for name, excerpt in offenders:
-        offender_lines.append(f"  - `{name}`: {excerpt!r}")
+        # `json.dumps` keeps the message in the same JSON-style quoting
+        # convention as the example block, and preserves non-ASCII
+        # characters readably (`ensure_ascii=False`).
+        quoted = json.dumps(excerpt, ensure_ascii=False)
+        offender_lines.append(f"  - `{name}`: {quoted}")
 
     required_list, optional_list = _partition_params(tool)
     required_str = ", ".join(required_list) if required_list else "(none)"

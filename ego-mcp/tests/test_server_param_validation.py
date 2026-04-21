@@ -53,28 +53,36 @@ class TestValidateToolArguments:
         assert "`context`" in message
         assert "`emotion_filter`" in message
 
-    def test_detects_xml_inside_array_values(self) -> None:
-        with pytest.raises(ToolParameterFormatError) as exc_info:
-            validate_tool_arguments(
-                "remember",
-                {
-                    "content": "plain content",
-                    "tags": ["<tags>foo</tags>", "<tags>bar</tags>"],
+    def test_allows_xml_inside_nested_free_form_dict(self) -> None:
+        # `update_self.value` / `update_relationship.value` are declared
+        # as `{}` (any) in the tool schema — they carry arbitrary user
+        # payload. Same-named tags inside a nested dict are legitimate
+        # data, not wrapper misuse, and must not be rejected.
+        validate_tool_arguments(
+            "update_self",
+            {"field": "notes", "value": {"note": "<note>remember this</note>"}},
+        )
+        validate_tool_arguments(
+            "remember",
+            {
+                "content": "plain",
+                "body_state": {
+                    "time_phase": "<time_phase>morning</time_phase>"
                 },
-            )
-        message = str(exc_info.value)
-        assert "tags[0]" in message or "tags[1]" in message
+            },
+        )
 
-    def test_detects_xml_inside_nested_dict(self) -> None:
-        with pytest.raises(ToolParameterFormatError) as exc_info:
-            validate_tool_arguments(
-                "remember",
-                {
-                    "content": "plain",
-                    "body_state": {"time_phase": "<time_phase>morning</time_phase>"},
-                },
-            )
-        assert "body_state.time_phase" in str(exc_info.value)
+    def test_allows_xml_inside_array_items(self) -> None:
+        # Array items are treated as user content; a string element that
+        # happens to look like `<tags>...</tags>` is not a reliable
+        # wrapper-misuse signal and must pass.
+        validate_tool_arguments(
+            "remember",
+            {
+                "content": "plain content",
+                "tags": ["<tags>foo</tags>", "<tags>bar</tags>"],
+            },
+        )
 
     def test_plain_text_content_is_allowed(self) -> None:
         validate_tool_arguments(
@@ -184,3 +192,31 @@ class TestValidateToolArguments:
         assert match is not None, message
         parsed = _json.loads(match.group(1).strip())
         assert parsed["action"] == "list"
+
+    def test_oneof_type_description_lists_variants(self) -> None:
+        # `remember.shared_with` uses `oneOf: [string, array<string>]`.
+        # The description should derive that from the schema, not be a
+        # hardcoded literal — so future schema edits stay accurate.
+        with pytest.raises(ToolParameterFormatError) as exc_info:
+            validate_tool_arguments(
+                "remember",
+                {
+                    "content": "<content>x</content>",
+                    "shared_with": "Master",
+                },
+            )
+        message = str(exc_info.value)
+        # The variants come from the schema, joined with " or ".
+        assert "string or array of string" in message
+
+    def test_offender_excerpt_uses_double_quotes_and_keeps_unicode(self) -> None:
+        # The excerpt should be JSON-quoted (double quotes) for
+        # consistency with the example block, and non-ASCII characters
+        # should remain readable rather than be backslash-escaped.
+        with pytest.raises(ToolParameterFormatError) as exc_info:
+            validate_tool_arguments(
+                "remember", {"content": "<content>今日は雨</content>"}
+            )
+        message = str(exc_info.value)
+        assert '"<content>今日は雨</content>"' in message
+        assert "\\u" not in message
