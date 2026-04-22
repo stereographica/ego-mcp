@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import importlib
 import json
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -815,3 +817,204 @@ class TestGenerateEmergentFromRecentMemories:
         # Explicit override to 2 — should succeed
         result = generate_emergent_from_recent_memories(engine, mems, min_memories=2)
         assert result is not None
+
+
+class TestCascadeSatisfaction:
+    """Fixed desire satisfaction cascades into active emergent desires (issue #31)."""
+
+    @pytest.fixture
+    def engine(self, tmp_path: Path) -> DesireEngine:
+        return DesireEngine.from_data_dir(tmp_path)
+
+    @staticmethod
+    def _seed_emergent(engine: DesireEngine, name: str) -> None:
+        engine._state[name] = {
+            "last_satisfied": "",
+            "satisfaction_quality": 0.5,
+            "boost": 0.0,
+            "is_emergent": True,
+            "created": datetime.now(timezone.utc).isoformat(),
+            "satisfaction_hours": 24.0,
+        }
+
+    @staticmethod
+    def _write_catalog(
+        tmp_path: Path,
+        mutate: Callable[[dict[str, Any]], None],
+    ) -> Path:
+        path = desire_catalog_settings_path(tmp_path)
+        payload = default_desire_catalog().model_dump(mode="json")
+        mutate(payload)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_satisfying_curiosity_cascades_to_active_grasp_something(
+        self, engine: DesireEngine
+    ) -> None:
+        self._seed_emergent(engine, "grasp_something")
+        engine.satisfy("curiosity", quality=0.9)
+        target = engine._state["grasp_something"]
+        assert target["last_satisfied"] != ""
+        assert target["satisfaction_quality"] == 0.5
+
+    def test_cascade_quality_comes_from_catalog_not_source(
+        self, tmp_path: Path
+    ) -> None:
+        def mutate(payload: dict[str, Any]) -> None:
+            fixed = payload["fixed_desires"]
+            fixed["curiosity"]["implicit_emergent_satisfaction"] = {
+                "grasp_something": 0.7,
+            }
+
+        self._write_catalog(tmp_path, mutate)
+        engine = DesireEngine.from_data_dir(tmp_path)
+        self._seed_emergent(engine, "grasp_something")
+        engine.satisfy("curiosity", quality=0.9)
+        assert engine._state["grasp_something"]["satisfaction_quality"] == 0.7
+
+    def test_cascade_noop_when_target_not_active(self, engine: DesireEngine) -> None:
+        assert "grasp_something" not in engine._state
+        engine.satisfy("curiosity", quality=0.9)
+        assert "grasp_something" not in engine._state
+
+    def test_cascade_does_not_chain_from_emergent(self, engine: DesireEngine) -> None:
+        self._seed_emergent(engine, "grasp_something")
+        self._seed_emergent(engine, "feel_safe")
+        self._seed_emergent(engine, "be_with_someone")
+        engine.satisfy("grasp_something", quality=0.8)
+        assert engine._state["grasp_something"]["last_satisfied"] != ""
+        assert engine._state["feel_safe"]["last_satisfied"] == ""
+        assert engine._state["be_with_someone"]["last_satisfied"] == ""
+
+    def test_non_mapped_fixed_desire_no_cascade(self, engine: DesireEngine) -> None:
+        self._seed_emergent(engine, "grasp_something")
+        self._seed_emergent(engine, "feel_safe")
+        self._seed_emergent(engine, "be_with_someone")
+        engine.satisfy("expression", quality=0.8)
+        assert engine._state["grasp_something"]["last_satisfied"] == ""
+        assert engine._state["feel_safe"]["last_satisfied"] == ""
+        assert engine._state["be_with_someone"]["last_satisfied"] == ""
+
+    def test_preserves_primary_quality(self, engine: DesireEngine) -> None:
+        self._seed_emergent(engine, "grasp_something")
+        engine.satisfy("curiosity", quality=0.9)
+        assert engine._state["curiosity"]["satisfaction_quality"] == 0.9
+        assert engine._state["grasp_something"]["satisfaction_quality"] == 0.5
+
+    def test_multiple_cascade_targets(self, tmp_path: Path) -> None:
+        def mutate(payload: dict[str, Any]) -> None:
+            fixed = payload["fixed_desires"]
+            fixed["curiosity"]["implicit_emergent_satisfaction"] = {
+                "grasp_something": 0.6,
+                "feel_safe": 0.8,
+            }
+
+        self._write_catalog(tmp_path, mutate)
+        engine = DesireEngine.from_data_dir(tmp_path)
+        self._seed_emergent(engine, "grasp_something")
+        self._seed_emergent(engine, "feel_safe")
+        engine.satisfy("curiosity", quality=0.9)
+        assert engine._state["grasp_something"]["satisfaction_quality"] == 0.6
+        assert engine._state["grasp_something"]["last_satisfied"] != ""
+        assert engine._state["feel_safe"]["satisfaction_quality"] == 0.8
+        assert engine._state["feel_safe"]["last_satisfied"] != ""
+
+    def test_information_hunger_cascades_to_grasp_something(
+        self, engine: DesireEngine
+    ) -> None:
+        self._seed_emergent(engine, "grasp_something")
+        engine.satisfy("information_hunger", quality=0.9)
+        assert engine._state["grasp_something"]["last_satisfied"] != ""
+
+    def test_social_thirst_cascades_to_be_with_someone(
+        self, engine: DesireEngine
+    ) -> None:
+        self._seed_emergent(engine, "be_with_someone")
+        engine.satisfy("social_thirst", quality=0.9)
+        assert engine._state["be_with_someone"]["last_satisfied"] != ""
+
+    def test_resonance_cascades_to_be_with_someone(
+        self, engine: DesireEngine
+    ) -> None:
+        self._seed_emergent(engine, "be_with_someone")
+        engine.satisfy("resonance", quality=0.9)
+        assert engine._state["be_with_someone"]["last_satisfied"] != ""
+
+    def test_cognitive_coherence_cascades_to_feel_safe(
+        self, engine: DesireEngine
+    ) -> None:
+        self._seed_emergent(engine, "feel_safe")
+        engine.satisfy("cognitive_coherence", quality=0.9)
+        assert engine._state["feel_safe"]["last_satisfied"] != ""
+
+
+class TestImplicitEmergentSatisfactionCatalog:
+    """Catalog-level schema for implicit_emergent_satisfaction (issue #31)."""
+
+    def test_default_catalog_has_five_builtin_cascade_pairs(self) -> None:
+        catalog = default_desire_catalog()
+        fixed = catalog.fixed_desires
+        assert fixed["curiosity"].implicit_emergent_satisfaction == {
+            "grasp_something": 0.5,
+        }
+        assert fixed["information_hunger"].implicit_emergent_satisfaction == {
+            "grasp_something": 0.5,
+        }
+        assert fixed["social_thirst"].implicit_emergent_satisfaction == {
+            "be_with_someone": 0.5,
+        }
+        assert fixed["resonance"].implicit_emergent_satisfaction == {
+            "be_with_someone": 0.5,
+        }
+        assert fixed["cognitive_coherence"].implicit_emergent_satisfaction == {
+            "feel_safe": 0.5,
+        }
+
+    @staticmethod
+    def _write_with_cascade(
+        tmp_path: Path, desire_id: str, cascade: dict[str, float]
+    ) -> Path:
+        path = desire_catalog_settings_path(tmp_path)
+        payload = default_desire_catalog().model_dump(mode="json")
+        payload["fixed_desires"][desire_id]["implicit_emergent_satisfaction"] = cascade
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_rejects_below_floor(self, tmp_path: Path) -> None:
+        path = self._write_with_cascade(
+            tmp_path, "curiosity", {"grasp_something": 0.4}
+        )
+        with pytest.raises(
+            DesireConfigurationError,
+            match="implicit_emergent_satisfaction.grasp_something",
+        ):
+            load_desire_catalog(path)
+
+    def test_rejects_above_one(self, tmp_path: Path) -> None:
+        path = self._write_with_cascade(
+            tmp_path, "curiosity", {"grasp_something": 1.1}
+        )
+        with pytest.raises(
+            DesireConfigurationError,
+            match="implicit_emergent_satisfaction.grasp_something",
+        ):
+            load_desire_catalog(path)
+
+    def test_accepts_floor_and_ceiling(self, tmp_path: Path) -> None:
+        path = self._write_with_cascade(
+            tmp_path,
+            "curiosity",
+            {"grasp_something": 0.5, "feel_safe": 1.0},
+        )
+        catalog = load_desire_catalog(path)
+        cascade = catalog.fixed_desires["curiosity"].implicit_emergent_satisfaction
+        assert cascade["grasp_something"] == 0.5
+        assert cascade["feel_safe"] == 1.0

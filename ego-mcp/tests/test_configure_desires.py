@@ -148,3 +148,120 @@ class TestConfigureDesires:
         assert "Catalog still has validation issues:" in result
         payload = json.loads(catalog_path.read_text(encoding="utf-8"))
         assert payload["fixed_desires"]["curiosity"]["sentence"]["settling"] == "Quiet again."
+
+
+class TestConfigureDesiresEmergentSatisfaction:
+    """configure_desires set_emergent_satisfaction action (issue #31)."""
+
+    def test_set_emergent_satisfaction_updates_catalog(
+        self, catalog_path: Path
+    ) -> None:
+        result = _handle_configure_desires(
+            str(catalog_path),
+            {
+                "action": "set_emergent_satisfaction",
+                "desire_id": "curiosity",
+                "emergent_id": "grasp_something",
+                "quality": 0.7,
+            },
+        )
+        assert "Updated curiosity.implicit_emergent_satisfaction.grasp_something" in result
+        payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        cascade = payload["fixed_desires"]["curiosity"]["implicit_emergent_satisfaction"]
+        assert cascade["grasp_something"] == 0.7
+
+    def test_set_emergent_satisfaction_missing_params(
+        self, catalog_path: Path
+    ) -> None:
+        result = _handle_configure_desires(
+            str(catalog_path),
+            {"action": "set_emergent_satisfaction", "desire_id": "curiosity"},
+        )
+        assert "requires" in result
+
+    def test_set_emergent_satisfaction_rejects_unknown_desire(
+        self, catalog_path: Path
+    ) -> None:
+        before = catalog_path.read_text(encoding="utf-8")
+        result = _handle_configure_desires(
+            str(catalog_path),
+            {
+                "action": "set_emergent_satisfaction",
+                "desire_id": "nonexistent",
+                "emergent_id": "grasp_something",
+                "quality": 0.7,
+            },
+        )
+        assert "Unknown desire: nonexistent" in result
+        assert catalog_path.read_text(encoding="utf-8") == before
+
+    def test_set_emergent_satisfaction_rejects_unknown_emergent(
+        self, catalog_path: Path
+    ) -> None:
+        before = catalog_path.read_text(encoding="utf-8")
+        result = _handle_configure_desires(
+            str(catalog_path),
+            {
+                "action": "set_emergent_satisfaction",
+                "desire_id": "curiosity",
+                "emergent_id": "not_a_real_emergent",
+                "quality": 0.7,
+            },
+        )
+        assert "Unknown emergent desire: not_a_real_emergent" in result
+        assert catalog_path.read_text(encoding="utf-8") == before
+
+    def test_set_emergent_satisfaction_rejects_below_floor(
+        self, catalog_path: Path
+    ) -> None:
+        before = catalog_path.read_text(encoding="utf-8")
+        result = _handle_configure_desires(
+            str(catalog_path),
+            {
+                "action": "set_emergent_satisfaction",
+                "desire_id": "curiosity",
+                "emergent_id": "grasp_something",
+                "quality": 0.3,
+            },
+        )
+        assert "0.5" in result
+        assert catalog_path.read_text(encoding="utf-8") == before
+
+    def test_set_emergent_satisfaction_rejects_above_one(
+        self, catalog_path: Path
+    ) -> None:
+        before = catalog_path.read_text(encoding="utf-8")
+        result = _handle_configure_desires(
+            str(catalog_path),
+            {
+                "action": "set_emergent_satisfaction",
+                "desire_id": "curiosity",
+                "emergent_id": "grasp_something",
+                "quality": 1.1,
+            },
+        )
+        assert "1" in result
+        assert catalog_path.read_text(encoding="utf-8") == before
+
+    def test_show_one_includes_implicit_emergent_satisfaction(
+        self, catalog_path: Path
+    ) -> None:
+        result = _handle_configure_desires(
+            str(catalog_path), {"action": "show", "desire_id": "curiosity"}
+        )
+        assert "implicit_emergent_satisfaction" in result
+        assert "grasp_something" in result
+
+    def test_check_does_not_flag_missing_emergent_cascade(
+        self, catalog_path: Path
+    ) -> None:
+        payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        # expression has no cascade entry by default; ensure check does not complain
+        assert (
+            payload["fixed_desires"].get("expression", {}).get(
+                "implicit_emergent_satisfaction", {}
+            )
+            == {}
+        )
+        result = _handle_configure_desires(str(catalog_path), {"action": "check"})
+        assert "missing implicit_emergent_satisfaction" not in result

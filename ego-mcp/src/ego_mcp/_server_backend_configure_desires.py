@@ -11,6 +11,7 @@ from ego_mcp.desire_catalog import (
     ensure_default_desire_catalog_file,
     load_desire_catalog,
 )
+from ego_mcp.emergent_desires import EMERGENT_DESIRE_BY_ID
 
 
 def _handle_configure_desires(
@@ -51,7 +52,28 @@ def _handle_configure_desires(
             return "set_signals requires desire_id and signals (list of strings)."
         return _set_signals(path, payload, desire_id, [str(s) for s in signals])
 
-    return f"Unknown action: {action}. Use check, show, set_sentence, or set_signals."
+    if action == "set_emergent_satisfaction":
+        desire_id = str(args.get("desire_id", "")).strip()
+        emergent_id = str(args.get("emergent_id", "")).strip()
+        quality_raw = args.get("quality")
+        if (
+            not desire_id
+            or not emergent_id
+            or not isinstance(quality_raw, (int, float))
+            or isinstance(quality_raw, bool)
+        ):
+            return (
+                "set_emergent_satisfaction requires desire_id, emergent_id, "
+                "and quality (number)."
+            )
+        return _set_emergent_satisfaction(
+            path, payload, desire_id, emergent_id, float(quality_raw)
+        )
+
+    return (
+        f"Unknown action: {action}. "
+        "Use check, show, set_sentence, set_signals, or set_emergent_satisfaction."
+    )
 
 
 def _load_catalog_payload(path: Path) -> dict[str, Any]:
@@ -104,6 +126,9 @@ def _show_one(
     implicit = desire.get("implicit_satisfaction", {})
     if isinstance(implicit, dict) and implicit:
         lines.append(f"  implicit_satisfaction: {implicit}")
+    emergent_cascade = desire.get("implicit_emergent_satisfaction", {})
+    if isinstance(emergent_cascade, dict) and emergent_cascade:
+        lines.append(f"  implicit_emergent_satisfaction: {emergent_cascade}")
     if catalog_error is not None:
         lines.append(f"  validation: {catalog_error}")
     return "\n".join(lines)
@@ -177,6 +202,36 @@ def _set_signals(
     return _write_result(
         path,
         f"Updated {desire_id}.satisfaction_signals ({len(signals)} signal(s))",
+    )
+
+
+def _set_emergent_satisfaction(
+    path: Path,
+    payload: dict[str, Any],
+    desire_id: str,
+    emergent_id: str,
+    quality: float,
+) -> str:
+    desires = _fixed_desire_payloads(payload)
+    if desire_id not in desires:
+        return f"Unknown desire: {desire_id}"
+    if emergent_id not in EMERGENT_DESIRE_BY_ID:
+        known = ", ".join(sorted(EMERGENT_DESIRE_BY_ID))
+        return f"Unknown emergent desire: {emergent_id}. Known: {known}"
+    if not 0.5 <= quality <= 1.0:
+        return (
+            f"quality must be within 0.5 <= quality <= 1.0 (got {quality})."
+        )
+
+    cascade = desires[desire_id].setdefault("implicit_emergent_satisfaction", {})
+    if not isinstance(cascade, dict):
+        cascade = {}
+        desires[desire_id]["implicit_emergent_satisfaction"] = cascade
+    cascade[emergent_id] = quality
+    _write_payload(path, payload)
+    return _write_result(
+        path,
+        f"Updated {desire_id}.implicit_emergent_satisfaction.{emergent_id} = {quality}",
     )
 
 

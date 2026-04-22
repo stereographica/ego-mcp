@@ -23,6 +23,7 @@ BUILTIN_FIXED_DESIRES: dict[str, dict[str, Any]] = {
             "discovering an interesting idea",
             "understanding something that was unclear",
         ],
+        "implicit_emergent_satisfaction": {"grasp_something": 0.5},
     },
     "social_thirst": {
         "satisfaction_hours": 24.0,
@@ -41,6 +42,7 @@ BUILTIN_FIXED_DESIRES: dict[str, dict[str, Any]] = {
             "feeling heard by someone",
             "connecting with another person",
         ],
+        "implicit_emergent_satisfaction": {"be_with_someone": 0.5},
     },
     "cognitive_coherence": {
         "satisfaction_hours": 18.0,
@@ -60,6 +62,7 @@ BUILTIN_FIXED_DESIRES: dict[str, dict[str, Any]] = {
             "finding a pattern that connects things",
             "resolving an inner contradiction",
         ],
+        "implicit_emergent_satisfaction": {"feel_safe": 0.5},
     },
     "pattern_seeking": {
         "satisfaction_hours": 72.0,
@@ -125,6 +128,7 @@ BUILTIN_FIXED_DESIRES: dict[str, dict[str, Any]] = {
             "sharing an emotional moment",
             "seeing the world through their eyes",
         ],
+        "implicit_emergent_satisfaction": {"be_with_someone": 0.5},
     },
     "expression": {
         "satisfaction_hours": 24.0,
@@ -155,6 +159,7 @@ BUILTIN_FIXED_DESIRES: dict[str, dict[str, Any]] = {
             "exploring something unknown",
             "satisfying a question",
         ],
+        "implicit_emergent_satisfaction": {"grasp_something": 0.5},
     },
 }
 
@@ -193,6 +198,7 @@ class FixedDesireConfig(BaseModel):
     sentence: DesireSentenceConfig
     implicit_satisfaction: dict[str, float] = Field(default_factory=dict)
     satisfaction_signals: list[str] = Field(default_factory=list)
+    implicit_emergent_satisfaction: dict[str, float] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_qualities(self) -> FixedDesireConfig:
@@ -200,6 +206,11 @@ class FixedDesireConfig(BaseModel):
             if not 0.0 < float(quality) <= 1.0:
                 raise ValueError(
                     f"implicit_satisfaction.{tool_name} must be within 0 < quality <= 1"
+                )
+        for emergent_id, quality in self.implicit_emergent_satisfaction.items():
+            if not 0.5 <= float(quality) <= 1.0:
+                raise ValueError(
+                    f"implicit_emergent_satisfaction.{emergent_id} must be within 0.5 <= quality <= 1"
                 )
         return self
 
@@ -322,6 +333,9 @@ def _default_fixed_desires() -> dict[str, FixedDesireConfig]:
             sentence=DesireSentenceConfig.model_validate(payload["sentence"]),
             implicit_satisfaction=dict(payload["implicit_satisfaction"]),
             satisfaction_signals=list(payload.get("satisfaction_signals", [])),
+            implicit_emergent_satisfaction=dict(
+                payload.get("implicit_emergent_satisfaction", {})
+            ),
         )
         for desire_id, payload in BUILTIN_FIXED_DESIRES.items()
     }
