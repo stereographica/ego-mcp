@@ -703,3 +703,185 @@ class TestEmergentDesireIdMigration:
         assert payload["grasp_something"]["satisfaction_quality"] == 0.9
         assert payload["grasp_something"]["satisfaction_hours"] == 24.0
         assert "You want to grasp something." not in payload
+
+
+class TestEmergentCascadeDefaultsMigration:
+    """0008_emergent_cascade_defaults adds implicit_emergent_satisfaction defaults (issue #31)."""
+
+    @pytest.fixture
+    def migration_mod(self) -> object:
+        return __import__(
+            "ego_mcp.migrations.0008_emergent_cascade_defaults",
+            fromlist=["up"],
+        )
+
+    def _catalog_path(self, data_dir: Path) -> Path:
+        return data_dir / "settings" / "desires.json"
+
+    def _backup_path(self, data_dir: Path) -> Path:
+        return data_dir / "settings" / "desires.pre_0008_emergent_cascade.json"
+
+    def _write(self, data_dir: Path, payload: dict[str, Any]) -> None:
+        path = self._catalog_path(data_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def _read(self, data_dir: Path) -> dict[str, Any]:
+        raw: dict[str, Any] = json.loads(
+            self._catalog_path(data_dir).read_text(encoding="utf-8")
+        )
+        return raw
+
+    def _minimal_v2(self) -> dict[str, Any]:
+        def _fixed(
+            hours: float, level: int, extra: dict[str, Any] | None = None
+        ) -> dict[str, Any]:
+            base: dict[str, Any] = {
+                "satisfaction_hours": hours,
+                "maslow_level": level,
+                "sentence": {"rising": "r", "steady": "s", "settling": "t"},
+                "implicit_satisfaction": {},
+                "satisfaction_signals": [],
+            }
+            if extra:
+                base.update(extra)
+            return base
+
+        return {
+            "version": 2,
+            "fixed_desires": {
+                "curiosity": _fixed(18.0, 4),
+                "information_hunger": _fixed(12.0, 1),
+                "social_thirst": _fixed(24.0, 1),
+                "resonance": _fixed(30.0, 3),
+                "cognitive_coherence": _fixed(18.0, 1),
+                "expression": _fixed(24.0, 4),
+            },
+            "emergent": {
+                "satisfaction_hours": 24.0,
+                "expiry_hours": 72.0,
+                "satisfied_ttl_hours": 168.0,
+            },
+        }
+
+    def test_adds_defaults_to_existing_catalog(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        self._write(tmp_path, self._minimal_v2())
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read(tmp_path)
+        fixed = result["fixed_desires"]
+        assert fixed["curiosity"]["implicit_emergent_satisfaction"] == {
+            "grasp_something": 0.5
+        }
+        assert fixed["information_hunger"]["implicit_emergent_satisfaction"] == {
+            "grasp_something": 0.5
+        }
+        assert fixed["social_thirst"]["implicit_emergent_satisfaction"] == {
+            "be_with_someone": 0.5
+        }
+        assert fixed["resonance"]["implicit_emergent_satisfaction"] == {
+            "be_with_someone": 0.5
+        }
+        assert fixed["cognitive_coherence"]["implicit_emergent_satisfaction"] == {
+            "feel_safe": 0.5
+        }
+        # Non-source desires are left without the field
+        assert "implicit_emergent_satisfaction" not in fixed["expression"]
+
+    def test_preserves_existing_user_values(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        payload = self._minimal_v2()
+        payload["fixed_desires"]["curiosity"]["implicit_emergent_satisfaction"] = {
+            "grasp_something": 0.8,
+        }
+        self._write(tmp_path, payload)
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read(tmp_path)
+        assert result["fixed_desires"]["curiosity"][
+            "implicit_emergent_satisfaction"
+        ] == {"grasp_something": 0.8}
+
+    def test_adds_missing_pair_without_overwriting_existing(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        payload = self._minimal_v2()
+        payload["fixed_desires"]["curiosity"]["implicit_emergent_satisfaction"] = {
+            "feel_safe": 0.9,
+        }
+        self._write(tmp_path, payload)
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read(tmp_path)
+        cascade = result["fixed_desires"]["curiosity"][
+            "implicit_emergent_satisfaction"
+        ]
+        assert cascade["feel_safe"] == 0.9
+        assert cascade["grasp_something"] == 0.5
+
+    def test_skips_when_source_desire_absent(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        payload = self._minimal_v2()
+        del payload["fixed_desires"]["resonance"]
+        self._write(tmp_path, payload)
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        result = self._read(tmp_path)
+        assert "resonance" not in result["fixed_desires"]
+
+    def test_writes_backup(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        self._write(tmp_path, self._minimal_v2())
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        assert self._backup_path(tmp_path).exists()
+        backup = json.loads(self._backup_path(tmp_path).read_text(encoding="utf-8"))
+        assert (
+            "implicit_emergent_satisfaction"
+            not in backup["fixed_desires"]["curiosity"]
+        )
+
+    def test_noop_when_catalog_file_missing(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+        assert not self._catalog_path(tmp_path).exists()
+
+    def test_noop_when_no_defaults_need_adding(
+        self, tmp_path: Path, migration_mod: object
+    ) -> None:
+        # Catalog already has all five pairs at non-default values — nothing to change.
+        payload = self._minimal_v2()
+        payload["fixed_desires"]["curiosity"]["implicit_emergent_satisfaction"] = {
+            "grasp_something": 0.7
+        }
+        payload["fixed_desires"]["information_hunger"][
+            "implicit_emergent_satisfaction"
+        ] = {"grasp_something": 0.7}
+        payload["fixed_desires"]["social_thirst"][
+            "implicit_emergent_satisfaction"
+        ] = {"be_with_someone": 0.7}
+        payload["fixed_desires"]["resonance"]["implicit_emergent_satisfaction"] = {
+            "be_with_someone": 0.7
+        }
+        payload["fixed_desires"]["cognitive_coherence"][
+            "implicit_emergent_satisfaction"
+        ] = {"feel_safe": 0.7}
+        self._write(tmp_path, payload)
+
+        migration_mod.up(tmp_path)  # type: ignore[attr-defined]
+
+        # No backup is created if no writes were performed.
+        assert not self._backup_path(tmp_path).exists()

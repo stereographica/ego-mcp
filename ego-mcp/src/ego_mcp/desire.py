@@ -455,18 +455,40 @@ class DesireEngine:
             if isinstance(state, dict) and not state.get("is_emergent", False)
         }
 
-    def satisfy(self, name: str, quality: float = 0.7) -> float:
-        """Mark a desire as satisfied. Returns new level."""
-        self.require_valid_catalog()
-        canonical_name = self._canonical_desire_name(name)
-        if not self._is_known_desire(canonical_name):
-            raise ValueError(f"Unknown desire: {name}")
+    def _apply_satisfy(self, canonical_name: str, quality: float) -> None:
+        """Mutate in-memory state for a satisfied desire. No persistence or recomputation."""
         now = timezone_utils.now().isoformat()
         if canonical_name not in self._state:
             self._state[canonical_name] = {}
         self._state[canonical_name]["last_satisfied"] = now
-        self._state[canonical_name]["satisfaction_quality"] = max(0.0, min(1.0, quality))
+        self._state[canonical_name]["satisfaction_quality"] = max(
+            0.0, min(1.0, quality)
+        )
         self._state[canonical_name]["boost"] = 0.0
+
+    def satisfy(self, name: str, quality: float = 0.7) -> float:
+        """Mark a desire as satisfied. Returns new level.
+
+        When ``name`` is a fixed desire that declares
+        ``implicit_emergent_satisfaction`` in the catalog, each mapped emergent
+        desire that is currently active in state is also satisfied with the
+        catalog-configured quality. Cascade never creates emergent entries and
+        never chains (emergent targets have no fixed-desire config).
+        """
+        catalog = self.require_valid_catalog()
+        canonical_name = self._canonical_desire_name(name)
+        if not self._is_known_desire(canonical_name):
+            raise ValueError(f"Unknown desire: {name}")
+
+        self._apply_satisfy(canonical_name, quality)
+
+        fixed = catalog.fixed_desires.get(canonical_name)
+        if fixed is not None:
+            for target_id, target_quality in fixed.implicit_emergent_satisfaction.items():
+                target_state = self._state.get(target_id)
+                if target_state is not None and target_state.get("is_emergent"):
+                    self._apply_satisfy(target_id, target_quality)
+
         self.save_state()
         return self.compute_levels().get(canonical_name, 0.0)
 

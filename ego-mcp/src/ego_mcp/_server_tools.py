@@ -271,7 +271,13 @@ BACKEND_TOOLS: list[Tool] = [
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["check", "set_sentence", "set_signals", "show"],
+                    "enum": [
+                        "check",
+                        "set_sentence",
+                        "set_signals",
+                        "set_emergent_satisfaction",
+                        "show",
+                    ],
                 },
                 "desire_id": {"type": "string", "description": "Desire ID."},
                 "direction": {
@@ -287,6 +293,14 @@ BACKEND_TOOLS: list[Tool] = [
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Satisfaction signals for set_signals.",
+                },
+                "emergent_id": {
+                    "type": "string",
+                    "description": "Emergent desire ID for cascade.",
+                },
+                "quality": {
+                    "type": "number",
+                    "description": "Cascade quality 0.5–1.0.",
                 },
             },
             "required": ["action"],
