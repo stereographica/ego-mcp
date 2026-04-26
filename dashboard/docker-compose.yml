@@ -69,6 +69,7 @@ services:
     environment:
       VITE_DASHBOARD_API_BASE: ${VITE_DASHBOARD_API_BASE:-http://localhost:8000}
       VITE_DASHBOARD_WS_BASE: ${VITE_DASHBOARD_WS_BASE:-ws://localhost:8000}
+      VITE_DASHBOARD_AGENT_NAME: ${VITE_DASHBOARD_AGENT_NAME:-}
     ports:
       - "4173:4173"
     depends_on:
