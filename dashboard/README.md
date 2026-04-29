@@ -49,6 +49,9 @@ Legacy fixed desires that do not exist in the catalog are hidden from both Now a
 - `/api/v1/desires/catalog`
 - `/api/v1/logs`
 - `/api/v1/alerts/anomalies`
+- `/api/v1/relationships/overview`
+- `/api/v1/relationships/surface-timeline`
+- `/api/v1/relationships/{person_id}/detail`
 
 See `dashboard/docs/` for details: `getting-started.md`, `configuration.md`, `operations.md`, and `api.md`.
 
