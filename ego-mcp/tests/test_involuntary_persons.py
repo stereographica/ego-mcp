@@ -105,9 +105,8 @@ class TestFormatActivePersons:
         store = RelationshipStore(tmp_path / "rels.json")
         store.update("Master", {"name": "Master", "last_interaction": "2026-01-15T10:00:00+00:00"})
         result = _format_active_persons(store)
-        assert "[around me]" in result
+        assert "Master surfaced on their own" in result
         assert "Master" in result
-        assert "2026-01-15" in result
 
     def test_limits_to_max_persons(self, tmp_path: Path) -> None:
         store = RelationshipStore(tmp_path / "rels.json")
@@ -115,7 +114,7 @@ class TestFormatActivePersons:
             store.update(pid, {"name": pid, "last_interaction": "2025-01-01T10:00:00+00:00"})
         result = _format_active_persons(store, max_persons=2)
         assert result is not None
-        assert result.count("  - ") == 2
+        assert "A and B surfaced on their own" in result
 
     def test_sorted_by_recency(self, tmp_path: Path) -> None:
         store = RelationshipStore(tmp_path / "rels.json")

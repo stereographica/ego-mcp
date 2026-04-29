@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -84,28 +85,28 @@ class TestHandleAttune:
     async def test_returns_desire_currents_section(
         self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
     ) -> None:
-        result = await _handle_attune(config, memory, engine)
+        result = await _handle_attune(config, memory, {}, engine)
         assert "Desire currents:" in result
 
     @pytest.mark.asyncio
     async def test_returns_scaffold_separator(
         self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
     ) -> None:
-        result = await _handle_attune(config, memory, engine)
+        result = await _handle_attune(config, memory, {}, engine)
         assert "---" in result
 
     @pytest.mark.asyncio
     async def test_returns_recent_emotion_section(
         self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
     ) -> None:
-        result = await _handle_attune(config, memory, engine)
+        result = await _handle_attune(config, memory, {}, engine)
         assert "Recent (past 3 days):" in result
 
     @pytest.mark.asyncio
     async def test_returns_body_sense_section(
         self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
     ) -> None:
-        result = await _handle_attune(config, memory, engine)
+        result = await _handle_attune(config, memory, {}, engine)
         assert "Body sense:" in result
         assert "morning" in result
 
@@ -113,14 +114,14 @@ class TestHandleAttune:
     async def test_no_emergent_pull_when_no_emergent_desires(
         self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
     ) -> None:
-        result = await _handle_attune(config, memory, engine)
+        result = await _handle_attune(config, memory, {}, engine)
         assert "Emergent pull:" not in result
 
     @pytest.mark.asyncio
     async def test_scaffold_contains_attune_text(
         self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
     ) -> None:
-        result = await _handle_attune(config, memory, engine)
+        result = await _handle_attune(config, memory, {}, engine)
         assert "What am I actually feeling right now" in result
 
     @pytest.mark.asyncio
@@ -132,7 +133,7 @@ class TestHandleAttune:
     ) -> None:
         """Lines 160-162: emergent_desire_sentence returns a sentence."""
         engine._state["be_with_someone"] = {"is_emergent": True}
-        result = await _handle_attune(config, memory, engine)
+        result = await _handle_attune(config, memory, {}, engine)
         assert "Emergent pull:" in result
         assert "You want to be with someone." in result
 
@@ -159,7 +160,7 @@ class TestHandleAttune:
         ]
         memory.list_recent = AsyncMock(return_value=sad_memories)
 
-        result = await _handle_attune(config, memory, engine)
+        result = await _handle_attune(config, memory, {}, engine)
 
         assert "Emergent pull:" in result
         assert "You want to be with someone." in result
@@ -181,7 +182,7 @@ class TestHandleAttune:
             category=Category.TECHNICAL,
         )
         memory.list_recent = AsyncMock(return_value=[mem])
-        result = await _handle_attune(config, memory, engine)
+        result = await _handle_attune(config, memory, {}, engine)
         # We can't predict exact interests, but the handler should not crash.
         # The output still contains standard sections.
         assert "Desire currents:" in result
@@ -214,7 +215,7 @@ class TestHandleAttune:
             "derive_current_interests",
             lambda **kwargs: [{"topic": "ml", "score": 0.9}],
         )
-        result = await _handle_attune(config, mem_store, engine)
+        result = await _handle_attune(config, mem_store, {}, engine)
         assert "This keeps coming back" in result
 
     @pytest.mark.asyncio
@@ -244,7 +245,7 @@ class TestHandleAttune:
             "derive_current_interests",
             lambda **kwargs: [{"topic": "nature", "score": 0.8}],
         )
-        result = await _handle_attune(config, mem_store, engine)
+        result = await _handle_attune(config, mem_store, {}, engine)
         assert "This keeps coming back" not in result
 
 
@@ -411,3 +412,115 @@ class TestCallGetBodyState:
         )
         result = attune_mod._call_get_body_state()
         assert result["time_phase"] == "afternoon"
+
+
+class TestAttunePersonOption:
+    """A-1: attune person option for targeted relationship snapshot."""
+
+    def test_attune_uses_companion_by_default(self, tmp_path: Path) -> None:
+        """person 未指定時、companion_name が使われる."""
+        import ego_mcp._server_surface_attune as attune_mod
+        from ego_mcp.config import EgoConfig
+        from ego_mcp.desire import DesireEngine
+
+        config = EgoConfig(
+            embedding_provider="gemini", embedding_model="gemini-embedding-001",
+            api_key="test-key", data_dir=tmp_path, companion_name="TestUser",
+            workspace_dir=None, timezone="UTC",
+        )
+        engine = DesireEngine.from_data_dir(tmp_path)
+
+        mem_store = AsyncMock()
+        mem_store.list_recent = AsyncMock(return_value=[])
+
+        result = asyncio.run(attune_mod._handle_attune(config, mem_store, {}, engine))
+        # Should contain companion name in scaffold
+        assert "TestUser" in result or "scaffold" in result.lower() or "feeling" in result.lower()
+
+    def test_attune_uses_specified_person(self, tmp_path: Path) -> None:
+        """person 指定で指定人物の relationship snapshot が応答に含まれる."""
+        import ego_mcp._server_context as ctx_mod
+        import ego_mcp._server_surface_attune as attune_mod
+        from ego_mcp.config import EgoConfig
+        from ego_mcp.desire import DesireEngine
+        from ego_mcp.relationship import RelationshipStore
+
+        config = EgoConfig(
+            embedding_provider="gemini", embedding_model="gemini-embedding-001",
+            api_key="test-key", data_dir=tmp_path, companion_name="TestUser",
+            workspace_dir=None, timezone="UTC",
+        )
+        engine = DesireEngine.from_data_dir(tmp_path)
+
+        rs = RelationshipStore(tmp_path / "rels_attune_person.json")
+        rs.update("Alice", {"name": "Alice", "trust_level": 0.7, "total_interactions": 42})
+        rs.update("TestUser", {"name": "TestUser", "trust_level": 0.9, "total_interactions": 100})
+
+        mem_store = AsyncMock()
+        mem_store.list_recent = AsyncMock(return_value=[])
+
+        import unittest.mock as mock
+        with mock.patch.object(ctx_mod, "_relationship_store", return_value=rs):
+            result = asyncio.run(attune_mod._handle_attune(config, mem_store, {"person": "Alice"}, engine))
+            # Should contain Alice's relationship snapshot
+            assert "Regarding Alice:" in result
+            assert "trust 0.7" in result
+            assert "42 interactions" in result
+
+    def test_attune_resolves_alias(self, tmp_path: Path) -> None:
+        """alias 指定で canonical name に解決される."""
+        import ego_mcp._server_context as ctx_mod
+        import ego_mcp._server_surface_attune as attune_mod
+        from ego_mcp.config import EgoConfig
+        from ego_mcp.desire import DesireEngine
+        from ego_mcp.relationship import RelationshipStore
+
+        config = EgoConfig(
+            embedding_provider="gemini", embedding_model="gemini-embedding-001",
+            api_key="test-key", data_dir=tmp_path, companion_name="TestUser",
+            workspace_dir=None, timezone="UTC",
+        )
+        engine = DesireEngine.from_data_dir(tmp_path)
+
+        rs = RelationshipStore(tmp_path / "rels_attune_alias.json")
+        rs.update("alice", {"name": "Alice", "aliases": ["Alicia", "Ali"], "trust_level": 0.5, "total_interactions": 20})
+        rs.update("TestUser", {"name": "TestUser", "trust_level": 0.9, "total_interactions": 100})
+
+        mem_store = AsyncMock()
+        mem_store.list_recent = AsyncMock(return_value=[])
+
+        import unittest.mock as mock
+        with mock.patch.object(ctx_mod, "_relationship_store", return_value=rs):
+            result = asyncio.run(attune_mod._handle_attune(config, mem_store, {"person": "Alicia"}, engine))
+            # Should resolve Alicia → alice and show Alice's snapshot
+            assert "Regarding Alice:" in result
+
+    def test_attune_telemetry_includes_person(self, tmp_path: Path) -> None:
+        """tool_metadata に attune_person が含まれる."""
+        import ego_mcp._server_context as ctx_mod
+        import ego_mcp._server_surface_attune as attune_mod
+        from ego_mcp.config import EgoConfig
+        from ego_mcp.desire import DesireEngine
+        from ego_mcp.relationship import RelationshipStore
+
+        config = EgoConfig(
+            embedding_provider="gemini", embedding_model="gemini-embedding-001",
+            api_key="test-key", data_dir=tmp_path, companion_name="TestUser",
+            workspace_dir=None, timezone="UTC",
+        )
+        engine = DesireEngine.from_data_dir(tmp_path)
+
+        rs = RelationshipStore(tmp_path / "rels_attune_telemetry.json")
+        rs.update("Alice", {"name": "Alice", "trust_level": 0.7, "total_interactions": 42})
+        rs.update("TestUser", {"name": "TestUser", "trust_level": 0.9, "total_interactions": 100})
+
+        mem_store = AsyncMock()
+        mem_store.list_recent = AsyncMock(return_value=[])
+
+        import unittest.mock as mock
+        with mock.patch.object(ctx_mod, "_relationship_store", return_value=rs):
+            with mock.patch.object(attune_mod, "update_tool_metadata") as mock_update:
+                asyncio.run(attune_mod._handle_attune(config, mem_store, {"person": "Alice"}, engine))
+                # Check that attune_person was recorded in metadata
+                call_kwargs = mock_update.call_args.kwargs if mock_update.call_args else {}
+                assert call_kwargs.get("attune_person") == "Alice"

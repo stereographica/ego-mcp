@@ -9,12 +9,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import ego_mcp._server_surface_core as core_mod
+from ego_mcp._server_runtime import get_tool_metadata
 from ego_mcp._server_surface_core import (
     _filter_desire_scaffold,
     _format_associated_from_map,
     _handle_consider_them,
     _handle_introspect,
     _handle_pause,
+    _handle_wake_up,
     _merge_topic_hints,
     _parse_episode_time,
     _sanitize_impulse_event,
@@ -283,3 +285,148 @@ class TestHandleIntrospect:
         assert "Desire trend:" in result
         assert "curiosity: rising" in result
         assert "expression: settling" in result
+
+
+class TestConsiderThemPersonTelemetry:
+    """Task 3-3: consider_them telemetry person_id."""
+
+    @pytest.fixture
+    def config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EgoConfig:
+        monkeypatch.setenv("EGO_MCP_DATA_DIR", str(tmp_path / "ego-data"))
+        monkeypatch.setenv("EGO_MCP_COMPANION_NAME", "TestUser")
+        return EgoConfig.from_env()
+
+    @pytest.mark.asyncio
+    async def test_person_id_recorded(
+        self, config: EgoConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """person_id is recorded in telemetry when specified."""
+
+        async def fake_tendency(_mem: object, _person: str) -> tuple[str, str, list[str], list[str]]:
+            return "occasional", "neutral", [], []
+
+        monkeypatch.setattr(core_mod, "_summarize_conversation_tendency", fake_tendency)
+        mem = AsyncMock()
+        result = await _handle_consider_them(config, mem, {"person": "alice"})
+        assert result is not None
+
+        meta = get_tool_metadata()
+        assert meta is not None
+        assert meta.get("person_id") == "alice"
+
+    @pytest.mark.asyncio
+    async def test_trust_level_for_non_companion(
+        self, config: EgoConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """trust_level is recorded for non-companion persons."""
+
+        async def fake_tendency(_mem: object, _person: str) -> tuple[str, str, list[str], list[str]]:
+            return "occasional", "neutral", [], []
+
+        monkeypatch.setattr(core_mod, "_summarize_conversation_tendency", fake_tendency)
+        mem = AsyncMock()
+        result = await _handle_consider_them(config, mem, {"person": "alice"})
+        assert result is not None
+
+        meta = get_tool_metadata()
+        assert meta is not None
+        assert meta.get("trust_level") is not None
+
+
+class TestActivePersonsTelemetry:
+    """Task 3-4: active_person_ids telemetry for wake_up/introspect/attune."""
+
+    @pytest.fixture
+    def config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EgoConfig:
+        monkeypatch.setenv("EGO_MCP_DATA_DIR", str(tmp_path / "ego-data"))
+        monkeypatch.setenv("EGO_MCP_COMPANION_NAME", "TestUser")
+        return EgoConfig.from_env()
+
+    @pytest.mark.asyncio
+    async def test_active_person_ids_in_wake_up(
+        self, config: EgoConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """wake_up records active_person_ids in telemetry."""
+
+        mem = AsyncMock()
+        mem.list_recent = AsyncMock(return_value=[])
+
+        # Mock _format_active_persons to return a non-empty string
+        import ego_mcp._server_surface_core as core_mod
+        monkeypatch.setattr(
+            core_mod,
+            "_format_active_persons",
+            lambda *a, **k: "\nAlice and Bob surfaced on their own.",
+        )
+        monkeypatch.setattr(
+            core_mod,
+            "_get_active_person_ids",
+            lambda *a, **k: ["alice", "bob"],
+        )
+
+        class FakeDesire:
+            @property
+            def ema_levels(self) -> dict[str, float]:
+                return {}
+
+            def compute_levels_with_modulation(self, **kw: Any) -> dict[str, float]:
+                return {}
+
+            def expire_emergent_desires(self) -> None:
+                pass
+
+            _state: dict[str, Any] = {}
+
+        result = await _handle_wake_up(config, mem, cast(Any, FakeDesire()))
+        assert result is not None
+
+        meta = get_tool_metadata()
+        assert meta is not None
+        assert meta.get("active_person_ids") is not None
+        import json as json_mod
+        parsed = json_mod.loads(str(meta["active_person_ids"]))
+        assert "alice" in parsed
+        assert "bob" in parsed
+
+    @pytest.mark.asyncio
+    async def test_active_person_ids_in_introspect(
+        self, config: EgoConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """introspect records active_person_ids in telemetry."""
+
+        mem = AsyncMock()
+        mem.list_recent = AsyncMock(return_value=[])
+
+        import ego_mcp._server_surface_core as core_mod
+        monkeypatch.setattr(
+            core_mod,
+            "_format_active_persons",
+            lambda *a, **k: "\nAlice surfaced on their own.",
+        )
+        monkeypatch.setattr(
+            core_mod,
+            "_get_active_person_ids",
+            lambda *a, **k: ["alice"],
+        )
+
+        class FakeDesire:
+            @property
+            def ema_levels(self) -> dict[str, float]:
+                return {}
+
+            def compute_levels_with_modulation(self, **kw: Any) -> dict[str, float]:
+                return {}
+
+        mock_store = MagicMock()
+        mock_store.list_all.return_value = []
+        monkeypatch.setattr(core_mod, "get_notion_store", lambda: mock_store)
+
+        result = await _handle_introspect(config, mem, cast(Any, FakeDesire()))
+        assert result is not None
+
+        meta = get_tool_metadata()
+        assert meta is not None
+        assert meta.get("active_person_ids") is not None
+        import json as json_mod
+        parsed = json_mod.loads(str(meta["active_person_ids"]))
+        assert "alice" in parsed

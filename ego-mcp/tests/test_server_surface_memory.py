@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,6 +14,7 @@ from ego_mcp._server_surface_memory import (
     _call_get_body_state,
     _call_relative_time,
     _float_or_default,
+    _handle_recall,
     _handle_remember,
     _normalize_tags,
     configure_overrides,
@@ -700,6 +702,10 @@ class TestHandleRememberSharedWith:
         monkeypatch.setattr(runtime, "_episodes_getter", lambda: mock_episodes)
 
         mock_rel_store = MagicMock()
+        mock_rel_store.resolve_person.return_value = None
+        mock_rel = MagicMock()
+        mock_rel.name = "Alice"
+        mock_rel_store.get.return_value = mock_rel
         monkeypatch.setattr(
             mem_mod,
             "_relationship_store",
@@ -737,6 +743,10 @@ class TestHandleRememberSharedWith:
         monkeypatch.setattr(runtime, "_episodes_getter", lambda: mock_episodes)
 
         mock_rel_store = MagicMock()
+        mock_rel_store.resolve_person.return_value = None
+        mock_rel = MagicMock()
+        mock_rel.name = "Bob"
+        mock_rel_store.get.return_value = mock_rel
         monkeypatch.setattr(
             mem_mod,
             "_relationship_store",
@@ -774,6 +784,10 @@ class TestHandleRememberSharedWith:
         monkeypatch.setattr(runtime, "_episodes_getter", lambda: mock_episodes)
 
         mock_rel_store = MagicMock()
+        mock_rel_store.resolve_person.return_value = None
+        mock_rel = MagicMock()
+        mock_rel.name = "Carol"
+        mock_rel_store.get.return_value = mock_rel
         monkeypatch.setattr(
             mem_mod,
             "_relationship_store",
@@ -855,3 +869,221 @@ class TestHandleRememberResurfaced:
 
         ctx = pop_tool_context("remember")
         assert ctx.get("resurfaced_memory_id") == "resurf-1"
+
+
+class TestRecallPersonTelemetry:
+    """Task 3-1: recall telemetry person details."""
+
+    @pytest.mark.asyncio
+    async def test_resonant_person_ids_included(
+        self,
+        remember_config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """resonant persons appear in resonant_person_ids."""
+        import json as json_mod
+
+        from ego_mcp._server_runtime import get_tool_metadata
+
+        class FakeMemoryStore:
+            def collection_count(self) -> int:
+                return 1
+            async def recall(self, context: str, **kwargs: Any) -> list[MemorySearchResult]:
+                return [
+                    MemorySearchResult(
+                        memory=Memory(
+                            id="m1",
+                            content="Hello",
+                            timestamp="2024-01-01T00:00:00Z",
+                            involved_person_ids=["alice"],
+                        ),
+                        distance=0.1,
+                        decay=0.3,
+                    )
+                ]
+
+        class FakeNotionStore:
+            def search_related(self, **kw: Any) -> list[Notion]:
+                return []
+            def get_associated(self, *a: Any, **k: Any) -> list[Notion]:
+                return []
+
+        import ego_mcp._server_surface_memory as mem_mod
+        monkeypatch.setattr(
+            mem_mod,
+            "_collect_resonant_persons",
+            lambda *a, **k: [type("RP", (), {"person_id": "alice", "name": "Alice", "surface_type": "resonant"})()],
+        )
+        monkeypatch.setattr(mem_mod, "get_notion_store", lambda: FakeNotionStore())
+
+        result = await _handle_recall(remember_config, FakeMemoryStore(), {"context": "test"})  # type: ignore[arg-type]
+        assert result is not None
+
+        meta = get_tool_metadata()
+        assert meta is not None
+        assert meta.get("resonant_person_ids") is not None
+        parsed = json_mod.loads(str(meta["resonant_person_ids"]))
+        assert "alice" in parsed
+
+    @pytest.mark.asyncio
+    async def test_involuntary_person_ids_included(
+        self,
+        remember_config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """involuntary persons appear in involuntary_person_ids."""
+        import json as json_mod
+
+        from ego_mcp._server_runtime import get_tool_metadata
+
+        class FakeMemoryStore:
+            def collection_count(self) -> int:
+                return 1
+            async def recall(self, context: str, **kwargs: Any) -> list[MemorySearchResult]:
+                return [
+                    MemorySearchResult(
+                        memory=Memory(
+                            id="m1",
+                            content="Hello",
+                            timestamp="2024-01-01T00:00:00Z",
+                            involved_person_ids=[],
+                        ),
+                        distance=0.1,
+                        decay=0.3,
+                    )
+                ]
+            @property
+            def _last_recall_metadata(self) -> dict[str, Any]:
+                return {"involuntary_person_ids": ["bob"]}
+
+        class FakeNotionStore:
+            def search_related(self, **kw: Any) -> list[Notion]:
+                return []
+            def get_associated(self, *a: Any, **k: Any) -> list[Notion]:
+                return []
+
+        import ego_mcp._server_surface_memory as mem_mod
+        monkeypatch.setattr(
+            mem_mod,
+            "_collect_resonant_persons",
+            lambda *a, **k: [],
+        )
+        monkeypatch.setattr(mem_mod, "get_notion_store", lambda: FakeNotionStore())
+
+        result = await _handle_recall(remember_config, FakeMemoryStore(), {"context": "test"})  # type: ignore[arg-type]
+        assert result is not None
+
+        meta = get_tool_metadata()
+        assert meta is not None
+        assert meta.get("involuntary_person_ids") is not None
+        parsed = json_mod.loads(str(meta["involuntary_person_ids"]))
+        assert "bob" in parsed
+
+    @pytest.mark.asyncio
+    async def test_surfaced_person_ids_combined(
+        self,
+        remember_config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """surfaced_person_ids is union of resonant + involuntary."""
+        import json as json_mod
+
+        from ego_mcp._server_runtime import get_tool_metadata
+
+        class FakeMemoryStore:
+            def collection_count(self) -> int:
+                return 1
+            async def recall(self, context: str, **kwargs: Any) -> list[MemorySearchResult]:
+                return [
+                    MemorySearchResult(
+                        memory=Memory(
+                            id="m1",
+                            content="Hello",
+                            timestamp="2024-01-01T00:00:00Z",
+                            involved_person_ids=["alice"],
+                        ),
+                        distance=0.1,
+                        decay=0.3,
+                    )
+                ]
+            @property
+            def _last_recall_metadata(self) -> dict[str, Any]:
+                return {"involuntary_person_ids": ["bob"]}
+
+        class FakeNotionStore:
+            def search_related(self, **kw: Any) -> list[Notion]:
+                return []
+            def get_associated(self, *a: Any, **k: Any) -> list[Notion]:
+                return []
+
+        import ego_mcp._server_surface_memory as mem_mod
+        monkeypatch.setattr(
+            mem_mod,
+            "_collect_resonant_persons",
+            lambda *a, **k: [type("RP", (), {"person_id": "alice", "name": "Alice", "surface_type": "resonant"})()],
+        )
+        monkeypatch.setattr(mem_mod, "get_notion_store", lambda: FakeNotionStore())
+
+        result = await _handle_recall(remember_config, FakeMemoryStore(), {"context": "test"})  # type: ignore[arg-type]
+        assert result is not None
+
+        meta = get_tool_metadata()
+        assert meta is not None
+        assert meta.get("surfaced_person_ids") is not None
+        parsed = json_mod.loads(str(meta["surfaced_person_ids"]))
+        assert "alice" in parsed
+        assert "bob" in parsed
+
+
+class TestRememberPersonTelemetry:
+    """Task 3-2: remember telemetry involved_person_ids."""
+
+    @pytest.mark.asyncio
+    async def test_involved_person_ids_with_shared_with(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """shared_with causes involved_person_ids to be recorded in telemetry."""
+        import json as json_mod
+
+        from ego_mcp._server_runtime import get_tool_metadata
+
+        mock_memory.save.return_value = Memory(id="m1", content="Test", timestamp="2024-01-01T00:00:00Z", involved_person_ids=["alice"])
+        mock_memory.get_by_id.return_value = None
+
+        await _handle_remember(
+            remember_config,
+            mock_memory,
+            {"content": "Test", "shared_with": ["alice"]},
+        )
+
+        meta = get_tool_metadata()
+        assert meta is not None
+        assert meta.get("involved_person_ids") is not None
+        parsed = json_mod.loads(str(meta["involved_person_ids"]))
+        assert "alice" in parsed
+
+    @pytest.mark.asyncio
+    async def test_involved_person_ids_empty_when_none(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No shared_with means involved_person_ids is not set in telemetry."""
+        from ego_mcp._server_runtime import get_tool_metadata
+
+        mock_memory.save.return_value = Memory(id="m1", content="Test", timestamp="2024-01-01T00:00:00Z", involved_person_ids=[])
+        mock_memory.get_by_id.return_value = None
+
+        await _handle_remember(
+            remember_config,
+            mock_memory,
+            {"content": "Test"},
+        )
+
+        meta = get_tool_metadata()
+        assert meta is not None
+        assert meta.get("involved_person_ids") is None

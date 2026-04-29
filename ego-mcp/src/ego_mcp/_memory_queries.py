@@ -37,12 +37,15 @@ def _collect_involuntary_persons(
     Returns up to max_persons with surface_type="involuntary", ranked by
     last_interaction ascending (oldest first).
     """
-    # Collect all person_ids from dormant candidates
+    # Collect all person_ids from dormant candidates, canonicalizing via
+    # resolve_person so that legacy alias pids match canonical exclusion set.
     dormant_persons: dict[str, MemorySearchResult] = {}
     for candidate in dormant_candidates:
         for pid in candidate.memory.involved_person_ids:
-            if pid not in dormant_persons:
-                dormant_persons[pid] = candidate
+            resolved = relationship_store.resolve_person(pid)
+            canon_id = resolved if resolved is not None else pid
+            if canon_id not in dormant_persons:
+                dormant_persons[canon_id] = candidate
 
     if not dormant_persons:
         return []
@@ -55,9 +58,6 @@ def _collect_involuntary_persons(
         rel = relationship_store.get(pid)
         last_interaction = rel.last_interaction if rel else None
         candidates.append((pid, last_interaction, candidate))
-
-    if not candidates:
-        return []
 
     # Sort by last_interaction ascending (oldest first, None = oldest)
     def _sort_key(item: tuple[str, str | None, MemorySearchResult]) -> tuple[int, str]:
@@ -398,24 +398,6 @@ async def recall(
         arousal_range=arousal_range,
     )
 
-    # §3.1 Involuntary person surface — Proust companion
-    involuntary_persons: list[RecalledPerson] = []
-    if (
-        dormant_candidates
-        and relationship_store is not None
-        and random.random() < PROUST_PERSON_PROBABILITY
-    ):
-        # Collect person_ids from resonant (base_results will be set later)
-        resonant_pids: set[str] = set()
-        for result in candidates[:n_results]:
-            resonant_pids.update(result.memory.involved_person_ids)
-        involuntary_persons = _collect_involuntary_persons(
-            dormant_candidates,
-            relationship_store,
-            excluded_person_ids=resonant_pids,
-            max_persons=1,
-        )
-
     candidate_pool: list[MemorySearchResult] = []
     seen_candidate_ids: set[str] = set()
     for result in [*candidates, *dormant_candidates]:
@@ -498,6 +480,31 @@ async def recall(
                 proust_result,
             ]
             break
+
+    # §3.1 Involuntary person surface — Proust companion
+    # Collected after Hopfield/spreading activation so excluded_person_ids
+    # reflects the final resonant set (not an intermediate candidate pool).
+    involuntary_persons: list[RecalledPerson] = []
+    if (
+        dormant_candidates
+        and relationship_store is not None
+        and random.random() < PROUST_PERSON_PROBABILITY
+    ):
+        # Collect person_ids from the final resonant results (excluding Proust)
+        # and canonicalize via resolve_person to prevent alias fragmentation.
+        resonant_pids: set[str] = set()
+        for result in base_results:
+            if result.is_proust:
+                continue
+            for pid in result.memory.involved_person_ids:
+                resolved = relationship_store.resolve_person(pid)
+                resonant_pids.add(resolved if resolved is not None else pid)
+        involuntary_persons = _collect_involuntary_persons(
+            dormant_candidates,
+            relationship_store,
+            excluded_person_ids=resonant_pids,
+            max_persons=1,
+        )
 
     if base_results:
         await _increment_access_metadata(store, base_results)

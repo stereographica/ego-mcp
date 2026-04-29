@@ -28,8 +28,12 @@ from ego_mcp._server_runtime import (
     get_impulse_manager,
     get_notion_store,
     get_workspace_sync,
+    update_tool_metadata,
 )
-from ego_mcp._server_surface_person import _format_active_persons
+from ego_mcp._server_surface_person import (
+    _format_active_persons,
+    _get_active_person_ids,
+)
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_blend import blend_desires
@@ -358,16 +362,22 @@ async def _handle_wake_up(
     parts.append(relationship_line)
 
     # 8. Active persons
+    _active_person_ids: list[str] = []
     try:
         from ego_mcp._server_context import _relationship_store
         _ws = _relationship_store(config)
         active_persons = _format_active_persons(_ws, max_persons=2)
         if active_persons:
             parts.append(active_persons)
+        _active_person_ids = _get_active_person_ids(_ws, max_persons=2)
     except Exception:
         pass
 
     data = "\n\n".join(parts)
+    if _active_person_ids:
+        update_tool_metadata(
+            active_person_ids=json.dumps(_active_person_ids),
+        )
     return render_with_data(data, SCAFFOLD_WAKE_UP, config.companion_name)
 
 
@@ -539,15 +549,21 @@ async def _handle_introspect(
     data = "\n".join(part for part in parts if part)
 
     # Active persons
+    _introspect_active_ids: list[str] = []
     try:
         from ego_mcp._server_context import _relationship_store
         _ws = _relationship_store(config)
         active_persons = _format_active_persons(_ws, max_persons=2)
         if active_persons:
             data += "\n" + active_persons
+        _introspect_active_ids = _get_active_person_ids(_ws, max_persons=2)
     except Exception:
         pass
 
+    if _introspect_active_ids:
+        update_tool_metadata(
+            active_person_ids=json.dumps(_introspect_active_ids),
+        )
     return render_with_data(
         data,
         _filter_desire_scaffold(SCAFFOLD_INTROSPECT, desire),
@@ -575,6 +591,9 @@ async def _handle_consider_them(
     """ToM: relationship summary + scaffold."""
     person = args.get("person", config.companion_name)
     store = _relationship_store(config)
+    resolved = store.resolve_person(person)
+    if resolved is not None:
+        person = resolved
     rel = store.get(person)
     (
         frequency,
@@ -639,6 +658,12 @@ async def _handle_consider_them(
                 f'  - "{notion.label}" confidence: {notion.confidence:.1f}'
             )
         data = f"{data}\n" + "\n".join(impression_lines)
+    update_tool_metadata(
+        person_id=person,
+        trust_level=rel.trust_level,
+        total_interactions=rel.total_interactions,
+        shared_episodes_count=len(rel.shared_episode_ids),
+    )
     return render_with_data(
         data,
         _filter_desire_scaffold(SCAFFOLD_CONSIDER_THEM, desire),

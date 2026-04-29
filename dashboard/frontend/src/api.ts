@@ -9,9 +9,12 @@ import type {
   MemoryDetail,
   MemoryNetworkPath,
   MemoryNetworkResponse,
+  PersonDetail,
+  PersonOverview,
   SeriesPoint,
   Notion,
   StringPoint,
+  SurfaceTimelinePoint,
   UsagePoint,
 } from './types'
 
@@ -272,3 +275,26 @@ export const fetchArousal = async (
   range: DateRange,
   bucket: string,
 ): Promise<SeriesPoint[]> => fetchMetric('arousal', range, bucket)
+
+export const fetchRelationshipsOverview = async (): Promise<{
+  items: PersonOverview[]
+}> => get('/api/v1/relationships/overview', { items: [] })
+
+export const fetchSurfaceTimeline = async (
+  range: DateRange,
+): Promise<{ items: SurfaceTimelinePoint[] }> => {
+  const data = await get<{ items: SurfaceTimelinePoint[] }>(
+    `/api/v1/relationships/surface-timeline?${encodeRange(range)}`,
+    { items: [] },
+  )
+  return data
+}
+
+export const fetchPersonDetail = async (
+  personId: string,
+  range: DateRange,
+): Promise<PersonDetail | null> =>
+  get<PersonDetail | null>(
+    `/api/v1/relationships/${encodeURIComponent(personId)}/detail?${encodeRange(range)}`,
+    null,
+  )

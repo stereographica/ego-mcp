@@ -194,3 +194,28 @@ export type LogLine = {
   logger?: string
   message?: string
 }
+
+export type PersonOverview = {
+  person_id: string
+  name: string
+  relation_kind: 'interlocutor' | 'mentioned'
+  trust_level: number | null
+  total_interactions: number
+  shared_episodes_count: number
+  last_interaction: string | null
+  first_interaction: string | null
+  aliases: string[]
+}
+
+export type PersonDetail = {
+  person_id: string
+  trust_history: Array<{ ts: string; value: number }>
+  shared_episodes_history: Array<{ ts: string; value: number }>
+  surface_counts: { resonant: number; involuntary: number; total: number }
+}
+
+export type SurfaceTimelinePoint = {
+  ts: string
+  person_id: string
+  surface_type: 'resonant' | 'involuntary'
+}

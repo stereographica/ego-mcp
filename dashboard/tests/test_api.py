@@ -1190,6 +1190,21 @@ def test_ws_current_stream_sends_snapshot_deduped_logs_and_ping(
             del start, end
             return []
 
+        def surface_timeline(self, start: datetime, end: datetime) -> list[dict[str, str]]:
+            del start, end
+            return []
+
+        def relationship_detail(
+            self, person_id: str, start: datetime, end: datetime
+        ) -> dict[str, object]:
+            del start, end
+            return {
+                "person_id": person_id,
+                "trust_history": [],
+                "shared_episodes_history": [],
+                "surface_counts": {"resonant": 0, "involuntary": 0, "total": 0},
+            }
+
     async def fake_sleep(_seconds: float) -> None:
         raise RuntimeError("stop websocket loop")
 
@@ -1216,3 +1231,242 @@ def test_ws_current_stream_sends_snapshot_deduped_logs_and_ping(
         assert second_log["data"]["ok"] is False
 
         assert ping == {"type": "ping"}
+
+
+def test_relationships_overview_endpoint_returns_empty_without_data_dir() -> None:
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/relationships/overview")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+def test_relationships_overview_endpoint_reads_relationship_store(
+    tmp_path: Path,
+) -> None:
+    rel_dir = tmp_path / "relationships"
+    rel_dir.mkdir()
+    (rel_dir / "models.json").write_text(
+        json.dumps(
+            {
+                "alice": {
+                    "person_id": "alice",
+                    "name": "Alice",
+                    "trust_level": 0.8,
+                    "total_interactions": 42,
+                    "shared_episodes_count": 7,
+                    "last_interaction": "2026-01-05T12:00:00+00:00",
+                    "first_interaction": "2026-01-01T12:00:00+00:00",
+                    "aliases": ["Alicia", "Ali"],
+                    "relation_kind": "interlocutor",
+                },
+                "bob": {
+                    "person_id": "bob",
+                    "name": "Bob",
+                    "trust_level": 0.3,
+                    "total_interactions": 5,
+                    "shared_episodes_count": 1,
+                    "last_interaction": "2026-01-03T12:00:00+00:00",
+                    "first_interaction": "2026-01-02T12:00:00+00:00",
+                    "aliases": [],
+                    "relation_kind": "mentioned",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/relationships/overview")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 2
+    assert items[0]["person_id"] == "alice"
+    assert items[0]["name"] == "Alice"
+    assert items[0]["relation_kind"] == "interlocutor"
+    assert items[0]["trust_level"] == 0.8
+    assert items[0]["total_interactions"] == 42
+    assert items[0]["shared_episodes_count"] == 7
+    assert items[0]["aliases"] == ["Alicia", "Ali"]
+    assert items[1]["person_id"] == "bob"
+    assert items[1]["relation_kind"] == "mentioned"
+
+
+def test_relationships_overview_endpoint_handles_invalid_json(
+    tmp_path: Path,
+) -> None:
+    rel_dir = tmp_path / "relationships"
+    rel_dir.mkdir()
+    (rel_dir / "models.json").write_text("{broken", encoding="utf-8")
+
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/relationships/overview")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+def test_surface_timeline_endpoint_returns_empty_without_events() -> None:
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(),
+    )
+    client = TestClient(app)
+
+    query = "from=2026-01-01T12:00:00Z&to=2026-01-01T13:00:00Z"
+    response = client.get(f"/api/v1/relationships/surface-timeline?{query}")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+def test_surface_timeline_endpoint_parses_person_ids_from_telemetry() -> None:
+    store = TelemetryStore()
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+    store.ingest(
+        DashboardEvent(
+            ts=base,
+            event_type="tool_call_completed",
+            tool_name="recall",
+            ok=True,
+            duration_ms=10,
+            string_metrics={
+                "surfaced_person_ids": json.dumps(["alice", "bob"]),
+                "resonant_person_ids": json.dumps(["alice"]),
+            },
+            params={},
+            private=False,
+        )
+    )
+    store.ingest(
+        DashboardEvent(
+            ts=base + timedelta(minutes=10),
+            event_type="tool_call_completed",
+            tool_name="recall",
+            ok=True,
+            duration_ms=10,
+            string_metrics={
+                "involuntary_person_ids": json.dumps(["charlie"]),
+            },
+            params={},
+            private=False,
+        )
+    )
+
+    app = create_app(store)
+    client = TestClient(app)
+
+    from_ts = base.isoformat().replace("+", "%2B")
+    to_ts = (base + timedelta(hours=1)).isoformat().replace("+", "%2B")
+    query = f"from={from_ts}&to={to_ts}"
+    response = client.get(f"/api/v1/relationships/surface-timeline?{query}")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 2
+    types_by_pid = {item["person_id"]: item["surface_type"] for item in items}
+    assert types_by_pid["alice"] == "resonant"
+    assert types_by_pid["charlie"] == "involuntary"
+
+
+def test_relationship_detail_endpoint_returns_empty_for_missing_person() -> None:
+    store = TelemetryStore()
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    from_ts = base.isoformat().replace("+", "%2B")
+    to_ts = (base + timedelta(hours=1)).isoformat().replace("+", "%2B")
+
+    app = create_app(store)
+    client = TestClient(app)
+
+    query = f"from={from_ts}&to={to_ts}"
+    response = client.get(f"/api/v1/relationships/nonexistent/detail?{query}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["person_id"] == "nonexistent"
+    assert data["surface_counts"] == {"resonant": 0, "involuntary": 0, "total": 0}
+
+
+def test_relationship_detail_endpoint_aggregates_metrics_for_person() -> None:
+    store = TelemetryStore()
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+    store.ingest(
+        DashboardEvent(
+            ts=base,
+            event_type="tool_call_completed",
+            tool_name="consider_them",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={"trust_level": 0.5, "total_interactions": 10},
+            string_metrics={
+                "person_id": "alice",
+            },
+            params={},
+            private=False,
+        )
+    )
+    store.ingest(
+        DashboardEvent(
+            ts=base + timedelta(minutes=5),
+            event_type="tool_call_completed",
+            tool_name="wake_up",
+            ok=True,
+            duration_ms=10,
+            numeric_metrics={"trust_level": 0.6, "shared_episodes_count": 3},
+            string_metrics={
+                "resonant_person_ids": json.dumps(["alice"]),
+            },
+            params={},
+            private=False,
+        )
+    )
+    store.ingest(
+        DashboardEvent(
+            ts=base + timedelta(minutes=10),
+            event_type="tool_call_completed",
+            tool_name="recall",
+            ok=True,
+            duration_ms=10,
+            string_metrics={
+                "involuntary_person_ids": json.dumps(["alice"]),
+            },
+            params={},
+            private=False,
+        )
+    )
+
+    app = create_app(store)
+    client = TestClient(app)
+
+    from_ts = base.isoformat().replace("+", "%2B")
+    to_ts = (base + timedelta(hours=1)).isoformat().replace("+", "%2B")
+    query = f"from={from_ts}&to={to_ts}"
+    response = client.get(f"/api/v1/relationships/alice/detail?{query}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["person_id"] == "alice"
+    assert len(data["trust_history"]) == 1
+    assert data["trust_history"][0]["value"] == 0.5
+    assert len(data["shared_episodes_history"]) == 0
+    assert data["surface_counts"]["resonant"] == 1
+    assert data["surface_counts"]["involuntary"] == 1
+    assert data["surface_counts"]["total"] == 2

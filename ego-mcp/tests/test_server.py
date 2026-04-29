@@ -559,7 +559,7 @@ class TestImplicitSatisfactionFromServer:
         assert extra["arousal"] == 0.7
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("tool_name", ["consider_them", "wake_up"])
+    @pytest.mark.parametrize("tool_name", ["wake_up"])
     async def test_completion_log_context_includes_relationship_metrics_for_social_tools(
         self, tool_name: str, desire: DesireEngine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -603,6 +603,7 @@ class TestImplicitSatisfactionFromServer:
         assert extra["trust_level"] == 0.82
         assert extra["total_interactions"] == 15
         assert extra["shared_episodes_count"] == 3
+        assert extra["person_id"] == "Master"
 
     @pytest.mark.asyncio
     async def test_completion_log_context_skips_relationship_for_other_tools(
@@ -832,6 +833,7 @@ class TestImplicitSatisfactionFromServer:
         text = await attune_surface_mod._handle_attune(
             cast(Any, config),
             cast(Any, FakeMemoryStore()),
+            {},
             cast(Any, FakeDesire()),
         )
 
@@ -904,6 +906,7 @@ class TestImplicitSatisfactionFromServer:
         text = await attune_surface_mod._handle_attune(
             cast(Any, SimpleNamespace(companion_name="Master", data_dir=tmp_path)),
             cast(Any, FakeMemoryStore()),
+            {},
             desire,
         )
 
