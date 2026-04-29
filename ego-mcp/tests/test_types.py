@@ -192,3 +192,49 @@ class TestNowIso:
         iso = Memory.now_iso()
         assert "T" in iso
         assert "+" in iso or "Z" in iso or iso.endswith("+00:00")
+
+    def test_memory_involved_person_ids_default(self) -> None:
+        m = Memory()
+        assert m.involved_person_ids == []
+
+    def test_relationship_model_aliases_default(self) -> None:
+        rm = RelationshipModel()
+        assert rm.aliases == []
+
+    def test_relationship_model_relation_kind_default(self) -> None:
+        rm = RelationshipModel()
+        assert rm.relation_kind == "interlocutor"
+
+
+class TestRecalledPerson:
+    """Tests for RecalledPerson dataclass."""
+
+    def test_recalled_person_defaults(self) -> None:
+        from ego_mcp.types import RecalledPerson
+
+        rp = RecalledPerson(
+            person_id="Master",
+            name="Master",
+            surface_type="resonant",
+            trigger_memory_id=None,
+        )
+        assert rp.person_id == "Master"
+        assert rp.name == "Master"
+        assert rp.surface_type == "resonant"
+        assert rp.trigger_memory_id is None
+
+
+class TestInvolvedPersonIdsIsolation:
+    """involved_person_ids not shared between Memory instances."""
+
+    def test_involved_person_ids_not_shared(self) -> None:
+        m1 = Memory()
+        m2 = Memory()
+        m1.involved_person_ids.append("Master")
+        assert len(m2.involved_person_ids) == 0
+
+    def test_aliases_not_shared(self) -> None:
+        r1 = RelationshipModel()
+        r2 = RelationshipModel()
+        r1.aliases.append("マスター")
+        assert len(r2.aliases) == 0

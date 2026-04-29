@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from ego_mcp import timezone_utils
 from ego_mcp._memory_queries import find_resurfacing_memories
+from ego_mcp._memory_serialization import memory_to_chromadb
 from ego_mcp._server_context import (
     _find_related_forgotten_questions,
     _relationship_store,
@@ -25,6 +26,7 @@ from ego_mcp._server_runtime import (
     get_workspace_sync,
     update_tool_metadata,
 )
+from ego_mcp._server_surface_person import _collect_resonant_persons
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_satisfaction import SignalEmbeddingCache, infer_desire_satisfaction
@@ -280,12 +282,23 @@ async def _handle_remember(
 
         episode_memory_ids = list(dict.fromkeys([mem.id, *related_ids]))
         summary = f"Shared experience with {', '.join(shared_with)}: {str(content)[:100]}"
+        mem.involved_person_ids = list(shared_with)
         try:
             episode_store = get_episodes()
             episode = await episode_store.create(episode_memory_ids, summary)
             relationship_store = _relationship_store(config)
             for person in shared_with:
                 relationship_store.add_shared_episode(person, episode.id)
+            # Persist involved_person_ids to ChromaDB metadata
+            try:
+                collection = memory._ensure_connected()
+                if hasattr(collection, 'update'):
+                    collection.update(
+                        ids=[mem.id],
+                        metadatas=[memory_to_chromadb(mem)],
+                    )
+            except (AttributeError, TypeError, KeyError, ValueError) as exc:
+                logger.debug("involved_person_ids persist failed (non-fatal): %s", exc)
             shared_episode_section = (
                 "\n"
                 f"Shared episode created: {episode.id} "
@@ -382,7 +395,6 @@ async def _handle_recall(
     config: EgoConfig, memory: MemoryStore, args: dict[str, Any]
 ) -> str:
     """Recall memories by context."""
-    del config
     _set_tool_context("recall", {})
     context = args["context"]
     raw_n_results = args.get("n_results", 3)
@@ -410,6 +422,11 @@ async def _handle_recall(
         if value
     ]
 
+    relationship_store: Any = None
+    try:
+        relationship_store = _relationship_store(config)
+    except (AttributeError, KeyError):
+        pass
     results = await memory.recall(
         context,
         n_results=n_results,
@@ -419,6 +436,7 @@ async def _handle_recall(
         date_to=date_to,
         valence_range=valence_range,
         arousal_range=arousal_range,
+        relationship_store=relationship_store,
     )
 
     total_count = memory.collection_count()
@@ -461,14 +479,51 @@ async def _handle_recall(
                             for item in associated[:2]
                         )
                     )
+        # Collect resonant persons from base results
+        resonant_persons: list[Any] = []
+        involuntary_persons: list[Any] = []
+        try:
+            resonant_persons = _collect_resonant_persons(results, relationship_store)
+        except (AttributeError, KeyError, TypeError):
+            pass
+        # Collect involuntary persons from dormancy gate
+        try:
+            _meta = memory._last_recall_metadata
+            _raw_pids = _meta.get("involuntary_person_ids", []) if isinstance(_meta, dict) else []
+            involuntary_pids: list[str] = _raw_pids if isinstance(_raw_pids, list) else []
+            for pid in involuntary_pids:
+                rel = relationship_store.get(pid)
+                if rel and rel.name:
+                    involuntary_persons.append(
+                        type("InvoluntaryPerson", (), {
+                            "person_id": pid,
+                            "name": rel.name,
+                            "surface_type": "involuntary",
+                        })()
+                    )
+        except (AttributeError, KeyError, TypeError):
+            pass
+        if resonant_persons:
+            lines.append("")
+            lines.append("[related persons]")
+            for rp in resonant_persons:
+                lines.append(f'  - {rp.name} (resonant)')
+        if involuntary_persons:
+            lines.append("")
+            lines.append("[faint memory]")
+            for ip in involuntary_persons:
+                lines.append(f'  - {ip.name} (involuntary)')
+
         data = "\n".join(lines)
 
     scaffold = _recall_scaffold(len(results), total_count, filters_used)
     proust_result = next((result for result in results if result.is_proust), None)
+    related_person_count = len(resonant_persons) + len(involuntary_persons) if "resonant_persons" in dir() else 0
     _set_tool_context(
         "recall",
         {
             "fuzzy_recall_count": sum(1 for result in results if result.decay < 0.5),
+            "related_person_count": related_person_count,
             "proust_triggered": proust_result is not None,
             **(
                 {
@@ -482,6 +537,7 @@ async def _handle_recall(
     )
     update_tool_metadata(
         fuzzy_recall_count=sum(1 for result in results if result.decay < 0.5),
+        related_person_count=related_person_count,
         proust_triggered=proust_result is not None,
         proust_memory_id=(proust_result.memory.id if proust_result is not None else None),
         proust_memory_decay=(proust_result.decay if proust_result is not None else None),

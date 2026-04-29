@@ -38,6 +38,7 @@ def memory_to_chromadb(memory: Memory) -> dict[str, Any]:
         "is_private": bool(memory.is_private),
         "access_count": int(memory.access_count),
         "last_accessed": memory.last_accessed,
+        "involved_person_ids": ",".join(memory.involved_person_ids),
     }
 
 
@@ -120,6 +121,9 @@ def memory_from_chromadb(
         is_private=is_private,
         access_count=int(metadata.get("access_count", 0)),
         last_accessed=str(metadata.get("last_accessed", "")),
+        involved_person_ids=[
+            pid for pid in (metadata.get("involved_person_ids", "") or "").split(",") if pid
+        ],
     )
 
 

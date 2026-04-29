@@ -12,6 +12,7 @@ from ego_mcp._server_runtime import (
     get_notion_store,
     update_tool_metadata,
 )
+from ego_mcp._server_surface_person import _format_active_persons
 from ego_mcp.config import EgoConfig
 from ego_mcp.current_interest import derive_current_interests
 from ego_mcp.desire import DesireEngine, generate_emergent_from_recent_memories
@@ -187,6 +188,16 @@ async def _handle_attune(
 
     if body_text:
         sections.append(f"Body sense: {body_text}")
+
+    # Active persons
+    try:
+        from ego_mcp._server_context import _relationship_store
+        _ws = _relationship_store(config)
+        active_persons = _format_active_persons(_ws, max_persons=2)
+        if active_persons:
+            sections.append(active_persons)
+    except Exception:
+        pass
 
     # Telemetry
     update_tool_metadata(

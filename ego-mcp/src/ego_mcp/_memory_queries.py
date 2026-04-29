@@ -13,7 +13,9 @@ from ego_mcp._memory_scoring import (
     calculate_time_decay,
 )
 from ego_mcp._memory_serialization import links_to_json, memory_from_chromadb
-from ego_mcp.types import Memory, MemorySearchResult
+from ego_mcp.proust import PROUST_PERSON_PROBABILITY
+from ego_mcp.relationship import RelationshipStore
+from ego_mcp.types import Memory, MemorySearchResult, RecalledPerson
 
 if TYPE_CHECKING:
     from ego_mcp._memory_store import MemoryStore
@@ -22,6 +24,66 @@ logger = logging.getLogger(__name__)
 _SPREAD_WEIGHT = 0.3
 _DORMANT_DECAY_THRESHOLD = 0.3
 PROUST_PROBABILITY = 0.25
+
+
+def _collect_involuntary_persons(
+    dormant_candidates: list[MemorySearchResult],
+    relationship_store: RelationshipStore,
+    excluded_person_ids: set[str],
+    max_persons: int = 1,
+) -> list[RecalledPerson]:
+    """Collect persons from dormant memories who haven't been recently contacted.
+
+    Returns up to max_persons with surface_type="involuntary", ranked by
+    last_interaction ascending (oldest first).
+    """
+    # Collect all person_ids from dormant candidates
+    dormant_persons: dict[str, MemorySearchResult] = {}
+    for candidate in dormant_candidates:
+        for pid in candidate.memory.involved_person_ids:
+            if pid not in dormant_persons:
+                dormant_persons[pid] = candidate
+
+    if not dormant_persons:
+        return []
+
+    # Filter out excluded and those with recent interaction
+    candidates: list[tuple[str, str | None, MemorySearchResult]] = []
+    for pid, candidate in dormant_persons.items():
+        if pid in excluded_person_ids:
+            continue
+        rel = relationship_store.get(pid)
+        last_interaction = rel.last_interaction if rel else None
+        candidates.append((pid, last_interaction, candidate))
+
+    if not candidates:
+        return []
+
+    # Sort by last_interaction ascending (oldest first, None = oldest)
+    def _sort_key(item: tuple[str, str | None, MemorySearchResult]) -> tuple[int, str]:
+        pid, last_int, _ = item
+        if last_int is None:
+            return (0, "")
+        return (1, last_int)
+
+    candidates.sort(key=_sort_key)
+
+    persons: list[RecalledPerson] = []
+    for pid, last_int, candidate in candidates:
+        if len(persons) >= max_persons:
+            break
+        rel = relationship_store.get(pid)
+        name = rel.name if rel and rel.name else pid
+        persons.append(
+            RecalledPerson(
+                person_id=pid,
+                name=name,
+                surface_type="involuntary",
+                trigger_memory_id=candidate.memory.id,
+            )
+        )
+    return persons
+
 
 
 def _max_link_confidence(memory: Memory) -> float:
@@ -286,6 +348,7 @@ async def recall(
     valence_range: list[float] | None = None,
     arousal_range: list[float] | None = None,
     proust_probability: float = PROUST_PROBABILITY,
+    relationship_store: RelationshipStore | None = None,
 ) -> list[MemorySearchResult]:
     """Recall memories using semantic search + Hopfield hybrid."""
     store._last_recall_metadata = {}
@@ -313,6 +376,8 @@ async def recall(
             "proust_triggered": False,
             "proust_memory_id": None,
             "proust_memory_decay": None,
+            "involuntary_person_count": 0,
+            "involuntary_person_ids": [],
         }
         return results
 
@@ -332,6 +397,25 @@ async def recall(
         valence_range=valence_range,
         arousal_range=arousal_range,
     )
+
+    # §3.1 Involuntary person surface — Proust companion
+    involuntary_persons: list[RecalledPerson] = []
+    if (
+        dormant_candidates
+        and relationship_store is not None
+        and random.random() < PROUST_PERSON_PROBABILITY
+    ):
+        # Collect person_ids from resonant (base_results will be set later)
+        resonant_pids: set[str] = set()
+        for result in candidates[:n_results]:
+            resonant_pids.update(result.memory.involved_person_ids)
+        involuntary_persons = _collect_involuntary_persons(
+            dormant_candidates,
+            relationship_store,
+            excluded_person_ids=resonant_pids,
+            max_persons=1,
+        )
+
     candidate_pool: list[MemorySearchResult] = []
     seen_candidate_ids: set[str] = set()
     for result in [*candidates, *dormant_candidates]:
@@ -417,6 +501,7 @@ async def recall(
 
     if base_results:
         await _increment_access_metadata(store, base_results)
+    involuntary_pids = [p.person_id for p in involuntary_persons]
     store._last_recall_metadata = {
         "fuzzy_recall_count": sum(1 for result in base_results if result.decay < 0.5),
         "proust_triggered": proust_result is not None,
@@ -424,6 +509,8 @@ async def recall(
         "proust_memory_decay": (
             proust_result.decay if proust_result is not None else None
         ),
+        "involuntary_person_count": len(involuntary_persons),
+        "involuntary_person_ids": involuntary_pids,
     }
     return base_results
 

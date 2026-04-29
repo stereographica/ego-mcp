@@ -29,6 +29,7 @@ from ego_mcp._server_runtime import (
     get_notion_store,
     get_workspace_sync,
 )
+from ego_mcp._server_surface_person import _format_active_persons
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_blend import blend_desires
@@ -356,6 +357,16 @@ async def _handle_wake_up(
     )
     parts.append(relationship_line)
 
+    # 8. Active persons
+    try:
+        from ego_mcp._server_context import _relationship_store
+        _ws = _relationship_store(config)
+        active_persons = _format_active_persons(_ws, max_persons=2)
+        if active_persons:
+            parts.append(active_persons)
+    except Exception:
+        pass
+
     data = "\n\n".join(parts)
     return render_with_data(data, SCAFFOLD_WAKE_UP, config.companion_name)
 
@@ -526,6 +537,16 @@ async def _handle_introspect(
         relationship_summary,
     ]
     data = "\n".join(part for part in parts if part)
+
+    # Active persons
+    try:
+        from ego_mcp._server_context import _relationship_store
+        _ws = _relationship_store(config)
+        active_persons = _format_active_persons(_ws, max_persons=2)
+        if active_persons:
+            data += "\n" + active_persons
+    except Exception:
+        pass
 
     return render_with_data(
         data,
