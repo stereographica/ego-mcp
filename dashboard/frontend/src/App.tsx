@@ -6,6 +6,7 @@ import { TimeRangeControls } from '@/components/layout/time-range-controls'
 import { LogsTab } from '@/components/logs/logs-tab'
 import { MemoryTab } from '@/components/memory/memory-tab'
 import { NowTab } from '@/components/now/now-tab'
+import { RelationshipsTab } from '@/components/relationships/relationships-tab'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDesireCatalog } from '@/hooks/use-desire-catalog'
 import { useDashboardSocket } from '@/hooks/use-dashboard-socket'
@@ -57,10 +58,13 @@ const App = () => {
           <TabsTrigger value="now">Now</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="memory">Memory</TabsTrigger>
+          <TabsTrigger value="relationships">Relationships</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
         </TabsList>
 
-        {(activeTab === 'history' || activeTab === 'logs') && (
+        {(activeTab === 'history' ||
+          activeTab === 'logs' ||
+          activeTab === 'relationships') && (
           <div className="mt-3">
             <TimeRangeControls
               preset={preset}
@@ -92,6 +96,10 @@ const App = () => {
 
         <TabsContent value="memory">
           <MemoryTab isActive={activeTab === 'memory'} />
+        </TabsContent>
+
+        <TabsContent value="relationships">
+          <RelationshipsTab range={range} />
         </TabsContent>
 
         <TabsContent value="logs">

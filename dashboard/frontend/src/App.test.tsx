@@ -138,9 +138,11 @@ describe('App', () => {
     expect(
       await screen.findByText('Desire parameter history'),
     ).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'custom' })).toBeInTheDocument()
+    const customRadios = screen.getAllByRole('radio', { name: 'custom' })
+    expect(customRadios).toHaveLength(1)
+    const customRadio = customRadios[0]
 
-    await user.click(screen.getByRole('radio', { name: 'custom' }))
+    await user.click(customRadio)
 
     expect(
       container.querySelectorAll('input[type="datetime-local"]'),

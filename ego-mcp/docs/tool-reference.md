@@ -52,10 +52,17 @@ If something is hard to say yet, you can keep it with remember(private=true).
 ```json
 {
   "type": "object",
-  "properties": {},
+  "properties": {
+    "person": {
+      "type": "string",
+      "description": "Person.",
+    }
+  },
   "required": []
 }
 ```
+
+> If `person` is omitted, defaults to the configured companion name. Aliases (registered via `update_relationship`) are resolved to the canonical `person_id`. The specified person is surfaced first in the active-persons hint when not the companion.
 
 **Response example:**
 
@@ -333,7 +340,7 @@ You recorded a shared experience. Does this change how you understand your relat
 Do any of these connections surprise you? Is there a pattern forming?
 ```
 
-> When `shared_with` is specified, an episode is automatically created and linked to the relationship's `shared_episode_ids`. This replaces the need to manually call `create_episode` + `update_relationship` for shared experiences.
+> When `shared_with` is specified, an episode is automatically created and linked to the relationship's `shared_episode_ids`, and the saved `Memory.involved_person_ids` records the resolved person ids — keeping the episode↔person pointer two-way so `recall` can later surface these persons via `[resonance]`. Aliases and canonical `person_id`s are both accepted; aliases resolve through `RelationshipStore.resolve_person`.
 > When `shared_with` is not used, the scaffold hints: "If this experience involved someone, you can use shared_with to record it as a shared episode."
 
 ---
@@ -404,6 +411,12 @@ Do any of these connections surprise you? Is there a pattern forming?
 "config & heartbeat (curious)" curious confidence: 0.6
   → "steady shelter" confidence: 0.7
 
+[resonance]
+Y also stays at the edge of your mind here — woven through these memories.
+
+[involuntary]
+Z drifts up unbidden — quiet for a while, yet still present.
+
 ---
 How do these memories connect to the current moment?
 Showing 3 of ~50. Increase n_results for more.
@@ -417,6 +430,7 @@ If you found a new relation, use link_memories.
 > - **Spreading Activation**: Linked memories (1-hop) are added to the candidate pool, weighted by link confidence. Disabled when emotion/category filters are applied.
 > - **Proust Effect**: ~25% chance of injecting one dormant (decay < 0.3) memory into results. No special label — only decay score indicates age. Dormant selection uses pure semantic distance (no emotion/importance bias).
 > - **Notions**: Related abstract concepts (generated from memory clusters during consolidation) are shown in a separate `--- notions ---` section with label, emotion, confidence, and directly associated notions.
+> - **Related persons**: Up to 3 persons may surface in the response — `[resonance]` for persons whose `involved_person_ids` overlap with the recalled memories (frequency + recency ranked), and `[involuntary]` for a low-probability dormant person whose `last_interaction` is old (gated by `PROUST_PERSON_PROBABILITY ≈ 0.08`). When any of `emotion_filter` / `category_filter` / `date_from` / `date_to` is provided, only resonant persons surface; involuntary is suppressed (mirrors the explicit-filter Proust suppression).
 > - `access_count` is incremented for each recalled memory (strengthens retention over time).
 >
 > Additional notes:
@@ -563,6 +577,7 @@ If both have value, consider which perspective to keep.
 > - **Cluster detection**: Identifies dense memory clusters (3+ mutually-linked memories) using Bron-Kerbosch algorithm (with iteration limits).
 > - **Notion generation**: Automatically creates abstract `Notion` concepts from detected clusters using structural data (emotion mode, valence mean, shared tags). No LLM summarization.
 > - **Notion self-maintenance**: Ephemeral clusters are skipped. Existing notions may decay, be pruned, merge with duplicates, and gain related notion links during the same run.
+> - **Person backfill**: For memories already linked from a relationship's `shared_episode_ids` but whose `Memory.involved_person_ids` is still empty, the missing person ids are filled in (capped per run). Existing values are never overwritten. This restores the episode↔person two-way pointer for memories created before the relationship-network changes; no full migration script is run.
 > - Near-duplicate pairs (similarity >= 0.90) are reported as merge candidates for manual review.
 
 ---
@@ -665,10 +680,10 @@ Linked mem_a1b2c3d4 ↔ mem_e5f6g7h8 (type: related)
     },
     "field": {
       "type": "string",
-      "enum": ["communication_style", "emotional_baseline", "first_interaction",
+      "enum": ["aliases", "communication_style", "emotional_baseline", "first_interaction",
                "inferred_personality", "known_facts", "last_interaction", "name",
-               "preferred_topics", "recent_mood_trajectory", "sensitive_topics",
-               "shared_episode_ids", "total_interactions", "trust_level"],
+               "preferred_topics", "recent_mood_trajectory", "relation_kind",
+               "sensitive_topics", "shared_episode_ids", "total_interactions", "trust_level"],
       "description": "Relationship field to update. Aliases like trust/facts/topics/personality/dominant_tone are resolved automatically."
     },
     "value": {}
@@ -686,6 +701,11 @@ Linked mem_a1b2c3d4 ↔ mem_e5f6g7h8 (type: related)
 | `personality` | `inferred_personality` |
 | `topics` | `preferred_topics` |
 | `dominant_tone` | `emotional_baseline` (string value is converted to `{value: 1.0}`) |
+
+**Person-network fields:**
+
+- `aliases` (list of strings) — alternate names for the person. The `person` argument on `consider_them` / `attune` / `update_relationship` / `remember(shared_with=…)` is resolved against canonical `person_id` first, then against any alias. Use this to unify variants like `"Master"` / `"マスター"` / a real name into one record. Lookup is exact match only — no automatic merging.
+- `relation_kind` (string) — `"interlocutor"` (default; someone you actually converse with) or `"mentioned"` (someone referenced indirectly). A data-density marker rather than an ethical guardrail; both kinds use the same schema.
 
 **Response example:**
 

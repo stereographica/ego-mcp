@@ -111,3 +111,44 @@ class TestRelationshipStore:
         assert updated.preferred_topics[:2] == ["technical", "planning"]
         assert updated.sensitive_topics == ["relationship"]
         assert updated.recent_mood_trajectory[-1]["mood"] == "curious"
+
+    def test_default_aliases_and_relation_kind(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        rel = store.get("Master")
+        assert rel.aliases == []
+        assert rel.relation_kind == "interlocutor"
+
+    def test_update_aliases(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        updated = store.update("Master", {"aliases": ["Master", "マスター"]})
+        assert updated.aliases == ["Master", "マスター"]
+        # Verify persistence
+        reloaded = store.get("Master")
+        assert reloaded.aliases == ["Master", "マスター"]
+
+    def test_update_relation_kind(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        updated = store.update("Master", {"relation_kind": "mentioned"})
+        assert updated.relation_kind == "mentioned"
+        reloaded = store.get("Master")
+        assert reloaded.relation_kind == "mentioned"
+
+    def test_resolve_person_canonical_match(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        store.update("Master", {"name": "Master"})
+        assert store.resolve_person("Master") == "Master"
+
+    def test_resolve_person_alias_match(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        store.update("Master", {"aliases": ["マスター", "master"]})
+        assert store.resolve_person("マスター") == "Master"
+        assert store.resolve_person("master") == "Master"
+
+    def test_resolve_person_no_match(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        store.update("Master", {"aliases": ["マスター"]})
+        assert store.resolve_person("unknown") is None
+
+    def test_resolve_person_empty_store(self, tmp_path: Path) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        assert store.resolve_person("anyone") is None

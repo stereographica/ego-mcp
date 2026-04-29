@@ -2381,7 +2381,7 @@ class TestToolDefinitionSize:
         total_text = json.dumps([t.model_dump() for t in tools], ensure_ascii=False)
         total_chars = len(total_text)
         assert len(tools) == 16
-        # Target: 7,500 chars or less
-        assert total_chars <= 7500, (
-            f"Tool definitions too large: {total_chars} chars (target: ≤7,500)"
+        # Target: 7,600 chars or less (increased from 7,500 to accommodate attune person field)
+        assert total_chars <= 7600, (
+            f"Tool definitions too large: {total_chars} chars (target: ≤7,600)"
         )

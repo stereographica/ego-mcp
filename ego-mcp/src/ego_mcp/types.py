@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from ego_mcp import timezone_utils
 
@@ -114,6 +114,7 @@ class Memory:
     is_private: bool = False
     access_count: int = 0
     last_accessed: str = ""
+    involved_person_ids: list[str] = field(default_factory=list)
 
     @staticmethod
     def now_iso() -> str:
@@ -181,6 +182,18 @@ class RelationshipModel:
     first_interaction: str = ""
     last_interaction: str = ""
     total_interactions: int = 0
+    aliases: list[str] = field(default_factory=list)
+    relation_kind: Literal["interlocutor", "mentioned"] = "interlocutor"
+
+
+@dataclass
+class RecalledPerson:
+    """A person surfaced during recall."""
+
+    person_id: str
+    name: str
+    surface_type: Literal["resonant", "involuntary"]
+    trigger_memory_id: str | None
 
 
 @dataclass

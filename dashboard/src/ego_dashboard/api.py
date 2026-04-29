@@ -62,6 +62,12 @@ class StoreProtocol(Protocol):
 
     def desire_metric_keys(self, start: datetime, end: datetime) -> list[str]: ...
 
+    def surface_timeline(self, start: datetime, end: datetime) -> list[dict[str, str]]: ...
+
+    def relationship_detail(
+        self, person_id: str, start: datetime, end: datetime
+    ) -> dict[str, object]: ...
+
 
 class _MemoryLinkPayload(TypedDict):
     target_id: str
@@ -636,6 +642,60 @@ def _load_memory_detail(settings: DashboardSettings, memory_id: str) -> dict[str
     }
 
 
+def _load_relationship_rows(settings: DashboardSettings) -> list[dict[str, object]]:
+    if not settings.ego_mcp_data_dir:
+        return []
+    rel_path = Path(settings.ego_mcp_data_dir) / "relationships" / "models.json"
+    if not rel_path.exists():
+        return []
+    try:
+        payload = json.loads(rel_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError, OSError:
+        return []
+    if not isinstance(payload, dict):
+        return []
+    rows: list[dict[str, object]] = []
+    for pid, raw in payload.items():
+        if not isinstance(raw, dict):
+            continue
+        trust_raw = raw.get("trust_level")
+        trust_val = None
+        if isinstance(trust_raw, (int, float)) and not isinstance(trust_raw, bool):
+            trust_val = float(trust_raw)
+        total = _coerce_int(raw.get("total_interactions"), 0)
+        shared_raw = raw.get("shared_episode_ids")
+        shared = 0
+        if isinstance(shared_raw, list):
+            shared = len(shared_raw)
+        else:
+            shared = _coerce_int(raw.get("shared_episodes_count"), 0)
+        aliases_raw = raw.get("aliases", [])
+        aliases_list = []
+        if isinstance(aliases_raw, list):
+            for a in aliases_raw:
+                if isinstance(a, str) and a:
+                    aliases_list.append(a)
+        name_raw = raw.get("name")
+        name = str(name_raw) if isinstance(name_raw, str) and name_raw else pid
+        last_int = raw.get("last_interaction")
+        first_int = raw.get("first_interaction")
+        rows.append(
+            {
+                "person_id": str(pid),
+                "name": name,
+                "relation_kind": str(raw.get("relation_kind", "interlocutor")),
+                "trust_level": trust_val,
+                "total_interactions": total,
+                "shared_episodes_count": shared,
+                "last_interaction": str(last_int) if isinstance(last_int, str) else "",
+                "first_interaction": str(first_int) if isinstance(first_int, str) else "",
+                "aliases": aliases_list,
+            }
+        )
+    rows.sort(key=lambda r: str(r.get("person_id", "")))
+    return rows
+
+
 def _default_store(settings: DashboardSettings | None = None) -> StoreProtocol:
     app_settings = settings or load_settings()
     desire_catalog = load_desire_catalog(app_settings.ego_mcp_data_dir)
@@ -851,6 +911,25 @@ def create_app(
         bucket: str = "15m",
     ) -> dict[str, object]:
         return {"items": telemetry.notion_history(notion_id, from_ts, to_ts, bucket)}
+
+    @app.get("/api/v1/relationships/overview")
+    def get_relationships_overview() -> dict[str, object]:
+        return {"items": _load_relationship_rows(app_settings)}
+
+    @app.get("/api/v1/relationships/surface-timeline")
+    def get_surface_timeline(
+        from_ts: datetime = Query(alias="from"),
+        to_ts: datetime = Query(alias="to"),
+    ) -> dict[str, object]:
+        return {"items": telemetry.surface_timeline(from_ts, to_ts)}
+
+    @app.get("/api/v1/relationships/{person_id}/detail")
+    def get_relationship_detail(
+        person_id: str,
+        from_ts: datetime = Query(alias="from"),
+        to_ts: datetime = Query(alias="to"),
+    ) -> dict[str, object]:
+        return telemetry.relationship_detail(person_id, from_ts, to_ts)
 
     @app.websocket("/ws/current")
     async def ws_current(websocket: WebSocket) -> None:

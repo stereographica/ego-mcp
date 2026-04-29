@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from ego_mcp._memory_serialization import memory_to_chromadb
 from ego_mcp._server_context import _relationship_store
 from ego_mcp._server_emotion_formatting import (
     _relative_time,
@@ -190,6 +191,29 @@ async def _handle_consolidate(
                     merged_notion_ids.append(absorb.id)
                     created_notion_confidences[keep.id] = keep.confidence
         notion_links_created = notion_store.auto_link_notions()
+    # Person backfill: fill involved_person_ids for memories linked via shared_episode_ids
+    _backfilled_count = 0
+    try:
+        _person_mem_ids = _load_person_memory_ids(memory)
+        _mem_to_persons: dict[str, set[str]] = {}
+        for _pid, _mids in _person_mem_ids.items():
+            for _mid in _mids:
+                _mem_to_persons.setdefault(_mid, set()).add(_pid)
+        _MAX_BACKFILL_PER_RUN = 50
+        _backfilled = 0
+        for _mid, _pids in list(_mem_to_persons.items())[:_MAX_BACKFILL_PER_RUN]:
+            _mem = await memory.get_by_id(_mid)
+            if _mem is not None and not _mem.involved_person_ids:
+                _mem.involved_person_ids = sorted(_pids)
+                try:
+                    _col = memory.get_client().get_or_create_collection(name="ego_memories")
+                    _col.update(ids=[_mem.id], metadatas=[memory_to_chromadb(_mem)])
+                except Exception:
+                    pass
+                _backfilled += 1
+        _backfilled_count = _backfilled
+    except Exception:
+        pass
     update_tool_metadata(
         consolidation_replay_events=stats.replay_events,
         consolidation_new_links=stats.link_updates,
@@ -221,6 +245,7 @@ async def _handle_consolidate(
         notion_pruned=",".join(pruned_notion_ids) if pruned_notion_ids else None,
         notion_merged=",".join(merged_notion_ids) if merged_notion_ids else None,
         notion_links_created=notion_links_created or None,
+        person_backfilled=_backfilled_count or None,
     )
     base = (
         f"Consolidation complete. "
@@ -239,6 +264,8 @@ async def _handle_consolidate(
         base += f" Merged {len(merged_notion_ids)} duplicate(s)."
     if notion_links_created:
         base += f" Linked {notion_links_created} notion pair(s)."
+    if _backfilled_count:
+        base += f" Backfilled involved_person_ids for {_backfilled_count} memory(s)."
     if not stats.merge_candidates:
         return base
 
@@ -312,6 +339,9 @@ def _handle_update_relationship(config: EgoConfig, args: dict[str, Any]) -> str:
     if original_field == "dominant_tone" and isinstance(value, str):
         value = {value: 1.0}
     relationship_store = _relationship_store(config)
+    resolved = relationship_store.resolve_person(person)
+    if resolved is not None:
+        person = resolved
     try:
         relationship_store.update(person, {field_name: value})
     except ValueError as exc:

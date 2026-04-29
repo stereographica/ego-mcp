@@ -882,6 +882,147 @@ class SqlTelemetryStore:
             "latest_emergent_desires": latest_emergent_desires,
         }
 
+    def surface_timeline(self, start: datetime, end: datetime) -> list[dict[str, str]]:
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT ts, string_metrics
+                    FROM tool_events
+                    WHERE ts >= %s AND ts <= %s
+                      AND (
+                        string_metrics ? 'surfaced_person_ids'
+                        OR string_metrics ? 'resonant_person_ids'
+                        OR string_metrics ? 'involuntary_person_ids'
+                      )
+                    ORDER BY ts ASC
+                    """,
+                    (start, end),
+                )
+                rows = cur.fetchall()
+        result: list[dict[str, str]] = []
+        for ts, string_metrics in rows:
+            if not isinstance(ts, datetime) or not isinstance(string_metrics, dict):
+                continue
+            for key, surface_type in [
+                ("resonant_person_ids", "resonant"),
+                ("involuntary_person_ids", "involuntary"),
+            ]:
+                raw = string_metrics.get(key)
+                if not isinstance(raw, str) or not raw:
+                    continue
+                try:
+                    pids = json.loads(raw)
+                except TypeError, ValueError:
+                    continue
+                if not isinstance(pids, list):
+                    continue
+                for pid in pids:
+                    if isinstance(pid, str) and pid:
+                        result.append(
+                            {
+                                "ts": ts.isoformat(),
+                                "person_id": pid,
+                                "surface_type": surface_type,
+                            }
+                        )
+        return result
+
+    def relationship_detail(
+        self, person_id: str, start: datetime, end: datetime
+    ) -> dict[str, object]:
+        trust_history: list[dict[str, object]] = []
+        shared_episodes_history: list[dict[str, object]] = []
+        resonant_count = 0
+        involuntary_count = 0
+
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT ts, numeric_metrics, string_metrics
+                    FROM tool_events
+                    WHERE ts >= %s AND ts <= %s
+                      AND (
+                        numeric_metrics ? 'trust_level'
+                        OR numeric_metrics ? 'shared_episodes_count'
+                      )
+                    ORDER BY ts ASC
+                    """,
+                    (start, end),
+                )
+                rows = cur.fetchall()
+                for ts, numeric_metrics, string_metrics in rows:
+                    if not isinstance(ts, datetime):
+                        continue
+                    if not isinstance(numeric_metrics, dict):
+                        continue
+                    if not isinstance(string_metrics, dict):
+                        continue
+                    event_person = string_metrics.get("person_id")
+                    if event_person != person_id:
+                        continue
+                    if "trust_level" in numeric_metrics:
+                        val = numeric_metrics["trust_level"]
+                        if isinstance(val, (int, float)) and not isinstance(val, bool):
+                            trust_history.append({"ts": ts.isoformat(), "value": float(val)})
+                    if "shared_episodes_count" in numeric_metrics:
+                        val = numeric_metrics["shared_episodes_count"]
+                        if isinstance(val, (int, float)) and not isinstance(val, bool):
+                            shared_episodes_history.append(
+                                {"ts": ts.isoformat(), "value": int(val)}
+                            )
+
+        with psycopg.connect(self._db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT ts, string_metrics
+                    FROM tool_events
+                    WHERE ts >= %s AND ts <= %s
+                      AND (
+                        string_metrics ? 'resonant_person_ids'
+                        OR string_metrics ? 'involuntary_person_ids'
+                      )
+                    ORDER BY ts ASC
+                    """,
+                    (start, end),
+                )
+                rows = cur.fetchall()
+                for ts, string_metrics in rows:
+                    if not isinstance(ts, datetime) or not isinstance(string_metrics, dict):
+                        continue
+                    for key in ("resonant_person_ids",):
+                        raw = string_metrics.get(key)
+                        if not isinstance(raw, str) or not raw:
+                            continue
+                        try:
+                            pids = json.loads(raw)
+                        except TypeError, ValueError:
+                            continue
+                        if isinstance(pids, list) and person_id in pids:
+                            resonant_count += 1
+                    raw = string_metrics.get("involuntary_person_ids")
+                    if not isinstance(raw, str) or not raw:
+                        continue
+                    try:
+                        pids = json.loads(raw)
+                    except TypeError, ValueError:
+                        continue
+                    if isinstance(pids, list) and person_id in pids:
+                        involuntary_count += 1
+
+        return {
+            "person_id": person_id,
+            "trust_history": trust_history,
+            "shared_episodes_history": shared_episodes_history,
+            "surface_counts": {
+                "resonant": resonant_count,
+                "involuntary": involuntary_count,
+                "total": resonant_count + involuntary_count,
+            },
+        }
+
 
 def _bucket_to_sql(bucket: str) -> str:
     mapping = {"1m": "1 minute", "5m": "5 minute", "15m": "15 minute"}

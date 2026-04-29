@@ -2,6 +2,21 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [1.1.0] - 2026-04-29
+
+### Added
+- ego-mcp: Person network — `Memory.involved_person_ids` を追加し、`shared_episode_ids` との双方向ポインタを確立。`remember(shared_with=...)` で resolved person id をメモリ側にも記録するようにした
+- ego-mcp: `RelationshipModel` に `aliases` (list[str]) と `relation_kind` (`"interlocutor"` / `"mentioned"`) を追加。`RelationshipStore.resolve_person()` が canonical id とエイリアスの完全一致解決を行い、`consider_them` / `attune` / `update_relationship` / `remember(shared_with=...)` から再利用される
+- ego-mcp: `recall` が `RecalledPerson` を最大3名まで surface する2経路を追加 — `[resonance]` は返却メモリの `involved_person_ids` を頻度+最近性でランクし、`[involuntary]` は `PROUST_PERSON_PROBABILITY ≈ 0.08` ゲートで dormant な人物を1名だけ浮上させる(Proust 効果の人物版)。explicit filter (`emotion_filter` / `category_filter` / `date_from` / `date_to`) 指定時は involuntary のみ抑制し、resonant は維持
+- ego-mcp: `wake_up` / `introspect` / `attune` の応答に「いま頭の隅にある人」を1〜2名織り込むスキャフォールドを追加
+- ego-mcp: `attune` に optional `person` 引数を追加(`consider_them` と同じパターン、デフォルトは `companion_name`)。「誰を思いながら耳を澄ますか」という文脈付けで、CRM 的な対象指定ではない
+- ego-mcp: `consolidate` に person backfill ステップを追加 — relationship store の `shared_episode_ids` に紐づいているのに `involved_person_ids` が空のメモリへ person id を埋め直す。一括移行ではなく consolidate サイクルで段階的に育てる
+- ego-mcp: テレメトリ拡張 — `recall` に `surfaced_person_ids` / `resonant_person_ids` / `involuntary_person_ids` を、`remember` に `involved_person_ids` を、`consider_them` に対象 `person_id` を、`wake_up` / `introspect` / `attune` に `active_person_ids` を出力
+- dashboard: Relationships タブを新設(`/api/v1/relationships/overview`, `/api/v1/relationships/surface-timeline`, `/api/v1/relationships/{person_id}/detail`)— 人物概観テーブル、surface timeline、人物別ドリルダウン (trust 推移 / shared episodes 推移 / surface 頻度) を表示
+
+### Changed
+- バージョンアップ: ego-mcp `1.0.1` → `1.1.0`, dashboard `0.2.4` → `0.3.0`, dashboard/frontend `0.2.4` → `0.3.0`
+
 ## [0.6.2] - 2026-04-03
 
 ### Changed

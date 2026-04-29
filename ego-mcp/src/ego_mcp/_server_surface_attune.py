@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable
 
@@ -11,6 +12,10 @@ from ego_mcp._server_runtime import (
     get_impulse_manager,
     get_notion_store,
     update_tool_metadata,
+)
+from ego_mcp._server_surface_person import (
+    _format_active_persons,
+    _get_active_person_ids,
 )
 from ego_mcp.config import EgoConfig
 from ego_mcp.current_interest import derive_current_interests
@@ -73,10 +78,18 @@ def _active_emergent_desires(desire: DesireEngine) -> list[str]:
 
 
 async def _handle_attune(
-    config: EgoConfig, memory: MemoryStore, desire: DesireEngine
+    config: EgoConfig, memory: MemoryStore, args: dict[str, Any], desire: DesireEngine
 ) -> str:
     """Unified emotional awareness: texture + desires + interests + body sense."""
     now = timezone_utils.now()
+
+    # Resolve target person for this attune call
+    from ego_mcp._server_context import _relationship_store
+    _ws = _relationship_store(config)
+    person = args.get("person", config.companion_name)
+    resolved = _ws.resolve_person(person)
+    if resolved is not None:
+        person = resolved
 
     # 1. Emotional texture from recent memories
     recent_all = await memory.list_recent(n=30)
@@ -188,11 +201,37 @@ async def _handle_attune(
     if body_text:
         sections.append(f"Body sense: {body_text}")
 
+    # Active persons
+    _active_person_ids: list[str] = []
+    try:
+        _ws = _relationship_store(config)
+        active_persons = _format_active_persons(_ws, max_persons=2)
+        if active_persons:
+            sections.append(active_persons)
+        _active_person_ids = _get_active_person_ids(_ws, max_persons=2)
+    except Exception:
+        pass
+
+    # Insert targeted person snapshot if different from companion
+    if person != config.companion_name:
+        try:
+            rel = _ws.get(person)
+            if rel and rel.name:
+                sections.insert(
+                    len(sections) - 1 if active_persons else len(sections),
+                    f"Regarding {rel.name}: trust {rel.trust_level:.1f}, "
+                    f"{rel.total_interactions} interactions.",
+                )
+        except Exception:
+            pass
+
     # Telemetry
     update_tool_metadata(
         desire_levels=levels,
         emergent_desire_created=",".join(created_emergent) if created_emergent else None,
         emergent_desire_expired=",".join(expired_emergent) if expired_emergent else None,
+        attune_person=person,
+        active_person_ids=json.dumps(_active_person_ids) if _active_person_ids else None,
     )
 
     data = "\n".join(sections)

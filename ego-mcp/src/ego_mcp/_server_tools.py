@@ -23,7 +23,16 @@ SURFACE_TOOLS: list[Tool] = [
     Tool(
         name="attune",
         description="Check emotional state, desires, and current interests.",
-        inputSchema={"type": "object", "properties": {}, "required": []},
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "person": {
+                    "type": "string",
+                    "description": "Person.",
+                },
+            },
+            "required": [],
+        },
     ),
     Tool(
         name="introspect",

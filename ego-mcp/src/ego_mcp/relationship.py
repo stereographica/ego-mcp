@@ -32,6 +32,8 @@ _FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     "first_interaction": str,
     "last_interaction": str,
     "total_interactions": (int, float),
+    "aliases": list,
+    "relation_kind": str,
 }
 
 
@@ -87,6 +89,8 @@ class RelationshipStore:
             first_interaction=str(raw.get("first_interaction", "")),
             last_interaction=str(raw.get("last_interaction", "")),
             total_interactions=int(raw.get("total_interactions", 0)),
+            aliases=list(raw.get("aliases", [])),
+            relation_kind=raw.get("relation_kind", "interlocutor"),
         )
 
     def update(self, person_id: str, patch: dict[str, Any]) -> RelationshipModel:
@@ -181,3 +185,19 @@ class RelationshipStore:
         self._data[person_id] = raw
         self._save()
         return self.get(person_id)
+
+    def resolve_person(self, query: str) -> str | None:
+        """Exact-match alias or canonical person_id resolution.
+
+        Returns the canonical person_id if *query* matches the canonical id
+        or any entry in the person's ``aliases`` list.  Returns ``None``
+        when no match is found.
+        """
+        if query in self._data:
+            return query
+        for pid, raw in self._data.items():
+            aliases = raw.get("aliases", [])
+            if isinstance(aliases, list) and query in aliases:
+                return pid
+        return None
+

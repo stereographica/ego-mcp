@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import ego_mcp._server_backend_handlers as backend_handlers_mod
-from ego_mcp._memory_serialization import links_to_json
+from ego_mcp._memory_serialization import links_to_json, memory_to_chromadb
 from ego_mcp._server_runtime import get_tool_metadata, reset_tool_metadata
 from ego_mcp.config import EgoConfig
 from ego_mcp.consolidation import (
@@ -754,3 +754,250 @@ class TestConsolidationEngine:
         assert metadata["notion_merged"] in {"keep", "dup"}
         assert metadata["notion_decayed"] == "keep,decay"
         assert metadata["notion_links_created"] == 1
+
+
+class TestPersonBackfill:
+    """§4.4: consolidate person backfill for involved_person_ids."""
+
+    @pytest.mark.asyncio
+    async def test_backfills_empty_involved_person_ids(
+        self, config: EgoConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """shared_episode_ids に紐付く Memory の involved_person_ids がバックフィルされる."""
+        import json
+        from pathlib import Path
+
+        provider: EmbeddingProvider = FakeEmbeddingProvider()
+        fn = EgoEmbeddingFunction(provider)
+        store = MemoryStore(config, fn)
+        store.connect()
+
+        try:
+            m1 = await store.save(content="Memory about Alice")
+            m2 = await store.save(content="Memory about Alice too")
+
+            # Ensure involved_person_ids is empty
+            mem1 = await store.get_by_id(m1.id)
+            mem2 = await store.get_by_id(m2.id)
+            assert mem1 is not None
+            assert mem2 is not None
+            assert mem1.involved_person_ids == []
+            assert mem2.involved_person_ids == []
+
+            # Create an episode in ego_episodes collection with memory_ids
+            client = store.get_client()
+            ep_col = client.get_or_create_collection(name="ego_episodes")
+            ep_id = "ep_backfill_test"
+            ep_col.add(
+                documents=["Episode about Alice"],
+                metadatas=[{"memory_ids": json.dumps([m1.id, m2.id])}],
+                ids=[ep_id],
+            )
+
+            # Write shared_episode_ids pointing to the episode
+            rels_path = Path(config.data_dir) / "relationships" / "models.json"
+            rels_path.parent.mkdir(parents=True, exist_ok=True)
+            rels_path.write_text(
+                json.dumps({
+                    "alice": {
+                        "name": "Alice",
+                        "trust_level": 0.7,
+                        "total_interactions": 10,
+                        "shared_episode_ids": [ep_id],
+                    }
+                }),
+                encoding="utf-8",
+            )
+
+            engine = ConsolidationEngine()
+            text = await backend_handlers_mod._handle_consolidate(store, engine)
+
+            # Verify backfill was reported
+            assert "Backfilled involved_person_ids" in text
+
+            # Verify involved_person_ids was set
+            mem1_after = await store.get_by_id(m1.id)
+            mem2_after = await store.get_by_id(m2.id)
+            assert mem1_after is not None
+            assert mem2_after is not None
+            assert "alice" in mem1_after.involved_person_ids
+            assert "alice" in mem2_after.involved_person_ids
+        finally:
+            store.close()
+
+    @pytest.mark.asyncio
+    async def test_skips_already_populated(
+        self, config: EgoConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """既に involved_person_ids が設定済みの Memory は上書きされない."""
+        import json
+        from pathlib import Path
+
+        provider: EmbeddingProvider = FakeEmbeddingProvider()
+        fn = EgoEmbeddingFunction(provider)
+        store = MemoryStore(config, fn)
+        store.connect()
+
+        try:
+            m1 = await store.save(content="Memory about Bob")
+
+            # Set involved_person_ids manually to a different person
+            mem1 = await store.get_by_id(m1.id)
+            assert mem1 is not None
+            mem1.involved_person_ids = ["bob"]
+
+            # Create an episode in ego_episodes collection
+            client = store.get_client()
+            ep_col = client.get_or_create_collection(name="ego_episodes")
+            ep_id = "ep_skip_test"
+            ep_col.add(
+                documents=["Episode about Bob"],
+                metadatas=[{"memory_ids": json.dumps([m1.id])}],
+                ids=[ep_id],
+            )
+
+            # Write shared_episode_ids pointing to the episode
+            rels_path = Path(config.data_dir) / "relationships" / "models.json"
+            rels_path.parent.mkdir(parents=True, exist_ok=True)
+            rels_path.write_text(
+                json.dumps({
+                    "alice": {
+                        "name": "Alice",
+                        "trust_level": 0.7,
+                        "total_interactions": 10,
+                        "shared_episode_ids": [ep_id],
+                    }
+                }),
+                encoding="utf-8",
+            )
+
+            engine = ConsolidationEngine()
+            text = await backend_handlers_mod._handle_consolidate(store, engine)
+
+            # First run backfills to ["alice"]. Now persist ["bob"] to ChromaDB
+            # to verify the second run skips already-populated memories.
+            client = store.get_client()
+            mem_col = client.get_or_create_collection(name="ego_memories")
+            mem_after_first = await store.get_by_id(m1.id)
+            assert mem_after_first is not None
+            # Overwrite with ["bob"] to simulate pre-existing data
+            mem_after_first.involved_person_ids = ["bob"]
+            mem_col.update(
+                ids=[m1.id],
+                metadatas=[memory_to_chromadb(mem_after_first)],
+            )
+
+            # Second run should not backfill since involved_person_ids is now set
+            text = await backend_handlers_mod._handle_consolidate(store, engine)
+            assert "Backfilled involved_person_ids" not in text
+
+            # Verify involved_person_ids was NOT changed to ["alice"]
+            mem1_after = await store.get_by_id(m1.id)
+            assert mem1_after is not None
+            assert "alice" not in mem1_after.involved_person_ids
+            assert "bob" in mem1_after.involved_person_ids
+        finally:
+            store.close()
+
+    @pytest.mark.asyncio
+    async def test_limits_batch_to_50(
+        self, config: EgoConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """バッチ上限 50 件が守られる."""
+        import json
+        from pathlib import Path
+
+        provider: EmbeddingProvider = FakeEmbeddingProvider()
+        fn = EgoEmbeddingFunction(provider)
+        store = MemoryStore(config, fn)
+        store.connect()
+
+        try:
+            # Create 55 memories
+            memory_ids = []
+            for i in range(55):
+                m = await store.save(content=f"Memory {i}")
+                memory_ids.append(m.id)
+
+            # Create an episode in ego_episodes collection with all 55 memory_ids
+            client = store.get_client()
+            ep_col = client.get_or_create_collection(name="ego_episodes")
+            ep_id = "ep_batch_test"
+            ep_col.add(
+                documents=["Episode with 55 memories"],
+                metadatas=[{"memory_ids": json.dumps(memory_ids)}],
+                ids=[ep_id],
+            )
+
+            # Write shared_episode_ids for all 55 memories
+            rels_path = Path(config.data_dir) / "relationships" / "models.json"
+            rels_path.parent.mkdir(parents=True, exist_ok=True)
+            rels_path.write_text(
+                json.dumps({
+                    "alice": {
+                        "name": "Alice",
+                        "trust_level": 0.7,
+                        "total_interactions": 10,
+                        "shared_episode_ids": [ep_id],
+                    }
+                }),
+                encoding="utf-8",
+            )
+
+            engine = ConsolidationEngine()
+            text = await backend_handlers_mod._handle_consolidate(store, engine)
+
+            # Should report backfilling at most 50 (set order is non-deterministic)
+            assert "Backfilled involved_person_ids for" in text
+            # Count how many memories were actually backfilled by checking the count
+            import re
+            match = re.search(r"Backfilled involved_person_ids for (\d+)", text)
+            assert match is not None
+            backfilled_count = int(match.group(1))
+            assert backfilled_count <= 50
+        finally:
+            store.close()
+
+    @pytest.mark.asyncio
+    async def test_noop_without_shared_episode_ids(
+        self, config: EgoConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """shared_episode_ids が空のときバックフィルは発生しない."""
+        import json
+        from pathlib import Path
+
+        provider: EmbeddingProvider = FakeEmbeddingProvider()
+        fn = EgoEmbeddingFunction(provider)
+        store = MemoryStore(config, fn)
+        store.connect()
+
+        try:
+            m1 = await store.save(content="Memory without shared_episode_ids")
+
+            # Write empty shared_episode_ids
+            rels_path = Path(config.data_dir) / "relationships" / "models.json"
+            rels_path.parent.mkdir(parents=True, exist_ok=True)
+            rels_path.write_text(
+                json.dumps({
+                    "alice": {
+                        "name": "Alice",
+                        "trust_level": 0.7,
+                        "total_interactions": 10,
+                        "shared_episode_ids": [],
+                    }
+                }),
+                encoding="utf-8",
+            )
+
+            engine = ConsolidationEngine()
+            text = await backend_handlers_mod._handle_consolidate(store, engine)
+
+            # Should not report backfill
+            assert "Backfilled involved_person_ids" not in text
+
+            # Verify involved_person_ids is still empty
+            mem1_after = await store.get_by_id(m1.id)
+            assert mem1_after is not None
+            assert mem1_after.involved_person_ids == []
+        finally:
+            store.close()

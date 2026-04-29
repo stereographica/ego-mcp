@@ -460,3 +460,82 @@ class TelemetryStore:
         ):
             return float(event.numeric_metrics["notion_confidence"])
         return None
+
+    @staticmethod
+    def _parse_person_ids(value: object) -> list[str]:
+        if not isinstance(value, str) or not value:
+            return []
+        try:
+            payload = json.loads(value)
+        except TypeError, ValueError, json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+        return [pid for pid in payload if isinstance(pid, str) and pid]
+
+    def surface_timeline(self, start: datetime, end: datetime) -> list[dict[str, str]]:
+        events = self._filtered(start, end)
+        points: list[dict[str, str]] = []
+        for event in events:
+            for key, surface_type in [
+                ("resonant_person_ids", "resonant"),
+                ("involuntary_person_ids", "involuntary"),
+            ]:
+                raw = event.string_metrics.get(key)
+                person_ids = self._parse_person_ids(raw)
+                for pid in person_ids:
+                    points.append(
+                        {
+                            "ts": event.ts.isoformat(),
+                            "person_id": pid,
+                            "surface_type": surface_type,
+                        }
+                    )
+        return points
+
+    def relationship_detail(
+        self, person_id: str, start: datetime, end: datetime
+    ) -> dict[str, object]:
+        events = self._filtered(start, end)
+
+        trust_history: list[dict[str, object]] = []
+        shared_episodes_history: list[dict[str, object]] = []
+
+        for event in events:
+            event_person = event.string_metrics.get("person_id")
+            if event_person != person_id:
+                continue
+            if "trust_level" in event.numeric_metrics:
+                trust_val = event.numeric_metrics["trust_level"]
+                if isinstance(trust_val, (int, float)) and not isinstance(trust_val, bool):
+                    trust_history.append({"ts": event.ts.isoformat(), "value": float(trust_val)})
+            if "shared_episodes_count" in event.numeric_metrics:
+                ep_val = event.numeric_metrics["shared_episodes_count"]
+                if isinstance(ep_val, (int, float)) and not isinstance(ep_val, bool):
+                    shared_episodes_history.append(
+                        {"ts": event.ts.isoformat(), "value": int(ep_val)}
+                    )
+
+        resonant_count = 0
+        involuntary_count = 0
+        for event in events:
+            for key in ("resonant_person_ids",):
+                raw = event.string_metrics.get(key)
+                pids = self._parse_person_ids(raw)
+                if person_id in pids:
+                    resonant_count += 1
+            raw = event.string_metrics.get("involuntary_person_ids")
+            pids = self._parse_person_ids(raw)
+            if person_id in pids:
+                involuntary_count += 1
+
+        return {
+            "person_id": person_id,
+            "trust_history": trust_history,
+            "shared_episodes_history": shared_episodes_history,
+            "surface_counts": {
+                "resonant": resonant_count,
+                "involuntary": involuntary_count,
+                "total": resonant_count + involuntary_count,
+            },
+        }

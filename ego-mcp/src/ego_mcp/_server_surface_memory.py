@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from ego_mcp import timezone_utils
 from ego_mcp._memory_queries import find_resurfacing_memories
+from ego_mcp._memory_serialization import memory_to_chromadb
 from ego_mcp._server_context import (
     _find_related_forgotten_questions,
     _relationship_store,
@@ -25,6 +26,7 @@ from ego_mcp._server_runtime import (
     get_workspace_sync,
     update_tool_metadata,
 )
+from ego_mcp._server_surface_person import _collect_resonant_persons
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_satisfaction import SignalEmbeddingCache, infer_desire_satisfaction
@@ -262,6 +264,16 @@ async def _handle_remember(
                     shared_with.append(person)
     shared_with_provided = bool(shared_with)
 
+    # Canonicalize shared_with names via alias resolution
+    if shared_with:
+        _rs = _relationship_store(config)
+        canonicalized: list[str] = []
+        for p in shared_with:
+            resolved = _rs.resolve_person(p)
+            canonicalized.append(resolved if resolved is not None else p)
+        # Deduplicate while preserving order
+        shared_with = list(dict.fromkeys(canonicalized))
+
     shared_episode_section = ""
     if shared_with:
         related_ids: list[str] = []
@@ -278,21 +290,41 @@ async def _handle_remember(
                     continue
                 related_ids.append(candidate_id)
 
-        episode_memory_ids = list(dict.fromkeys([mem.id, *related_ids]))
-        summary = f"Shared experience with {', '.join(shared_with)}: {str(content)[:100]}"
-        try:
-            episode_store = get_episodes()
-            episode = await episode_store.create(episode_memory_ids, summary)
-            relationship_store = _relationship_store(config)
-            for person in shared_with:
-                relationship_store.add_shared_episode(person, episode.id)
-            shared_episode_section = (
-                "\n"
-                f"Shared episode created: {episode.id} "
-                f"({len(episode.memory_ids)} memories, with {', '.join(shared_with)})"
-            )
-        except Exception as exc:
-            logger.warning("Shared episode creation failed: %s", exc)
+        # Convert canonical IDs to display names for human-readable output
+        _rs2 = _relationship_store(config)
+        display_names: list[str] = []
+        for pid in shared_with:
+            rel = _rs2.get(pid)
+            display_names.append(rel.name if rel and rel.name else pid)
+        shared_episode_section = ""
+        if shared_with:
+            related_ids = list(dict.fromkeys([mem.id, *related_ids]))
+            summary = f"Shared experience with {', '.join(display_names)}: {str(content)[:100]}"
+            mem.involved_person_ids = list(shared_with)
+            # Persist involved_person_ids to ChromaDB metadata before episode creation
+            # so it survives even if episode_store.create() fails
+            try:
+                collection = memory._ensure_connected()
+                if hasattr(collection, 'update'):
+                    collection.update(
+                        ids=[mem.id],
+                        metadatas=[memory_to_chromadb(mem)],
+                    )
+            except (AttributeError, TypeError, KeyError, ValueError) as exc:
+                logger.debug("involved_person_ids persist failed (non-fatal): %s", exc)
+            try:
+                episode_store = get_episodes()
+                episode = await episode_store.create(related_ids, summary)
+                relationship_store = _relationship_store(config)
+                for person in shared_with:
+                    relationship_store.add_shared_episode(person, episode.id)
+                shared_episode_section = (
+                    "\n"
+                    f"Shared episode created: {episode.id} "
+                    f"({len(episode.memory_ids)} memories, with {', '.join(display_names)})"
+                )
+            except Exception as exc:
+                logger.warning("Shared episode creation failed: %s", exc)
 
     desire_settling_section = ""
     if desire_engine is not None:
@@ -374,6 +406,10 @@ async def _handle_remember(
                 notion_confidences,
                 sort_keys=True,
             )
+    if mem.involved_person_ids:
+        update_tool_metadata(
+            involved_person_ids=json.dumps(mem.involved_person_ids),
+        )
     _set_tool_context("remember", remember_context)
     return compose_response(data, scaffold)
 
@@ -382,7 +418,6 @@ async def _handle_recall(
     config: EgoConfig, memory: MemoryStore, args: dict[str, Any]
 ) -> str:
     """Recall memories by context."""
-    del config
     _set_tool_context("recall", {})
     context = args["context"]
     raw_n_results = args.get("n_results", 3)
@@ -410,6 +445,11 @@ async def _handle_recall(
         if value
     ]
 
+    relationship_store: Any = None
+    try:
+        relationship_store = _relationship_store(config)
+    except (AttributeError, KeyError):
+        pass
     results = await memory.recall(
         context,
         n_results=n_results,
@@ -419,6 +459,7 @@ async def _handle_recall(
         date_to=date_to,
         valence_range=valence_range,
         arousal_range=arousal_range,
+        relationship_store=relationship_store,
     )
 
     total_count = memory.collection_count()
@@ -461,14 +502,64 @@ async def _handle_recall(
                             for item in associated[:2]
                         )
                     )
+        # Collect resonant persons from base results (exclude Proust hits)
+        resonant_persons: list[Any] = []
+        involuntary_persons: list[Any] = []
+        try:
+            non_proust_results = [r for r in results if not r.is_proust]
+            resonant_persons = _collect_resonant_persons(non_proust_results, relationship_store)
+        except (AttributeError, KeyError, TypeError):
+            pass
+        # Collect involuntary persons from dormancy gate
+        # Suppress when explicit filter is used (consistent with Proust suppression)
+        _explicit_filter_used = bool(
+            emotion_filter or category_filter or date_from or date_to
+        )
+        if not _explicit_filter_used:
+            try:
+                _meta = memory._last_recall_metadata
+                _raw_pids = _meta.get("involuntary_person_ids", []) if isinstance(_meta, dict) else []
+                involuntary_pids: list[str] = _raw_pids if isinstance(_raw_pids, list) else []
+                for pid in involuntary_pids:
+                    rel = relationship_store.get(pid)
+                    if rel and rel.name:
+                        involuntary_persons.append(
+                            type("InvoluntaryPerson", (), {
+                                "person_id": pid,
+                                "name": rel.name,
+                                "surface_type": "involuntary",
+                            })()
+                        )
+            except (AttributeError, KeyError, TypeError):
+                pass
+        # Append as natural first-person prose, not CRM-style bullet lists
+        if resonant_persons:
+            names = [rp.name for rp in resonant_persons]
+            if len(names) == 1:
+                lines.append(f"\nSo, {names[0]} is at the back of my mind too.")
+            elif len(names) == 2:
+                lines.append(f"\nSo, {names[0]} and {names[1]} came to mind.")
+            else:
+                last = names[-1]
+                others = ", ".join(names[:-1])
+                lines.append(f"\nSo, {others} and {last} came to mind.")
+        if involuntary_persons:
+            for ip in involuntary_persons:
+                lines.append(f"\n{ip.name} surfaced on their own.")
+
         data = "\n".join(lines)
 
     scaffold = _recall_scaffold(len(results), total_count, filters_used)
     proust_result = next((result for result in results if result.is_proust), None)
+    related_person_count = len(resonant_persons) + len(involuntary_persons) if "resonant_persons" in dir() else 0
     _set_tool_context(
         "recall",
         {
             "fuzzy_recall_count": sum(1 for result in results if result.decay < 0.5),
+            "related_person_count": related_person_count,
+            "surfaced_person_ids": json.dumps([p.person_id for p in resonant_persons + involuntary_persons]) if "resonant_persons" in dir() else None,
+            "resonant_person_ids": json.dumps([p.person_id for p in resonant_persons]) if "resonant_persons" in dir() else None,
+            "involuntary_person_ids": json.dumps([p.person_id for p in involuntary_persons]) if "resonant_persons" in dir() else None,
             "proust_triggered": proust_result is not None,
             **(
                 {
@@ -482,6 +573,10 @@ async def _handle_recall(
     )
     update_tool_metadata(
         fuzzy_recall_count=sum(1 for result in results if result.decay < 0.5),
+        related_person_count=related_person_count,
+        surfaced_person_ids=json.dumps([p.person_id for p in resonant_persons + involuntary_persons]) if "resonant_persons" in dir() else None,
+        resonant_person_ids=json.dumps([p.person_id for p in resonant_persons]) if "resonant_persons" in dir() else None,
+        involuntary_person_ids=json.dumps([p.person_id for p in involuntary_persons]) if "resonant_persons" in dir() else None,
         proust_triggered=proust_result is not None,
         proust_memory_id=(proust_result.memory.id if proust_result is not None else None),
         proust_memory_decay=(proust_result.decay if proust_result is not None else None),
