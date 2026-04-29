@@ -660,8 +660,15 @@ def _load_relationship_rows(settings: DashboardSettings) -> list[dict[str, objec
             continue
         trust_raw = raw.get("trust_level")
         trust_val = None
-        if isinstance(trust_raw, (int, float)) and not isinstance(trust_raw, bool):
+        if isinstance(trust_raw, bool):
+            pass
+        elif isinstance(trust_raw, (int, float)):
             trust_val = float(trust_raw)
+        elif isinstance(trust_raw, str):
+            try:
+                trust_val = float(trust_raw)
+            except ValueError:
+                pass
         total = _coerce_int(raw.get("total_interactions"), 0)
         shared_raw = raw.get("shared_episode_ids")
         shared = 0
@@ -765,9 +772,27 @@ def create_app(
             allow_headers=["*"],
         )
 
+    def _current_with_file_relationship() -> dict[str, object]:
+        result = telemetry.current()
+        rows = _load_relationship_rows(app_settings)
+        if rows:
+            best = max(
+                rows,
+                key=lambda r: (
+                    _coerce_float(r.get("trust_level"), 0),
+                    _coerce_int(r.get("shared_episodes_count"), 0),
+                ),
+            )
+            result["latest_relationship"] = {
+                "trust_level": _coerce_float(best.get("trust_level"), 0),
+                "total_interactions": float(_coerce_int(best.get("total_interactions"), 0)),
+                "shared_episodes_count": float(_coerce_int(best.get("shared_episodes_count"), 0)),
+            }
+        return result
+
     @app.get("/api/v1/current")
     def get_current() -> dict[str, object]:
-        return telemetry.current()
+        return _current_with_file_relationship()
 
     @app.get("/api/v1/usage/tools")
     def get_tool_usage(
@@ -942,7 +967,7 @@ def create_app(
                     {
                         "type": "current_snapshot",
                         "at": datetime.now(tz=UTC).isoformat(),
-                        "data": telemetry.current(),
+                        "data": _current_with_file_relationship(),
                     }
                 )
                 end = datetime.now(tz=UTC)
