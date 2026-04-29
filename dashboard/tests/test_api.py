@@ -1470,3 +1470,76 @@ def test_relationship_detail_endpoint_aggregates_metrics_for_person() -> None:
     assert data["surface_counts"]["resonant"] == 1
     assert data["surface_counts"]["involuntary"] == 1
     assert data["surface_counts"]["total"] == 2
+
+
+def test_current_endpoint_uses_file_relationship_over_db(
+    tmp_path: Path,
+) -> None:
+    """The /current endpoint should prefer relationship data from the JSON file."""
+    _write_desire_catalog(tmp_path)
+    rel_dir = tmp_path / "relationships"
+    rel_dir.mkdir()
+    (rel_dir / "models.json").write_text(
+        json.dumps(
+            {
+                "alice": {
+                    "person_id": "alice",
+                    "name": "Alice",
+                    "trust_level": 0.95,
+                    "total_interactions": 726,
+                    "shared_episode_ids": ["ep_1", "ep_2", "ep_3"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/current")
+
+    assert response.status_code == 200
+    rel = response.json()["latest_relationship"]
+    assert rel is not None
+    assert rel["trust_level"] == 0.95
+    assert rel["total_interactions"] == 726.0
+    assert rel["shared_episodes_count"] == 3.0
+
+
+def test_relationships_overview_parses_string_trust_level(
+    tmp_path: Path,
+) -> None:
+    """trust_level stored as string (e.g. from legacy data) should be parsed."""
+    rel_dir = tmp_path / "relationships"
+    rel_dir.mkdir()
+    (rel_dir / "models.json").write_text(
+        json.dumps(
+            {
+                "alice": {
+                    "person_id": "alice",
+                    "name": "Alice",
+                    "trust_level": "0.85",
+                    "total_interactions": 10,
+                    "shared_episode_ids": ["ep_1"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_app(
+        TelemetryStore(),
+        settings=DashboardSettings(ego_mcp_data_dir=str(tmp_path)),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/relationships/overview")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["trust_level"] == 0.85
