@@ -18,6 +18,7 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
 import type { PersonDetail } from '@/types'
 
 type PersonDetailPanelProps = {
@@ -54,6 +55,7 @@ export const PersonDetailPanel = ({
   detail,
   onClose,
 }: PersonDetailPanelProps) => {
+  const { formatTs } = useTimestampFormatter()
   const trustData = useMemo(
     () =>
       detail.trust_history.map((pt) => ({
@@ -109,7 +111,11 @@ export const PersonDetailPanel = ({
                     <YAxis domain={[0, 1]} />
                     <ChartTooltip
                       content={
-                        <ChartTooltipContent indicator="dot" labelKey="ts" />
+                        <ChartTooltipContent
+                          indicator="dot"
+                          labelKey="ts"
+                          labelFormatter={formatTs}
+                        />
                       }
                     />
                     <Area
@@ -147,7 +153,11 @@ export const PersonDetailPanel = ({
                     <YAxis />
                     <ChartTooltip
                       content={
-                        <ChartTooltipContent indicator="dot" labelKey="ts" />
+                        <ChartTooltipContent
+                          indicator="dot"
+                          labelKey="ts"
+                          labelFormatter={formatTs}
+                        />
                       }
                     />
                     <Area

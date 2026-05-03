@@ -7,11 +7,16 @@ import {
   Scatter,
   XAxis,
   YAxis,
-  Tooltip,
 } from 'recharts'
 
-import { ChartContainer, type ChartConfig } from '@/components/ui/chart'
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@/components/ui/chart'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
 import type { SurfaceTimelinePoint, PersonOverview } from '@/types'
 
 type SurfaceTimelineProps = {
@@ -31,15 +36,6 @@ const buildPersonNameMap = (persons: PersonOverview[]): Map<string, string> => {
   return map
 }
 
-const formatTooltipLabel = (ts: string): string => {
-  try {
-    const d = new Date(ts)
-    return d.toLocaleString()
-  } catch {
-    return ts
-  }
-}
-
 const chartConfig: ChartConfig = {
   resonant: {
     label: 'Resonant',
@@ -56,6 +52,7 @@ export const SurfaceTimeline = ({
   isLoading,
   persons,
 }: SurfaceTimelineProps) => {
+  const { formatTs } = useTimestampFormatter()
   const personNameMap = useMemo(() => buildPersonNameMap(persons), [persons])
 
   const data = useMemo(() => {
@@ -102,28 +99,29 @@ export const SurfaceTimeline = ({
                 dataKey="ts"
                 name="time"
                 tickFormatter={(ts) =>
-                  formatTooltipLabel(new Date(ts).toISOString())
+                  formatTs(new Date(Number(ts)).toISOString())
                 }
                 scale="time"
               />
               <YAxis
                 dataKey="display_name"
                 name="person"
-                type="category"
                 tick={{ fontSize: 12 }}
               />
-              <Tooltip
+              <ChartTooltip
                 cursor={{ strokeDasharray: '3 3' }}
-                formatter={(value: string, name: string) => {
-                  if (name === 'ts') {
-                    return [
-                      formatTooltipLabel(new Date(Number(value)).toISOString()),
-                      'time',
-                    ]
+                content={({ label, payload }) => {
+                  if (!label || !payload?.length) {
+                    return null
                   }
-                  return [value, name]
+                  return (
+                    <ChartTooltipContent
+                      label={formatTs(new Date(Number(label)).toISOString())}
+                      payload={payload}
+                      labelKey="ts"
+                    />
+                  )
                 }}
-                labelFormatter={() => ''}
               />
               <Scatter data={data} fill="#8884d8" isAnimationActive={false}>
                 {data.map((entry, index) => (
