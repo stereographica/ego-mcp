@@ -72,33 +72,32 @@ export const RelationshipsTab = ({ range }: RelationshipsTabProps) => {
   }, [])
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">Person overview</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <PersonOverviewTable
-                persons={persons}
-                isLoading={isLoadingPersons}
-                onSelect={handleSelectPerson}
-              />
-            </CardContent>
-          </Card>
-        </div>
-        <div>
-          <SurfaceTimeline
-            points={points}
-            isLoading={isLoadingPoints}
+    <div className="min-w-0 space-y-4">
+      <Card className="min-w-0 overflow-hidden">
+        <CardHeader>
+          <CardTitle className="text-sm">Person overview</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <PersonOverviewTable
             persons={persons}
+            isLoading={isLoadingPersons}
+            onSelect={handleSelectPerson}
           />
-        </div>
+        </CardContent>
+      </Card>
+
+      <div className="min-w-0">
+        <SurfaceTimeline
+          points={points}
+          isLoading={isLoadingPoints}
+          persons={persons}
+        />
       </div>
 
       {selectedPerson && detail && (
-        <PersonDetailPanel detail={detail} onClose={handleCloseDetail} />
+        <div className="min-w-0">
+          <PersonDetailPanel detail={detail} onClose={handleCloseDetail} />
+        </div>
       )}
     </div>
   )

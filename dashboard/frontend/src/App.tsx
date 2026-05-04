@@ -50,7 +50,7 @@ const App = () => {
   }, [preset, customFrom, customTo])
 
   return (
-    <main className="mx-auto w-[min(1680px,calc(100vw-24px))] p-6">
+    <main className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6">
       <DashboardHeader current={current} connected={connected} />
 
       <Tabs className="mt-4" value={activeTab} onValueChange={setActiveTab}>

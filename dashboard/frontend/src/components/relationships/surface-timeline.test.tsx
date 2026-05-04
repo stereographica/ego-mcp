@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 
 import { SurfaceTimeline } from '@/components/relationships/surface-timeline'
+import { buildSurfaceTimelineData } from '@/components/relationships/surface-timeline-utils'
 import type { PersonOverview, SurfaceTimelinePoint } from '@/types'
 
 const mockPoints: SurfaceTimelinePoint[] = [
@@ -42,11 +43,37 @@ const mockPersons: PersonOverview[] = [
 ]
 
 describe('SurfaceTimeline', () => {
+  it('maps person names and sorts timeline data by timestamp', () => {
+    const personNameMap = new Map(
+      mockPersons.map((person) => [person.person_id, person.name]),
+    )
+
+    expect(buildSurfaceTimelineData(mockPoints, personNameMap)).toEqual([
+      {
+        ts: new Date('2026-01-01T12:00:00+00:00').getTime(),
+        tsLabel: '2026-01-01T12:00:00+00:00',
+        person_id: 'alice',
+        display_name: 'Alice',
+        surface_type: 'resonant',
+        fill: '#3b82f6',
+      },
+      {
+        ts: new Date('2026-01-01T14:00:00+00:00').getTime(),
+        tsLabel: '2026-01-01T14:00:00+00:00',
+        person_id: 'bob',
+        display_name: 'Bob',
+        surface_type: 'involuntary',
+        fill: '#f59e0b',
+      },
+    ])
+  })
+
   it('renders empty state when no points', () => {
     render(
       <SurfaceTimeline points={[]} isLoading={false} persons={mockPersons} />,
     )
 
+    expect(screen.getByText('Surface timeline')).toBeInTheDocument()
     expect(screen.getByText(/No surface events recorded/i)).toBeInTheDocument()
   })
 
@@ -55,6 +82,7 @@ describe('SurfaceTimeline', () => {
       <SurfaceTimeline points={[]} isLoading={true} persons={mockPersons} />,
     )
 
+    expect(screen.getByText('Surface timeline')).toBeInTheDocument()
     expect(screen.getByText('Loading...')).toBeInTheDocument()
   })
 
@@ -68,6 +96,8 @@ describe('SurfaceTimeline', () => {
     )
 
     expect(screen.getByText('Surface timeline')).toBeInTheDocument()
+    expect(screen.getByText('Alice')).toBeInTheDocument()
+    expect(screen.getAllByText('Bob').length).toBeGreaterThan(0)
 
     const chartContainers = document.querySelectorAll('[data-chart]')
     expect(chartContainers).toHaveLength(1)
