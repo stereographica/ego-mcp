@@ -576,10 +576,12 @@ def merge_notions(
                     rewritten_meta[key] = mf
                     continue
                 new_ids = [
-                    keep.id if nid == absorb.id else nid
+                    (keep.id if nid == absorb.id else nid)
                     for nid in raw_ids
                     if nid
                 ]
+                if notion.id == keep.id:
+                    new_ids = [nid for nid in new_ids if nid != keep.id]
                 new_ids = list(dict.fromkeys(new_ids))
                 rewritten_meta[key] = {**mf, "notion_ids": new_ids}
             else:

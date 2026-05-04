@@ -561,8 +561,45 @@ def test_0009_notion_meta_fields_legacy_list_handles_missing_id(
 
     migration_mod.up(tmp_path)
 
-    # Entry without id is skipped, so no write happens
+    # Legacy list with no valid IDs is converted to flat dict (empty)
     updated_data = json.loads(notions_file.read_text(encoding="utf-8"))
-    assert "notions" in updated_data
-    assert len(updated_data["notions"]) == 1
-    assert "meta_fields" not in updated_data["notions"][0]
+    assert "notions" not in updated_data
+    assert updated_data == {}
+
+
+def test_0009_notion_meta_fields_converts_legacy_list_even_when_all_have_meta_fields(
+    tmp_path: Path,
+) -> None:
+    migration_mod = importlib.import_module("ego_mcp.migrations.0009_notion_meta_fields")
+    notions_file = tmp_path / "notions.json"
+    notions_file.write_text(
+        json.dumps({
+            "notions": [
+                {
+                    "id": "notion_list",
+                    "label": "list notion",
+                    "emotion_tone": "curious",
+                    "confidence": 0.5,
+                    "source_memory_ids": ["m1"],
+                    "created": "2026-03-01T00:00:00+00:00",
+                    "last_reinforced": "2026-03-01T00:00:00+00:00",
+                    "meta_fields": {"note": {"type": "text", "value": "existing"}},
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    migration_mod.up(tmp_path)
+
+    updated_data = json.loads(notions_file.read_text(encoding="utf-8"))
+    assert "notions" not in updated_data
+    assert "notion_list" in updated_data
+    assert updated_data["notion_list"]["meta_fields"]["note"] == {
+        "type": "text",
+        "value": "existing",
+    }
+
+    migrated = NotionStore(tmp_path / "notions.json").get_by_id("notion_list")
+    assert migrated is not None
+    assert migrated.meta_fields["note"] == {"type": "text", "value": "existing"}

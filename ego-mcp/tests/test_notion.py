@@ -708,8 +708,8 @@ def test_merge_notions_rewrites_meta_fields_notion_ids(
     merged = merge_notions(store, "keep", "absorb")
 
     assert merged is not None
-    assert merged.meta_fields["ref"] == {"type": "notion_ids", "notion_ids": ["keep"]}
-    assert merged.meta_fields["self_ref"] == {"type": "notion_ids", "notion_ids": ["keep"]}
+    assert merged.meta_fields["ref"] == {"type": "notion_ids", "notion_ids": []}
+    assert merged.meta_fields["self_ref"] == {"type": "notion_ids", "notion_ids": []}
     other = store.get_by_id("other")
     assert other is not None
     assert other.meta_fields["points_to_absorb"] == {
@@ -752,7 +752,7 @@ def test_merge_notions_does_not_rewrite_unrelated_meta_fields(
     assert merged is not None
     assert merged.meta_fields["note"] == {"type": "text", "value": "hello"}
     assert merged.meta_fields["path_ref"] == {"type": "file_path", "path": "data.txt"}
-    assert merged.meta_fields["ids_ref"] == {"type": "notion_ids", "notion_ids": ["keep"]}
+    assert merged.meta_fields["ids_ref"] == {"type": "notion_ids", "notion_ids": []}
 
 
 def test_find_dead_links_reports_missing_file_path(tmp_path: Path) -> None:

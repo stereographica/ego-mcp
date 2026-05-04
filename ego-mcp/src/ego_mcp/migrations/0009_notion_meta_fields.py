@@ -32,10 +32,12 @@ def up(data_dir: Path) -> None:
         return
 
     updated_count = 0
+    was_legacy_list = False
 
     # Handle legacy {"notions": [...]} format: convert to flat dict
     notions_list = data.get("notions")
     if isinstance(notions_list, list):
+        was_legacy_list = True
         flat: dict[str, dict[str, object]] = {}
         for notion in notions_list:
             if not isinstance(notion, dict):
@@ -48,18 +50,19 @@ def up(data_dir: Path) -> None:
                 updated_count += 1
             flat[str(notion_id)] = notion
         data = flat
-    else:
-        # Handle current flat dict format keyed by notion ID
-        for notion_id, notion in data.items():
-            if not isinstance(notion, dict):
-                continue
-            if notion_id.startswith("_") or notion_id == "version":
-                continue
-            if "meta_fields" not in notion:
-                notion["meta_fields"] = {}
-                updated_count += 1
 
-    if updated_count == 0:
+    # Handle current flat dict format keyed by notion ID
+    for notion_id, notion in data.items():
+        if not isinstance(notion, dict):
+            continue
+        if notion_id.startswith("_") or notion_id == "version":
+            continue
+        if "meta_fields" not in notion:
+            notion["meta_fields"] = {}
+            updated_count += 1
+
+    needs_write = updated_count > 0 or was_legacy_list
+    if not needs_write:
         return
 
     notions_path.write_text(
