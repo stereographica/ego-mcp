@@ -679,6 +679,7 @@ def test_load_memory_network_keeps_notion_nodes_when_memory_load_fails(
             "last_accessed": None,
             "created": "2026-01-01T12:00:00+00:00",
             "last_reinforced": "2026-01-02T12:00:00+00:00",
+            "meta_fields": {},
         }
     ]
     assert result["edges"] == []
@@ -1543,3 +1544,86 @@ def test_relationships_overview_parses_string_trust_level(
     items = response.json()["items"]
     assert len(items) == 1
     assert items[0]["trust_level"] == 0.85
+
+
+def test_load_memory_network_carries_meta_fields_to_nodes(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "notions.json").write_text(
+        json.dumps(
+            {
+                "n1": {
+                    "label": "notion with meta",
+                    "emotion_tone": "curious",
+                    "confidence": 0.8,
+                    "source_memory_ids": ["m1"],
+                    "related_notion_ids": [],
+                    "reinforcement_count": 6,
+                    "person_id": "Master",
+                    "created": "2026-01-01T12:00:00+00:00",
+                    "last_reinforced": "2026-01-02T12:00:00+00:00",
+                    "meta_fields": {
+                        "note": {"type": "text", "value": "hello"},
+                        "ids": {"type": "notion_ids", "notion_ids": ["n1"]},
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _load_memory_network(DashboardSettings(ego_mcp_data_dir=str(tmp_path)))
+
+    nodes: list[dict[str, object]] = result["nodes"]  # type: ignore[assignment]
+    notion_nodes = [n for n in nodes if n.get("is_notion")]
+    assert len(notion_nodes) == 1
+    node = notion_nodes[0]
+    assert node["meta_fields"] == {
+        "note": {"type": "text", "value": "hello"},
+        "ids": {"type": "notion_ids", "notion_ids": ["n1"]},
+    }
+
+
+def test_build_network_edges_creates_meta_notion_link_edges(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "notions.json").write_text(
+        json.dumps(
+            {
+                "n1": {
+                    "label": "source",
+                    "emotion_tone": "curious",
+                    "confidence": 0.8,
+                    "source_memory_ids": ["m1"],
+                    "related_notion_ids": [],
+                    "reinforcement_count": 6,
+                    "person_id": "",
+                    "created": "2026-01-01T12:00:00+00:00",
+                    "last_reinforced": "2026-01-02T12:00:00+00:00",
+                    "meta_fields": {
+                        "linked": {"type": "notion_ids", "notion_ids": ["n2"]},
+                    },
+                },
+                "n2": {
+                    "label": "target",
+                    "emotion_tone": "curious",
+                    "confidence": 0.7,
+                    "source_memory_ids": ["m2"],
+                    "related_notion_ids": [],
+                    "reinforcement_count": 3,
+                    "person_id": "",
+                    "created": "2026-01-01T12:00:00+00:00",
+                    "last_reinforced": "2026-01-02T12:00:00+00:00",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _load_memory_network(DashboardSettings(ego_mcp_data_dir=str(tmp_path)))
+
+    edges: list[dict[str, object]] = result["edges"]  # type: ignore[assignment]
+    meta_links = [e for e in edges if e.get("link_type") == "meta_notion_link"]
+    assert len(meta_links) == 1
+    assert meta_links[0]["source"] == "n1"
+    assert meta_links[0]["target"] == "n2"

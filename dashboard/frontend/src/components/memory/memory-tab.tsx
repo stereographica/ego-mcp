@@ -142,6 +142,7 @@ export const MemoryTab = ({ isActive = true }: MemoryTabProps) => {
     if (!selectedNode?.is_notion) return []
     const related = new Set<string>()
     for (const edge of baseNetwork.edges) {
+      if (edge.link_type !== 'notion_related') continue
       if (edge.source === selectedNode.id) {
         const target = baseNetwork.nodes.find((node) => node.id === edge.target)
         if (target?.is_notion) related.add(target.id)
@@ -306,6 +307,14 @@ export const MemoryTab = ({ isActive = true }: MemoryTabProps) => {
                 notion={selectedNode}
                 relatedNotionIds={relatedNotionIds}
                 sourceMemoryIds={sourceMemoryIds}
+                onNotionClick={(notionId) => {
+                  const notionNode = baseNetwork.nodes.find(
+                    (n) => n.id === notionId,
+                  )
+                  if (notionNode) {
+                    setSelectedNode(notionNode)
+                  }
+                }}
               />
             ) : selectedDetail ? (
               <MemoryDetailPanel detail={selectedDetail} />

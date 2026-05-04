@@ -247,13 +247,16 @@ BACKEND_TOOLS: list[Tool] = [
     ),
     Tool(
         name="curate_notions",
-        description="List, merge, relabel, or delete notions.",
+        description="Review and curate your notions: list, merge, relabel, delete, or manage meta_fields.",
         inputSchema={
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "merge", "relabel", "delete"],
+                    "enum": [
+                        "list", "merge", "relabel", "delete",
+                        "add_meta", "update_meta", "remove_meta",
+                    ],
                 },
                 "notion_id": {"type": "string", "description": "Notion ID."},
                 "merge_into": {
@@ -267,6 +270,22 @@ BACKEND_TOOLS: list[Tool] = [
                 "person": {
                     "type": "string",
                     "description": "Associate person.",
+                },
+                "meta_key": {
+                    "type": "string",
+                    "description": "Key name for the meta_field.",
+                },
+                "meta_type": {
+                    "type": "string",
+                    "enum": ["text", "file_path", "notion_ids"],
+                    "description": "Type of meta_field.",
+                },
+                "meta_value": {
+                    "type": ["string", "array"],
+                    "description": (
+                        "Value for the meta_field. String for text/file_path, "
+                        "array of notion_ids for notion_ids type."
+                    ),
                 },
             },
             "required": ["action"],

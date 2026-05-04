@@ -131,4 +131,38 @@ describe('MemoryTab', () => {
     expect(await screen.findByText('Memory detail')).toBeInTheDocument()
     expect(screen.getByText('Detailed memory body')).toBeInTheDocument()
   })
+
+  it('renders related notions section with correct IDs', async () => {
+    const { render, screen } = await import('@testing-library/react')
+    const { NotionDetailPanel } =
+      await import('@/components/memory/notion-detail-panel')
+
+    const notionNode = {
+      id: 'notion-1',
+      label: 'Memory systems',
+      category: 'notion',
+      is_notion: true,
+      confidence: 0.91,
+      reinforcement_count: 6,
+      source_count: 1,
+      degree: 2,
+      betweenness: 0.2,
+      is_conviction: true,
+      meta_fields: {},
+    } satisfies Partial<MemoryNetworkResponse['nodes'][number]> & {
+      is_notion: true
+    } as MemoryNetworkResponse['nodes'][number]
+
+    render(
+      <NotionDetailPanel
+        notion={notionNode}
+        relatedNotionIds={['notion-2']}
+        sourceMemoryIds={['mem-1']}
+        onNotionClick={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText(/Related notions/)).toBeInTheDocument()
+    expect(screen.getByText(/notion-2/)).toBeInTheDocument()
+  })
 })

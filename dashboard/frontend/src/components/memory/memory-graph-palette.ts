@@ -106,6 +106,8 @@ export const getEdgeStroke = (linkType: string) => {
       return 'hsl(270, 60%, 55%)'
     case 'notion_related':
       return 'hsl(45, 90%, 50%)'
+    case 'meta_notion_link':
+      return 'hsl(320, 60%, 55%)'
     default:
       return 'hsl(0, 0%, 60%)'
   }
@@ -117,6 +119,8 @@ export const getEdgeDashArray = (linkType: string) => {
       return '4 4'
     case 'notion_related':
       return '6 4'
+    case 'meta_notion_link':
+      return '5 3'
     default:
       return undefined
   }
@@ -140,6 +144,8 @@ export const getEdgeStrokeWidth = (
       return 2 + emphasis
     case 'notion_related':
       return confidence * 3 + 1 + emphasis
+    case 'meta_notion_link':
+      return 2 + emphasis
     default:
       return Math.max(1.5, confidence * 3) + emphasis
   }

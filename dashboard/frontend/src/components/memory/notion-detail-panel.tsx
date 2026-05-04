@@ -4,12 +4,62 @@ import { fetchNotionHistory } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { notionToneGroup } from '@/components/memory/memory-graph-palette'
-import type { MemoryNetworkNode, SeriesPoint } from '@/types'
+import type { MemoryNetworkNode, MetaField, SeriesPoint } from '@/types'
 
 type NotionDetailPanelProps = {
   notion: MemoryNetworkNode
   relatedNotionIds: string[]
   sourceMemoryIds: string[]
+  onNotionClick?: (notionId: string) => void
+}
+
+const MetaFieldDisplay = ({
+  fieldKey,
+  field,
+  onNotionClick,
+}: {
+  fieldKey: string
+  field: MetaField
+  onNotionClick?: (notionId: string) => void
+}) => {
+  if (field.type === 'text') {
+    return (
+      <div className="rounded-md border bg-muted/10 px-3 py-2">
+        <span className="text-muted-foreground font-medium">{fieldKey}:</span>
+        <span className="ml-2">{field.value}</span>
+      </div>
+    )
+  }
+
+  if (field.type === 'file_path') {
+    return (
+      <div className="rounded-md border bg-muted/10 px-3 py-2">
+        <span className="text-muted-foreground font-medium">{fieldKey}:</span>
+        <span className="ml-2 font-mono text-xs">{field.path}</span>
+      </div>
+    )
+  }
+
+  if (field.type === 'notion_ids') {
+    return (
+      <div className="rounded-md border bg-muted/10 px-3 py-2">
+        <span className="text-muted-foreground font-medium">{fieldKey}:</span>
+        <div className="mt-1 flex flex-wrap gap-1">
+          {field.notion_ids.map((id) => (
+            <button
+              key={id}
+              onClick={() => onNotionClick?.(id)}
+              className="rounded bg-amber-500/20 px-2 py-0.5 text-xs text-amber-300 hover:bg-amber-500/30 transition-colors cursor-pointer"
+            >
+              {id}
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  return null
 }
 
 const formatTimestamp = (value?: string | null) =>
@@ -36,6 +86,7 @@ export const NotionDetailPanel = ({
   notion,
   relatedNotionIds,
   sourceMemoryIds,
+  onNotionClick,
 }: NotionDetailPanelProps) => {
   const [history, setHistory] = useState<SeriesPoint[]>([])
 
@@ -134,6 +185,31 @@ export const NotionDetailPanel = ({
             </Badge>
           ))}
         </div>
+
+        {(() => {
+          const metaFields = notion.meta_fields ?? {}
+          const metaFieldEntries = Object.entries(metaFields)
+          if (metaFieldEntries.length === 0) {
+            return null
+          }
+          return (
+            <div className="space-y-2">
+              <p className="text-muted-foreground text-xs uppercase tracking-wide">
+                Meta fields ({metaFieldEntries.length})
+              </p>
+              <div className="space-y-2 text-xs">
+                {metaFieldEntries.map(([key, field]) => (
+                  <MetaFieldDisplay
+                    key={key}
+                    fieldKey={key}
+                    field={field}
+                    onNotionClick={onNotionClick}
+                  />
+                ))}
+              </div>
+            </div>
+          )
+        })()}
 
         <div className="space-y-2">
           <p className="text-muted-foreground text-xs uppercase tracking-wide">

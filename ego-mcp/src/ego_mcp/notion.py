@@ -7,13 +7,13 @@ import math
 import re
 import uuid
 from collections import Counter, deque
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ego_mcp import timezone_utils
-from ego_mcp.types import Emotion, Memory, Notion
+from ego_mcp.types import Emotion, Memory, MetaField, Notion
 
 _PLACEHOLDER_NOTION_LABEL = re.compile(r"^untitled\s*\([^)]+\)$", re.IGNORECASE)
 _TITLE_SEPARATOR = re.compile(r"[.!?。！？\n]+")
@@ -159,6 +159,12 @@ class NotionStore:
 
     @staticmethod
     def _from_payload(payload: dict[str, Any]) -> Notion:
+        meta_fields_raw = payload.get("meta_fields", {})
+        meta_fields: dict[str, MetaField] = {}
+        if isinstance(meta_fields_raw, dict):
+            for key, value in meta_fields_raw.items():
+                if isinstance(value, dict) and "type" in value:
+                    meta_fields[key] = value  # type: ignore[assignment]
         return Notion(
             id=str(payload.get("id", "")),
             label=str(payload.get("label", "")),
@@ -172,6 +178,7 @@ class NotionStore:
             related_notion_ids=list(payload.get("related_notion_ids", [])),
             reinforcement_count=int(payload.get("reinforcement_count", 0)),
             person_id=str(payload.get("person_id", "")),
+            meta_fields=meta_fields,
         )
 
     def save(self, notion: Notion) -> None:
@@ -523,6 +530,11 @@ def merge_notions(
             if notion_id and notion_id not in {keep.id, absorb.id}
         )
     )
+    merged_meta_fields = dict(keep.meta_fields)
+    for key, value in absorb.meta_fields.items():
+        if key not in merged_meta_fields:
+            merged_meta_fields[key] = value
+
     merged = store.update(
         keep.id,
         source_memory_ids=list(
@@ -533,6 +545,7 @@ def merge_notions(
         confidence=max(keep.confidence, absorb.confidence),
         reinforcement_count=keep.reinforcement_count + absorb.reinforcement_count,
         person_id=merged_person_id,
+        meta_fields=merged_meta_fields,
     )
     if merged is None:
         return None
@@ -550,6 +563,30 @@ def merge_notions(
             )
         )
         store.update(notion.id, related_notion_ids=rewritten_related)
+
+    for notion in store.list_all():
+        rewritten_meta: dict[str, Any] = {}
+        for key, mf in notion.meta_fields.items():
+            if not isinstance(mf, dict):
+                rewritten_meta[key] = mf
+                continue
+            if mf.get("type") == "notion_ids":
+                raw_ids = mf.get("notion_ids", [])
+                if not isinstance(raw_ids, list):
+                    rewritten_meta[key] = mf
+                    continue
+                new_ids = [
+                    keep.id if nid == absorb.id else nid
+                    for nid in raw_ids
+                    if nid
+                ]
+                new_ids = list(dict.fromkeys(new_ids))
+                rewritten_meta[key] = {**mf, "notion_ids": new_ids}
+            else:
+                rewritten_meta[key] = mf
+        if rewritten_meta != notion.meta_fields:
+            store.update(notion.id, meta_fields=rewritten_meta)
+
     return store.get_by_id(keep.id)
 
 
@@ -675,3 +712,72 @@ def update_notion_from_memory(
         if updated is not None:
             results.append((notion.id, "weakened"))
     return results
+
+
+@dataclass
+class DeadLink:
+    """Represents a dead link in a meta_field."""
+
+    notion_id: str
+    meta_key: str
+    link_type: Literal["file_path", "notion_ids"]
+    dead_targets: list[str]
+
+
+def find_dead_links(
+    store: NotionStore,
+    workspace_dir: Path,
+) -> list[DeadLink]:
+    """Find dead links in meta_fields across all notions.
+
+    Checks:
+    - file_path: whether the referenced file exists
+    - notion_ids: whether each referenced notion exists
+
+    Returns list of DeadLink instances.
+    """
+    dead_links: list[DeadLink] = []
+
+    for notion in store.list_all():
+        for key, meta_field in notion.meta_fields.items():
+            if not isinstance(meta_field, dict):
+                continue
+            field_type = meta_field.get("type")
+
+            if field_type == "file_path":
+                path = meta_field.get("path", "")
+                if not isinstance(path, str):
+                    continue
+                full_path = workspace_dir / path
+                try:
+                    full_path.resolve().relative_to(workspace_dir.resolve())
+                except ValueError:
+                    dead_links.append(DeadLink(
+                        notion_id=notion.id,
+                        meta_key=key,
+                        link_type="file_path",
+                        dead_targets=[path],
+                    ))
+                    continue
+                if not full_path.is_file():
+                    dead_links.append(DeadLink(
+                        notion_id=notion.id,
+                        meta_key=key,
+                        link_type="file_path",
+                        dead_targets=[path],
+                    ))
+
+            elif field_type == "notion_ids":
+                notion_ids = meta_field.get("notion_ids", [])
+                if not isinstance(notion_ids, list):
+                    continue
+                missing = [nid for nid in notion_ids if store.get_by_id(nid) is None]
+                if missing:
+                    dead_links.append(DeadLink(
+                        notion_id=notion.id,
+                        meta_key=key,
+                        link_type="notion_ids",
+                        dead_targets=missing,
+                    ))
+
+    return dead_links

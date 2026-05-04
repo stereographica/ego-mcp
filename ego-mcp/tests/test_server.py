@@ -1494,11 +1494,12 @@ class TestForgetToolServerHandlers:
             "_call_relative_time",
             lambda _timestamp, now=None: "2d ago",
         )
-        text = server_mod._handle_curate_notions({"action": "list"}, store)
+        text = server_mod._handle_curate_notions({"action": "list"}, store, None)
         assert get_tool_metadata()["curate_action"] == "list"
         deleted = server_mod._handle_curate_notions(
             {"action": "delete", "notion_id": "notion_1"},
             store,
+            None,
         )
 
         assert "Pattern seeking" in text
@@ -1534,10 +1535,12 @@ class TestForgetToolServerHandlers:
         merged = server_mod._handle_curate_notions(
             {"action": "merge", "notion_id": "absorb", "merge_into": "keep", "person": "Master"},
             store,
+            None,
         )
         relabeled = server_mod._handle_curate_notions(
             {"action": "relabel", "notion_id": "keep", "new_label": "Merged pattern", "person": ""},
             store,
+            None,
         )
         notion = store.get_by_id("keep")
 
@@ -1550,24 +1553,474 @@ class TestForgetToolServerHandlers:
     def test_handle_curate_notions_error_paths(self, tmp_path: Path) -> None:
         store = NotionStore(tmp_path / "notions.json")
 
-        missing_id = server_mod._handle_curate_notions({"action": "delete"}, store)
+        missing_id = server_mod._handle_curate_notions({"action": "delete"}, store, None)
         missing_merge_into = server_mod._handle_curate_notions(
             {"action": "merge", "notion_id": "missing"},
             store,
+            None,
         )
         missing_new_label = server_mod._handle_curate_notions(
             {"action": "relabel", "notion_id": "missing"},
             store,
+            None,
         )
         missing_target = server_mod._handle_curate_notions(
             {"action": "delete", "notion_id": "missing"},
             store,
+            None,
         )
 
         assert "notion_id is required." in missing_id
         assert "merge_into is required for merge." in missing_merge_into
         assert "new_label is required for relabel." in missing_new_label
         assert "Notion not found: missing" in missing_target
+
+    def test_handle_curate_notions_add_meta_success(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+        workspace_dir = tmp_path / "workspace"
+        workspace_dir.mkdir()
+        (workspace_dir / "file.txt").write_text("content")
+        config = EgoConfig(
+            embedding_provider="gemini",
+            embedding_model="gemini-embedding-001",
+            api_key="test-key",
+            data_dir=tmp_path,
+            companion_name="Master",
+            workspace_dir=workspace_dir,
+            timezone="UTC",
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "note",
+                "meta_type": "text",
+                "meta_value": "hello",
+            },
+            store,
+            config,
+        )
+
+        assert "Added meta_field 'note'" in result
+        assert get_tool_metadata()["curate_action"] == "add_meta"
+        assert get_tool_metadata()["curate_notion_id"] == "n1"
+        notion = store.get_by_id("n1")
+        assert notion is not None
+        assert notion.meta_fields["note"] == {"type": "text", "value": "hello"}
+
+    def test_handle_curate_notions_add_meta_rejects_duplicate_key(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+                meta_fields={
+                    "existing": {"type": "text", "value": "old"},
+                },
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "existing",
+                "meta_type": "text",
+                "meta_value": "new",
+            },
+            store,
+            None,
+        )
+
+        assert "already exists" in result
+
+    def test_handle_curate_notions_add_meta_rejects_directory_as_file_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workspace_dir = tmp_path / "workspace"
+        workspace_dir.mkdir()
+        (workspace_dir / "subdir").mkdir()
+        config = EgoConfig(
+            embedding_provider="gemini",
+            embedding_model="gemini-embedding-001",
+            api_key="test-key",
+            data_dir=tmp_path,
+            companion_name="Master",
+            workspace_dir=workspace_dir,
+            timezone="UTC",
+        )
+
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "dir_ref",
+                "meta_type": "file_path",
+                "meta_value": "subdir",
+            },
+            store,
+            config,
+        )
+
+        assert "file not found" in result
+
+    def test_handle_curate_notions_add_meta_rejects_empty_file_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workspace_dir = tmp_path / "workspace"
+        workspace_dir.mkdir()
+        config = EgoConfig(
+                embedding_provider="gemini",
+                embedding_model="gemini-embedding-001",
+                api_key="test-key",
+                data_dir=tmp_path,
+                companion_name="Master",
+                workspace_dir=workspace_dir,
+                timezone="UTC",
+            )
+
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "empty_ref",
+                "meta_type": "file_path",
+                "meta_value": "",
+            },
+            store,
+            config,
+        )
+
+        assert "file not found" in result
+
+    def test_handle_curate_notions_add_meta_rejects_dot_file_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workspace_dir = tmp_path / "workspace"
+        workspace_dir.mkdir()
+        config = EgoConfig(
+                embedding_provider="gemini",
+                embedding_model="gemini-embedding-001",
+                api_key="test-key",
+                data_dir=tmp_path,
+                companion_name="Master",
+                workspace_dir=workspace_dir,
+                timezone="UTC",
+            )
+
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "dot_ref",
+                "meta_type": "file_path",
+                "meta_value": ".",
+            },
+            store,
+            config,
+        )
+
+        assert "file not found" in result
+
+    def test_handle_curate_notions_add_meta_rejects_absolute_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workspace_dir = tmp_path / "workspace"
+        workspace_dir.mkdir()
+        config = EgoConfig(
+                embedding_provider="gemini",
+                embedding_model="gemini-embedding-001",
+                api_key="test-key",
+                data_dir=tmp_path,
+                companion_name="Master",
+                workspace_dir=workspace_dir,
+                timezone="UTC",
+            )
+
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "abs_ref",
+                "meta_type": "file_path",
+                "meta_value": "/etc/hosts",
+            },
+            store,
+            config,
+        )
+
+        assert "resolves outside the workspace" in result
+
+    def test_handle_curate_notions_update_meta_success(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+                meta_fields={
+                    "note": {"type": "text", "value": "old value"},
+                },
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "update_meta",
+                "notion_id": "n1",
+                "meta_key": "note",
+                "meta_type": "text",
+                "meta_value": "new value",
+            },
+            store,
+            None,
+        )
+
+        assert "Updated meta_field 'note'" in result
+        assert get_tool_metadata()["curate_action"] == "update_meta"
+        notion = store.get_by_id("n1")
+        assert notion is not None
+        assert notion.meta_fields["note"] == {"type": "text", "value": "new value"}
+
+    def test_handle_curate_notions_update_meta_rejects_nonexistent_key(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+                meta_fields={},
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "update_meta",
+                "notion_id": "n1",
+                "meta_key": "missing",
+                "meta_type": "text",
+                "meta_value": "value",
+            },
+            store,
+            None,
+        )
+
+        assert "does not exist" in result
+
+    def test_handle_curate_notions_remove_meta_success(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+                meta_fields={
+                    "note": {"type": "text", "value": "hello"},
+                },
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "remove_meta",
+                "notion_id": "n1",
+                "meta_key": "note",
+            },
+            store,
+            None,
+        )
+
+        assert "Removed meta_field 'note'" in result
+        assert get_tool_metadata()["curate_action"] == "remove_meta"
+        notion = store.get_by_id("n1")
+        assert notion is not None
+        assert notion.meta_fields == {}
+
+    def test_handle_curate_notions_add_meta_rejects_malformed_notion_ids(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "bad_ids",
+                "meta_type": "notion_ids",
+                "meta_value": [123],
+            },
+            store,
+            None,
+        )
+
+        assert "must be a non-empty string" in result
+
+        result2 = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "bad_ids2",
+                "meta_type": "notion_ids",
+                "meta_value": ["valid", "", "also_valid"],
+            },
+            store,
+            None,
+        )
+
+        assert "must be a non-empty string" in result2
+
+    def test_handle_curate_notions_add_meta_with_notion_ids_success(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion 1",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+        store.save(
+            Notion(
+                id="n2",
+                label="Test notion 2",
+                confidence=0.7,
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "linked",
+                "meta_type": "notion_ids",
+                "meta_value": ["n2", "n2", "n1"],
+            },
+            store,
+            None,
+        )
+
+        assert "Added meta_field 'linked'" in result
+        notion = store.get_by_id("n1")
+        assert notion is not None
+        assert notion.meta_fields["linked"] == {
+            "type": "notion_ids",
+            "notion_ids": ["n2", "n1"],
+        }
+
+    def test_handle_curate_notions_add_meta_rejects_missing_notion_ids(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "ghost",
+                "meta_type": "notion_ids",
+                "meta_value": ["ghost_notion"],
+            },
+            store,
+            None,
+        )
+
+        assert "notion(s) not found" in result
 
     @pytest.mark.asyncio
     async def test_handle_get_episode_filters_deleted_memory_ids_and_adds_note(self) -> None:

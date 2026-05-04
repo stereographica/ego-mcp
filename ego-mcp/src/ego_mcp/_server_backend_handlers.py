@@ -25,7 +25,9 @@ from ego_mcp.consolidation import ConsolidationEngine
 from ego_mcp.episode import EpisodeStore
 from ego_mcp.memory import MemoryStore
 from ego_mcp.notion import (
+    DeadLink,
     NotionStore,
+    find_dead_links,
     generate_notion_from_cluster,
     infer_person_id,
     is_ephemeral_cluster,
@@ -35,6 +37,7 @@ from ego_mcp.scaffolds import (
     compose_response,
 )
 from ego_mcp.self_model import SelfModelStore
+from ego_mcp.types import MetaField
 
 logger = logging.getLogger(__name__)
 _relative_time_override: Callable[[str, datetime | None], str] | None = None
@@ -118,7 +121,9 @@ def _load_person_memory_ids(memory: MemoryStore) -> dict[str, set[str]]:
 
 
 async def _handle_consolidate(
-    memory: MemoryStore, consolidation: ConsolidationEngine
+    memory: MemoryStore,
+    consolidation: ConsolidationEngine,
+    config: EgoConfig | None = None,
 ) -> str:
     """Run memory consolidation."""
     stats = await consolidation.run(memory)
@@ -214,6 +219,18 @@ async def _handle_consolidate(
         _backfilled_count = _backfilled
     except Exception:
         pass
+
+    # Dead link detection (skip if workspace_dir is not configured)
+    dead_links: list[DeadLink] = []
+    if config is not None and config.workspace_dir is not None and notion_store is not None:
+        try:
+            dead_links = find_dead_links(notion_store, config.workspace_dir)
+        except Exception:
+            pass
+
+    dead_links_file_path = sum(1 for dl in dead_links if dl.link_type == "file_path")
+    dead_links_notion_ids = sum(1 for dl in dead_links if dl.link_type == "notion_ids")
+
     update_tool_metadata(
         consolidation_replay_events=stats.replay_events,
         consolidation_new_links=stats.link_updates,
@@ -246,6 +263,8 @@ async def _handle_consolidate(
         notion_merged=",".join(merged_notion_ids) if merged_notion_ids else None,
         notion_links_created=notion_links_created or None,
         person_backfilled=_backfilled_count or None,
+        dead_links_file_path=dead_links_file_path or None,
+        dead_links_notion_ids=dead_links_notion_ids or None,
     )
     base = (
         f"Consolidation complete. "
@@ -266,6 +285,14 @@ async def _handle_consolidate(
         base += f" Linked {notion_links_created} notion pair(s)."
     if _backfilled_count:
         base += f" Backfilled involved_person_ids for {_backfilled_count} memory(s)."
+    if dead_links:
+        dead_link_lines = []
+        for dl in dead_links:
+            targets = ", ".join(dl.dead_targets)
+            dead_link_lines.append(
+                f"  {dl.notion_id}.{dl.meta_key} ({dl.link_type}): {targets}"
+            )
+        base += f"\nDead links found ({len(dead_links)}):\n" + "\n".join(dead_link_lines)
     if not stats.merge_candidates:
         return base
 
@@ -403,11 +430,19 @@ def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
     return f"Updated self.{field_name}"
 
 
-def _handle_curate_notions(args: dict[str, Any], notion_store: NotionStore) -> str:
+def _handle_curate_notions(
+    args: dict[str, Any],
+    notion_store: NotionStore,
+    config: EgoConfig | None = None,
+) -> str:
     def _compose(data: str) -> str:
         return compose_response(data, SCAFFOLD_CURATE_NOTIONS)
 
     action = str(args.get("action", "")).strip()
+
+    if action in ("add_meta", "update_meta", "remove_meta"):
+        return _handle_curate_notions_meta(action, args, notion_store, config)
+
     if action == "list":
         notions = sorted(
             notion_store.list_all(),
@@ -425,10 +460,15 @@ def _handle_curate_notions(args: dict[str, Any], notion_store: NotionStore) -> s
         for notion in notions[:15]:
             person_label = notion.person_id or "-"
             age = _call_relative_time(notion.created)
+            meta_parts = ", ".join(
+                f"{k}:{v['type']}" for k, v in notion.meta_fields.items()
+            )
+            meta_str = f" meta=[{meta_parts}]" if meta_parts else ""
             lines.append(
                 f'- {notion.id}: "{notion.label}" '
                 f"conf={notion.confidence:.2f} reinf={notion.reinforcement_count} "
                 f"age={age} person={person_label} related={len(notion.related_notion_ids)}"
+                f"{meta_str}"
             )
         return _compose("\n".join(lines))
 
@@ -471,6 +511,155 @@ def _handle_curate_notions(args: dict[str, Any], notion_store: NotionStore) -> s
         return _compose(f"Renamed {notion_id} to {new_label}")
 
     return _compose(f"Unknown action: {action}")
+
+
+def _handle_curate_notions_meta(
+    action: str,
+    args: dict[str, Any],
+    notion_store: NotionStore,
+    config: EgoConfig | None,
+) -> str:
+    """Handle add_meta, update_meta, remove_meta actions."""
+    def _compose(data: str) -> str:
+        return compose_response(data, SCAFFOLD_CURATE_NOTIONS)
+
+    notion_id = str(args.get("notion_id", "")).strip()
+    meta_key = str(args.get("meta_key", "")).strip()
+
+    if not notion_id:
+        return _compose("Error: notion_id is required.")
+    if not meta_key:
+        return _compose("Error: meta_key is required.")
+
+    notion = notion_store.get_by_id(notion_id)
+    if notion is None:
+        return _compose(f"Error: notion {notion_id} not found.")
+
+    if action == "add_meta":
+        meta_type = str(args.get("meta_type", "")).strip()
+        meta_value = args.get("meta_value")
+        if not meta_type:
+            return _compose("Error: meta_type is required for add_meta.")
+        if meta_value is None:
+            return _compose("Error: meta_value is required for add_meta.")
+
+        if meta_key in notion.meta_fields:
+            return _compose(f"Error: meta_field '{meta_key}' already exists. Use update_meta to modify.")
+
+        meta_field = _validate_and_build_meta_field(meta_type, meta_value, notion_store, config)
+        if isinstance(meta_field, str):
+            return _compose(meta_field)
+
+        notion.meta_fields[meta_key] = meta_field
+        notion_store.update(notion_id, meta_fields=notion.meta_fields)
+        update_tool_metadata(curate_action=action, curate_notion_id=notion_id)
+        return _compose(f"Added meta_field '{meta_key}' to notion {notion_id}.")
+
+    if action == "update_meta":
+        meta_value = args.get("meta_value")
+        if meta_value is None:
+            return _compose("Error: meta_value is required for update_meta.")
+
+        if meta_key not in notion.meta_fields:
+            return _compose(f"Error: meta_field '{meta_key}' does not exist. Use add_meta to create.")
+
+        existing = notion.meta_fields[meta_key]
+        meta_type = existing["type"]
+        meta_field = _validate_and_build_meta_field(meta_type, meta_value, notion_store, config)
+        if isinstance(meta_field, str):
+            return _compose(meta_field)
+
+        notion.meta_fields[meta_key] = meta_field
+        notion_store.update(notion_id, meta_fields=notion.meta_fields)
+        update_tool_metadata(curate_action=action, curate_notion_id=notion_id)
+        return _compose(f"Updated meta_field '{meta_key}' on notion {notion_id}.")
+
+    if action == "remove_meta":
+        if meta_key not in notion.meta_fields:
+            return _compose(f"Error: meta_field '{meta_key}' does not exist.")
+
+        del notion.meta_fields[meta_key]
+        notion_store.update(notion_id, meta_fields=notion.meta_fields)
+        update_tool_metadata(curate_action=action, curate_notion_id=notion_id)
+        return _compose(f"Removed meta_field '{meta_key}' from notion {notion_id}.")
+
+    return _compose(f"Error: unknown action: {action}")
+
+
+def _resolve_workspace_path(
+    workspace_dir: Path,
+    meta_value: str,
+) -> tuple[Path, str | None]:
+    """Resolve a file_path meta_value to a workspace-absolute path.
+
+    Returns (resolved_path, error_string).
+    On success error_string is None.
+    Rejects absolute paths and parent-traversal outside the workspace.
+    """
+    candidate = workspace_dir / meta_value
+    resolved = candidate.resolve()
+    workspace_resolved = workspace_dir.resolve()
+    try:
+        resolved.relative_to(workspace_resolved)
+    except ValueError:
+        return resolved, (
+            f"Error: file_path '{meta_value}' resolves outside the workspace. "
+            "Absolute paths and '..' escapes are not allowed."
+        )
+    return resolved, None
+
+
+def _validate_and_build_meta_field(
+    meta_type: str,
+    meta_value: Any,
+    notion_store: NotionStore,
+    config: EgoConfig | None,
+) -> MetaField | str:
+    """Validate meta_value based on type and build a MetaField dict.
+
+    Returns the MetaField on success, or an error string on failure.
+    """
+    if meta_type == "text":
+        if not isinstance(meta_value, str):
+            return "Error: meta_value must be a string for text type."
+        return {"type": "text", "value": meta_value}
+
+    if meta_type == "file_path":
+        if not isinstance(meta_value, str):
+            return "Error: meta_value must be a string (path) for file_path type."
+        if config is None or config.workspace_dir is None:
+            return (
+                "Error: EGO_MCP_WORKSPACE_DIR is not configured. "
+                "file_path meta_fields require a workspace directory."
+            )
+        resolved, err = _resolve_workspace_path(config.workspace_dir, meta_value)
+        if err is not None:
+            return err
+        if not meta_value or not resolved.is_file():
+            return f"Error: file not found: {meta_value}"
+        return {"type": "file_path", "path": meta_value}
+
+    if meta_type == "notion_ids":
+        if not isinstance(meta_value, list):
+            return (
+                "Error: meta_value must be an array of notion_ids "
+                "for notion_ids type."
+            )
+        validated_ids: list[str] = []
+        for item in meta_value:
+            if not isinstance(item, str) or not item.strip():
+                return (
+                    f"Error: each notion_ids entry must be a non-empty string, "
+                    f"got: {item!r}"
+                )
+            validated_ids.append(item.strip())
+        unique_ids = list(dict.fromkeys(validated_ids))
+        missing = [nid for nid in unique_ids if notion_store.get_by_id(nid) is None]
+        if missing:
+            return f"Error: notion(s) not found: {', '.join(missing)}"
+        return {"type": "notion_ids", "notion_ids": unique_ids}
+
+    return f"Error: unknown meta_type: {meta_type}"
 
 
 async def _handle_get_episode(

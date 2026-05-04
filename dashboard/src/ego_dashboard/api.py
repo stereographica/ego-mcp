@@ -253,6 +253,9 @@ def _load_notion_rows(settings: DashboardSettings) -> list[dict[str, object]]:
         reinforcement_count = _coerce_int(raw.get("reinforcement_count"), 0)
         person_id = raw.get("person_id")
         confidence = float(raw.get("confidence", 0.5))
+        meta_fields = raw.get("meta_fields", {})
+        if not isinstance(meta_fields, dict):
+            meta_fields = {}
         rows.append(
             {
                 "id": str(notion_id),
@@ -269,6 +272,7 @@ def _load_notion_rows(settings: DashboardSettings) -> list[dict[str, object]]:
                 "created": str(raw.get("created", "")),
                 "last_reinforced": str(raw.get("last_reinforced", "")),
                 "tags": _coerce_tags(raw.get("tags", [])),
+                "meta_fields": meta_fields,
             }
         )
     rows.sort(key=lambda row: str(row.get("created", "")), reverse=True)
@@ -443,6 +447,33 @@ def _build_network_edges(
                     "confidence": _clamp_float(notion.get("confidence"), 0.5),
                 }
             )
+
+        # Add edges from meta_fields notion_ids
+        meta_fields = notion.get("meta_fields", {})
+        if not isinstance(meta_fields, dict):
+            continue
+        for key, meta_field in meta_fields.items():
+            if not isinstance(meta_field, dict):
+                continue
+            if meta_field.get("type") != "notion_ids":
+                continue
+            for target_id in meta_field.get("notion_ids", []):
+                if not isinstance(target_id, str):
+                    continue
+                if target_id not in node_ids or notion_id not in node_ids:
+                    continue
+                edge_key = _edge_identity(notion_id, target_id, "meta_notion_link")
+                if edge_key in seen_edges:
+                    continue
+                seen_edges.add(edge_key)
+                edges.append(
+                    {
+                        "source": notion_id,
+                        "target": target_id,
+                        "link_type": "meta_notion_link",
+                        "confidence": _clamp_float(notion.get("confidence"), 0.5),
+                    }
+                )
     return edges
 
 
@@ -591,6 +622,7 @@ def _build_memory_network(
                 "last_accessed": None,
                 "created": notion.get("created") or None,
                 "last_reinforced": notion.get("last_reinforced") or None,
+                "meta_fields": notion.get("meta_fields"),
             }
         )
 

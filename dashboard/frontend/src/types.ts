@@ -71,6 +71,23 @@ export type HistoryMarker = {
   memory_id?: string
   desire_key?: string
 }
+export type TextMetaField = {
+  type: 'text'
+  value: string
+}
+
+export type FilePathMetaField = {
+  type: 'file_path'
+  path: string
+}
+
+export type NotionIdsMetaField = {
+  type: 'notion_ids'
+  notion_ids: string[]
+}
+
+export type MetaField = TextMetaField | FilePathMetaField | NotionIdsMetaField
+
 export type MemoryNetworkNode = {
   id: string
   label?: string
@@ -96,6 +113,7 @@ export type MemoryNetworkNode = {
   last_accessed?: string | null
   created?: string | null
   last_reinforced?: string | null
+  meta_fields?: Record<string, MetaField>
 }
 export type MemoryNetworkEdge = {
   source: string
@@ -175,6 +193,7 @@ export type Notion = {
   is_conviction: boolean
   created: string
   last_reinforced: string
+  meta_fields?: Record<string, MetaField>
 }
 export type LogPoint = {
   ts: string
