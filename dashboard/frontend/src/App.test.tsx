@@ -117,6 +117,19 @@ describe('App', () => {
     expect(await screen.findByText('Active')).toBeInTheDocument()
   })
 
+  it('uses a full-width shell that avoids mobile overflow', async () => {
+    const { container } = render(<App />)
+    await screen.findByText('Active')
+
+    expect(container.querySelector('main')).toHaveClass(
+      'w-full',
+      'max-w-[1680px]',
+      'px-4',
+      'py-6',
+      'sm:px-6',
+    )
+  })
+
   it('shows desire radar chart section', async () => {
     render(<App />)
     expect(await screen.findByText('Desire parameters')).toBeInTheDocument()

@@ -6,7 +6,6 @@ import {
   BarChart,
   Cell,
   CartesianGrid,
-  ResponsiveContainer,
   XAxis,
   YAxis,
 } from 'recharts'
@@ -18,6 +17,8 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { formatTooltipTimestampLabel } from '@/components/relationships/tooltip-utils'
+import { useTimestampFormatter } from '@/hooks/use-timestamp-formatter'
 import type { PersonDetail } from '@/types'
 
 type PersonDetailPanelProps = {
@@ -54,6 +55,9 @@ export const PersonDetailPanel = ({
   detail,
   onClose,
 }: PersonDetailPanelProps) => {
+  const { formatTs } = useTimestampFormatter()
+  const formatTooltipLabel = (label: unknown) =>
+    formatTooltipTimestampLabel(label, formatTs)
   const trustData = useMemo(
     () =>
       detail.trust_history.map((pt) => ({
@@ -81,7 +85,7 @@ export const PersonDetailPanel = ({
   )
 
   return (
-    <div className="space-y-4 mt-4">
+    <div className="mt-4 min-w-0 space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="font-medium">
           {detail.person_id} — detail
@@ -94,33 +98,34 @@ export const PersonDetailPanel = ({
         </h3>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+        <Card className="min-w-0">
           <CardHeader>
             <CardTitle className="text-sm">Trust level</CardTitle>
           </CardHeader>
           <CardContent>
             {trustData.length > 0 ? (
               <ChartContainer config={trustConfig} className="h-[200px] w-full">
-                <ResponsiveContainer>
-                  <AreaChart data={trustData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="ts" hide />
-                    <YAxis domain={[0, 1]} />
-                    <ChartTooltip
-                      content={
-                        <ChartTooltipContent indicator="dot" labelKey="ts" />
-                      }
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="trust"
-                      stroke={trustConfig.trust.color}
-                      fill={trustConfig.trust.color}
-                      fillOpacity={0.3}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
+                <AreaChart data={trustData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="ts" hide />
+                  <YAxis domain={[0, 1]} />
+                  <ChartTooltip
+                    content={
+                      <ChartTooltipContent
+                        indicator="dot"
+                        labelFormatter={formatTooltipLabel}
+                      />
+                    }
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="trust"
+                    stroke={trustConfig.trust.color}
+                    fill={trustConfig.trust.color}
+                    fillOpacity={0.3}
+                  />
+                </AreaChart>
               </ChartContainer>
             ) : (
               <p className="text-muted-foreground text-sm py-4 text-center">
@@ -130,7 +135,7 @@ export const PersonDetailPanel = ({
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="min-w-0">
           <CardHeader>
             <CardTitle className="text-sm">Shared episodes</CardTitle>
           </CardHeader>
@@ -140,25 +145,26 @@ export const PersonDetailPanel = ({
                 config={episodeConfig}
                 className="h-[200px] w-full"
               >
-                <ResponsiveContainer>
-                  <AreaChart data={episodeData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="ts" hide />
-                    <YAxis />
-                    <ChartTooltip
-                      content={
-                        <ChartTooltipContent indicator="dot" labelKey="ts" />
-                      }
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="episodes"
-                      stroke={episodeConfig.episodes.color}
-                      fill={episodeConfig.episodes.color}
-                      fillOpacity={0.3}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
+                <AreaChart data={episodeData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="ts" hide />
+                  <YAxis />
+                  <ChartTooltip
+                    content={
+                      <ChartTooltipContent
+                        indicator="dot"
+                        labelFormatter={formatTooltipLabel}
+                      />
+                    }
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="episodes"
+                    stroke={episodeConfig.episodes.color}
+                    fill={episodeConfig.episodes.color}
+                    fillOpacity={0.3}
+                  />
+                </AreaChart>
               </ChartContainer>
             ) : (
               <p className="text-muted-foreground text-sm py-4 text-center">
@@ -169,31 +175,26 @@ export const PersonDetailPanel = ({
         </Card>
       </div>
 
-      <Card>
+      <Card className="min-w-0">
         <CardHeader>
           <CardTitle className="text-sm">Surface frequency</CardTitle>
         </CardHeader>
         <CardContent>
           {detail.surface_counts.total > 0 ? (
             <ChartContainer config={surfaceConfig} className="h-[200px] w-full">
-              <ResponsiveContainer>
-                <BarChart data={surfaceData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="type" tick={{ fontSize: 12 }} />
-                  <YAxis allowDecimals={false} />
-                  <ChartTooltip
-                    content={<ChartTooltipContent indicator="dot" />}
-                  />
-                  <Bar dataKey="count" name="count" radius={[4, 4, 0, 0]}>
-                    {surfaceData.map((entry, index) => (
-                      <Cell
-                        key={index}
-                        fill={surfaceConfig[entry.type].color}
-                      />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <BarChart data={surfaceData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="type" tick={{ fontSize: 12 }} />
+                <YAxis allowDecimals={false} />
+                <ChartTooltip
+                  content={<ChartTooltipContent indicator="dot" />}
+                />
+                <Bar dataKey="count" name="count" radius={[4, 4, 0, 0]}>
+                  {surfaceData.map((entry, index) => (
+                    <Cell key={index} fill={surfaceConfig[entry.type].color} />
+                  ))}
+                </Bar>
+              </BarChart>
             </ChartContainer>
           ) : (
             <p className="text-muted-foreground text-sm py-4 text-center">
