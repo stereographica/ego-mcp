@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from ego_mcp import timezone_utils
 
@@ -146,6 +146,30 @@ class DesireState:
     created: str = ""
 
 
+class TextMetaField(TypedDict):
+    """Free-form text metadata."""
+
+    type: Literal["text"]
+    value: str
+
+
+class FilePathMetaField(TypedDict):
+    """Reference to a file in the workspace."""
+
+    type: Literal["file_path"]
+    path: str
+
+
+class NotionIdsMetaField(TypedDict):
+    """Reference to other notions."""
+
+    type: Literal["notion_ids"]
+    notion_ids: list[str]
+
+
+MetaField = TextMetaField | FilePathMetaField | NotionIdsMetaField
+
+
 @dataclass
 class Notion:
     """Abstracted concept distilled from memory clusters."""
@@ -162,6 +186,7 @@ class Notion:
     related_notion_ids: list[str] = field(default_factory=list)
     reinforcement_count: int = 0
     person_id: str = ""
+    meta_fields: dict[str, MetaField] = field(default_factory=dict)
 
 
 @dataclass

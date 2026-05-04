@@ -189,9 +189,11 @@ def _handle_pause() -> str:
 
 
 async def _handle_consolidate(
-    memory: MemoryStore, consolidation: ConsolidationEngine
+    memory: MemoryStore,
+    consolidation: ConsolidationEngine,
+    config: EgoConfig | None = None,
 ) -> str:
-    return await _handlers._handle_consolidate(memory, consolidation)
+    return await _handlers._handle_consolidate(memory, consolidation, config)
 
 
 async def _handle_forget(memory: MemoryStore, args: dict[str, Any]) -> str:
@@ -210,8 +212,10 @@ def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
     return _handlers._handle_update_self(config, args)
 
 
-def _handle_curate_notions(args: dict[str, Any], notion_store: NotionStore) -> str:
-    return _handlers._handle_curate_notions(args, notion_store)
+def _handle_curate_notions(
+    args: dict[str, Any], notion_store: NotionStore, config: EgoConfig | None
+) -> str:
+    return _handlers._handle_curate_notions(args, notion_store, config)
 
 
 def _handle_configure_desires(config: EgoConfig, args: dict[str, Any]) -> str:
@@ -477,7 +481,7 @@ async def _dispatch(
         return _handle_pause()
 
     elif name == "consolidate":
-        result = await _handle_consolidate(memory, consolidation)
+        result = await _handle_consolidate(memory, consolidation, config)
         _safe_satisfy_implicit("consolidate")
         return result
     elif name == "forget":
@@ -499,7 +503,7 @@ async def _dispatch(
     elif name == "create_episode":
         return await _handle_create_episode(episodes, args)
     elif name == "curate_notions":
-        result = _handle_curate_notions(args, _get_notion_store())
+        result = _handle_curate_notions(args, _get_notion_store(), config)
         _safe_satisfy_implicit("consolidate")
         return result
     else:

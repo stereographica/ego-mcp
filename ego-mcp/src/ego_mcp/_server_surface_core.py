@@ -300,6 +300,17 @@ async def _handle_wake_up(
     )
     if ember_texts:
         parts.append("Embers:\n" + "\n".join(f"  {e}" for e in ember_texts))
+    if weakened_notions:
+        notion_lines = []
+        for wn in weakened_notions[:5]:
+            meta_parts = ", ".join(
+                f"{k}:{v['type']}" for k, v in wn.meta_fields.items()
+            )
+            meta_str = f" meta=[{meta_parts}]" if meta_parts else ""
+            notion_lines.append(
+                f'  "{wn.label}" conf={wn.confidence:.2f}{meta_str}'
+            )
+        parts.append("Weakened notions:\n" + "\n".join(notion_lines))
 
     # 3. Involuntary recall — Proust
     if recent_all:
@@ -431,9 +442,14 @@ async def _handle_introspect(
         if top_notions:
             framework_lines.append("Notion landscape:")
             for notion in top_notions:
+                meta_parts = ", ".join(
+                    f"{k}:{v['type']}" for k, v in notion.meta_fields.items()
+                )
+                meta_str = f" meta=[{meta_parts}]" if meta_parts else ""
                 framework_lines.append(
                     f'- "{notion.label}" confidence: {notion.confidence:.1f}'
                     f"{_format_associated_from_map(notion, notion_map, limit=2)}"
+                    f"{meta_str}"
                 )
 
     # §10.1 unresolved questions
@@ -654,8 +670,12 @@ async def _handle_consider_them(
     if person_notions:
         impression_lines = [f"Impressions of {person}:"]
         for notion in person_notions[:3]:
+            meta_parts = ", ".join(
+                f"{k}:{v['type']}" for k, v in notion.meta_fields.items()
+            )
+            meta_str = f" meta=[{meta_parts}]" if meta_parts else ""
             impression_lines.append(
-                f'  - "{notion.label}" confidence: {notion.confidence:.1f}'
+                f'  - "{notion.label}" confidence: {notion.confidence:.1f}{meta_str}'
             )
         data = f"{data}\n" + "\n".join(impression_lines)
     update_tool_metadata(
@@ -683,6 +703,10 @@ def _handle_pause() -> str:
     if convictions:
         lines = [data, "Your convictions:"]
         for notion in convictions[:5]:
-            lines.append(f'- "{notion.label}"')
+            meta_parts = ", ".join(
+                f"{k}:{v['type']}" for k, v in notion.meta_fields.items()
+            )
+            meta_str = f" meta=[{meta_parts}]" if meta_parts else ""
+            lines.append(f'- "{notion.label}"{meta_str}')
         data = "\n".join(lines)
     return compose_response(data, SCAFFOLD_PAUSE)

@@ -494,6 +494,25 @@ async def _handle_recall(
                     f'"{notion.label}" {notion.emotion_tone.value} '
                     f"confidence: {notion.confidence:.1f}"
                 )
+                for mkey, mfield in notion.meta_fields.items():
+                    if not isinstance(mfield, dict):
+                        continue
+                    mtype = mfield.get("type", "")
+                    if mtype == "text":
+                        mval = mfield.get("value", "")
+                        if isinstance(mval, str) and len(mval) > 50:
+                            mval = mval[:47] + "..."
+                        lines.append(f"  [{mkey}] {mval}")
+                    elif mtype == "file_path":
+                        lines.append(f"  [{mkey}] -> {mfield.get('path', '')}")
+                    elif mtype == "notion_ids":
+                        mids = mfield.get("notion_ids", [])
+                        if isinstance(mids, list):
+                            display_ids = mids[:3]
+                            ids_str = ", ".join(str(x) for x in display_ids)
+                            if len(mids) > 3:
+                                ids_str += f" (+{len(mids) - 3})"
+                            lines.append(f"  [{mkey}] links: {ids_str}")
                 if associated:
                     lines.append(
                         "  → "

@@ -665,3 +665,190 @@ def test_infer_person_id_requires_majority_overlap() -> None:
         )
         == ""
     )
+
+
+def test_merge_notions_rewrites_meta_fields_notion_ids(
+    tmp_path: Path,
+) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(
+        Notion(
+            id="keep",
+            label="Keep notion",
+            confidence=0.8,
+            reinforcement_count=2,
+            meta_fields={
+                "ref": {"type": "notion_ids", "notion_ids": ["absorb"]},
+            },
+        )
+    )
+    store.save(
+        Notion(
+            id="absorb",
+            label="Absorb notion",
+            confidence=0.7,
+            reinforcement_count=1,
+            meta_fields={
+                "self_ref": {"type": "notion_ids", "notion_ids": ["absorb"]},
+            },
+        )
+    )
+    store.save(
+        Notion(
+            id="other",
+            label="Other notion",
+            confidence=0.6,
+            reinforcement_count=1,
+            meta_fields={
+                "points_to_absorb": {"type": "notion_ids", "notion_ids": ["absorb", "keep"]},
+            },
+        )
+    )
+
+    merged = merge_notions(store, "keep", "absorb")
+
+    assert merged is not None
+    assert merged.meta_fields["ref"] == {"type": "notion_ids", "notion_ids": []}
+    assert merged.meta_fields["self_ref"] == {"type": "notion_ids", "notion_ids": []}
+    other = store.get_by_id("other")
+    assert other is not None
+    assert other.meta_fields["points_to_absorb"] == {
+        "type": "notion_ids",
+        "notion_ids": ["keep"],
+    }
+
+
+def test_merge_notions_does_not_rewrite_unrelated_meta_fields(
+    tmp_path: Path,
+) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(
+        Notion(
+            id="keep",
+            label="Keep notion",
+            confidence=0.8,
+            reinforcement_count=2,
+            meta_fields={
+                "note": {"type": "text", "value": "hello"},
+                "path_ref": {"type": "file_path", "path": "data.txt"},
+                "ids_ref": {"type": "notion_ids", "notion_ids": ["keep"]},
+            },
+        )
+    )
+    store.save(
+        Notion(
+            id="absorb",
+            label="Absorb notion",
+            confidence=0.7,
+            reinforcement_count=1,
+            meta_fields={
+                "ids_ref": {"type": "notion_ids", "notion_ids": ["absorb"]},
+            },
+        )
+    )
+
+    merged = merge_notions(store, "keep", "absorb")
+
+    assert merged is not None
+    assert merged.meta_fields["note"] == {"type": "text", "value": "hello"}
+    assert merged.meta_fields["path_ref"] == {"type": "file_path", "path": "data.txt"}
+    assert merged.meta_fields["ids_ref"] == {"type": "notion_ids", "notion_ids": []}
+
+
+def test_find_dead_links_reports_missing_file_path(tmp_path: Path) -> None:
+    from ego_mcp.notion import find_dead_links
+
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(
+        Notion(
+            id="n1",
+            label="notion with dead file",
+            confidence=0.5,
+            created="2026-01-01T00:00:00+00:00",
+            meta_fields={
+                "bad_file": {"type": "file_path", "path": "nonexistent.txt"},
+            },
+        )
+    )
+
+    dead = find_dead_links(store, tmp_path)
+
+    assert len(dead) == 1
+    assert dead[0].notion_id == "n1"
+    assert dead[0].meta_key == "bad_file"
+    assert dead[0].link_type == "file_path"
+    assert dead[0].dead_targets == ["nonexistent.txt"]
+
+
+def test_find_dead_links_reports_directory_as_dead_file_path(tmp_path: Path) -> None:
+    from ego_mcp.notion import find_dead_links
+
+    store = NotionStore(tmp_path / "notions.json")
+    sub_dir = tmp_path / "some_dir"
+    sub_dir.mkdir()
+    store.save(
+        Notion(
+            id="n1",
+            label="notion with dir reference",
+            confidence=0.5,
+            created="2026-01-01T00:00:00+00:00",
+            meta_fields={
+                "dir_ref": {"type": "file_path", "path": "some_dir"},
+            },
+        )
+    )
+
+    dead = find_dead_links(store, tmp_path)
+
+    assert len(dead) == 1
+    assert dead[0].notion_id == "n1"
+    assert dead[0].meta_key == "dir_ref"
+    assert dead[0].link_type == "file_path"
+
+
+def test_find_dead_links_reports_missing_notion_ids(tmp_path: Path) -> None:
+    from ego_mcp.notion import find_dead_links
+
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(
+        Notion(
+            id="n1",
+            label="notion with dead notion_ids",
+            confidence=0.5,
+            created="2026-01-01T00:00:00+00:00",
+            meta_fields={
+                "bad_ids": {"type": "notion_ids", "notion_ids": ["ghost_notion"]},
+            },
+        )
+    )
+
+    dead = find_dead_links(store, tmp_path)
+
+    assert len(dead) == 1
+    assert dead[0].notion_id == "n1"
+    assert dead[0].meta_key == "bad_ids"
+    assert dead[0].link_type == "notion_ids"
+    assert dead[0].dead_targets == ["ghost_notion"]
+
+
+def test_find_dead_links_healthy_meta_fields_not_reported(tmp_path: Path) -> None:
+    from ego_mcp.notion import find_dead_links
+
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(
+        Notion(
+            id="n1",
+            label="healthy notion",
+            confidence=0.5,
+            created="2026-01-01T00:00:00+00:00",
+            meta_fields={
+                "good_file": {"type": "file_path", "path": "exists.txt"},
+                "good_ids": {"type": "notion_ids", "notion_ids": ["n1"]},
+            },
+        )
+    )
+    (tmp_path / "exists.txt").write_text("hello")
+
+    dead = find_dead_links(store, tmp_path)
+
+    assert len(dead) == 0

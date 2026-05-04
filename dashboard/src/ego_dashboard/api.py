@@ -224,6 +224,34 @@ def _load_link_metadata(value: object) -> list[_MemoryLinkPayload]:
     return links
 
 
+def _is_valid_meta_field(value: object) -> bool:
+    """Check whether a meta_field entry matches the expected union shape."""
+    if not isinstance(value, dict):
+        return False
+    field_type = value.get("type")
+    if field_type not in ("text", "file_path", "notion_ids"):
+        return False
+    if field_type == "text":
+        return isinstance(value.get("value"), str)
+    if field_type == "file_path":
+        return isinstance(value.get("path"), str)
+    if field_type == "notion_ids":
+        ids = value.get("notion_ids")
+        return isinstance(ids, list) and all(isinstance(i, str) for i in ids)
+    return False
+
+
+def _sanitize_meta_fields(raw: dict[str, object]) -> dict[str, object]:
+    """Filter out malformed meta_field entries."""
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        key: value
+        for key, value in raw.items()
+        if isinstance(key, str) and _is_valid_meta_field(value)
+    }
+
+
 def _load_notion_rows(settings: DashboardSettings) -> list[dict[str, object]]:
     if not settings.ego_mcp_data_dir:
         return []
@@ -253,6 +281,7 @@ def _load_notion_rows(settings: DashboardSettings) -> list[dict[str, object]]:
         reinforcement_count = _coerce_int(raw.get("reinforcement_count"), 0)
         person_id = raw.get("person_id")
         confidence = float(raw.get("confidence", 0.5))
+        meta_fields = _sanitize_meta_fields(raw.get("meta_fields", {}))
         rows.append(
             {
                 "id": str(notion_id),
@@ -269,6 +298,7 @@ def _load_notion_rows(settings: DashboardSettings) -> list[dict[str, object]]:
                 "created": str(raw.get("created", "")),
                 "last_reinforced": str(raw.get("last_reinforced", "")),
                 "tags": _coerce_tags(raw.get("tags", [])),
+                "meta_fields": meta_fields,
             }
         )
     rows.sort(key=lambda row: str(row.get("created", "")), reverse=True)
@@ -443,6 +473,35 @@ def _build_network_edges(
                     "confidence": _clamp_float(notion.get("confidence"), 0.5),
                 }
             )
+
+        # Add edges from meta_fields notion_ids
+        meta_fields = notion.get("meta_fields", {})
+        if not isinstance(meta_fields, dict):
+            continue
+        for key, meta_field in meta_fields.items():
+            if not isinstance(meta_field, dict):
+                continue
+            if meta_field.get("type") != "notion_ids":
+                continue
+            for target_id in meta_field.get("notion_ids", []):
+                if not isinstance(target_id, str):
+                    continue
+                if target_id == notion_id:
+                    continue
+                if target_id not in node_ids or notion_id not in node_ids:
+                    continue
+                edge_key = _edge_identity(notion_id, target_id, "meta_notion_link")
+                if edge_key in seen_edges:
+                    continue
+                seen_edges.add(edge_key)
+                edges.append(
+                    {
+                        "source": notion_id,
+                        "target": target_id,
+                        "link_type": "meta_notion_link",
+                        "confidence": _clamp_float(notion.get("confidence"), 0.5),
+                    }
+                )
     return edges
 
 
@@ -591,6 +650,7 @@ def _build_memory_network(
                 "last_accessed": None,
                 "created": notion.get("created") or None,
                 "last_reinforced": notion.get("last_reinforced") or None,
+                "meta_fields": notion.get("meta_fields"),
             }
         )
 

@@ -189,6 +189,11 @@ export const MemoryGraphLegend = ({
             color={getEdgeStroke('notion_related')}
             dashArray="6 4"
           />
+          <EdgeSwatch
+            label="Meta link"
+            color={getEdgeStroke('meta_notion_link')}
+            dashArray="5 3"
+          />
         </div>
       </CardContent>
     </Card>
