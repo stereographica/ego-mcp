@@ -22,6 +22,17 @@ const MetaFieldDisplay = ({
   field: MetaField
   onNotionClick?: (notionId: string) => void
 }) => {
+  if (!field || typeof field !== 'object' || typeof field.type !== 'string') {
+    return (
+      <div className="rounded-md border bg-muted/10 px-3 py-2">
+        <span className="text-muted-foreground font-medium">{fieldKey}:</span>
+        <span className="ml-2 text-red-400 text-xs">
+          (malformed meta_field)
+        </span>
+      </div>
+    )
+  }
+
   if (field.type === 'text') {
     return (
       <div className="rounded-md border bg-muted/10 px-3 py-2">

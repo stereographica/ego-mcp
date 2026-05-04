@@ -1980,7 +1980,7 @@ class TestForgetToolServerHandlers:
                 "notion_id": "n1",
                 "meta_key": "linked",
                 "meta_type": "notion_ids",
-                "meta_value": ["n2", "n2", "n1"],
+                "meta_value": ["n2", "n2"],
             },
             store,
             None,
@@ -1991,8 +1991,63 @@ class TestForgetToolServerHandlers:
         assert notion is not None
         assert notion.meta_fields["linked"] == {
             "type": "notion_ids",
-            "notion_ids": ["n2", "n1"],
+            "notion_ids": ["n2"],
         }
+
+    def test_handle_curate_notions_add_meta_rejects_self_referential_notion_ids(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = NotionStore(tmp_path / "notions.json")
+        store.save(
+            Notion(
+                id="n1",
+                label="Test notion",
+                confidence=0.8,
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+        store.save(
+            Notion(
+                id="n2",
+                label="Test notion 2",
+                confidence=0.7,
+                created="2026-02-24T00:00:00+00:00",
+            )
+        )
+
+        result = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "self_ref",
+                "meta_type": "notion_ids",
+                "meta_value": ["n1"],
+            },
+            store,
+            None,
+        )
+
+        assert "must not reference the owning notion" in result
+
+        result2 = server_mod._handle_curate_notions(
+            {
+                "action": "add_meta",
+                "notion_id": "n1",
+                "meta_key": "mixed_ref",
+                "meta_type": "notion_ids",
+                "meta_value": ["n2", "n1"],
+            },
+            store,
+            None,
+        )
+
+        assert "must not reference the owning notion" in result2
+
+        notion = store.get_by_id("n1")
+        assert notion is not None
+        assert "self_ref" not in notion.meta_fields
+        assert "mixed_ref" not in notion.meta_fields
 
     def test_handle_curate_notions_add_meta_rejects_missing_notion_ids(
         self,

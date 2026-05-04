@@ -1627,3 +1627,129 @@ def test_build_network_edges_creates_meta_notion_link_edges(
     assert len(meta_links) == 1
     assert meta_links[0]["source"] == "n1"
     assert meta_links[0]["target"] == "n2"
+
+
+def test_build_network_edges_skips_self_referential_notion_ids(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "notions.json").write_text(
+        json.dumps(
+            {
+                "n1": {
+                    "label": "self ref",
+                    "emotion_tone": "curious",
+                    "confidence": 0.8,
+                    "source_memory_ids": ["m1"],
+                    "related_notion_ids": [],
+                    "reinforcement_count": 6,
+                    "person_id": "",
+                    "created": "2026-01-01T12:00:00+00:00",
+                    "last_reinforced": "2026-01-02T12:00:00+00:00",
+                    "meta_fields": {
+                        "self_ref": {"type": "notion_ids", "notion_ids": ["n1"]},
+                        "other": {"type": "notion_ids", "notion_ids": ["n2"]},
+                    },
+                },
+                "n2": {
+                    "label": "other",
+                    "emotion_tone": "curious",
+                    "confidence": 0.7,
+                    "source_memory_ids": ["m2"],
+                    "related_notion_ids": [],
+                    "reinforcement_count": 3,
+                    "person_id": "",
+                    "created": "2026-01-01T12:00:00+00:00",
+                    "last_reinforced": "2026-01-02T12:00:00+00:00",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _load_memory_network(DashboardSettings(ego_mcp_data_dir=str(tmp_path)))
+
+    edges: list[dict[str, object]] = result["edges"]  # type: ignore[assignment]
+    meta_links = [e for e in edges if e.get("link_type") == "meta_notion_link"]
+    assert len(meta_links) == 1
+    assert meta_links[0]["source"] == "n1"
+    assert meta_links[0]["target"] == "n2"
+
+
+def test_load_memory_network_sanitizes_malformed_meta_fields(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "notions.json").write_text(
+        json.dumps(
+            {
+                "n1": {
+                    "label": "sanitized notion",
+                    "emotion_tone": "curious",
+                    "confidence": 0.8,
+                    "source_memory_ids": ["m1"],
+                    "related_notion_ids": [],
+                    "reinforcement_count": 6,
+                    "person_id": "",
+                    "created": "2026-01-01T12:00:00+00:00",
+                    "last_reinforced": "2026-01-02T12:00:00+00:00",
+                    "meta_fields": {
+                        "good_text": {"type": "text", "value": "hello"},
+                        "bad_null": None,
+                        "bad_missing_type": {"value": "no type"},
+                        "bad_type": {"type": "unknown_type", "value": "x"},
+                        "good_ids": {"type": "notion_ids", "notion_ids": ["n2"]},
+                        "bad_ids": {"type": "notion_ids", "notion_ids": "not an array"},
+                    },
+                },
+                "n2": {
+                    "label": "target",
+                    "emotion_tone": "curious",
+                    "confidence": 0.7,
+                    "source_memory_ids": ["m2"],
+                    "related_notion_ids": [],
+                    "reinforcement_count": 3,
+                    "person_id": "",
+                    "created": "2026-01-01T12:00:00+00:00",
+                    "last_reinforced": "2026-01-02T12:00:00+00:00",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _load_memory_network(DashboardSettings(ego_mcp_data_dir=str(tmp_path)))
+
+    nodes: list[dict[str, object]] = result["nodes"]  # type: ignore[assignment]
+    notion_nodes = [n for n in nodes if n.get("is_notion") and n.get("id") == "n1"]
+    assert len(notion_nodes) == 1
+    node = notion_nodes[0]
+    meta = node["meta_fields"]
+    assert isinstance(meta, dict)
+    assert "good_text" in meta
+    assert meta["good_text"] == {"type": "text", "value": "hello"}
+    assert "good_ids" in meta
+    assert meta["good_ids"] == {"type": "notion_ids", "notion_ids": ["n2"]}
+    assert "bad_null" not in meta
+    assert "bad_missing_type" not in meta
+    assert "bad_type" not in meta
+    assert "bad_ids" not in meta
+
+
+def test_is_valid_meta_field_accepts_valid_entries() -> None:
+    from ego_dashboard.api import _is_valid_meta_field
+
+    assert _is_valid_meta_field({"type": "text", "value": "hello"}) is True
+    assert _is_valid_meta_field({"type": "file_path", "path": "/a/b"}) is True
+    assert _is_valid_meta_field({"type": "notion_ids", "notion_ids": ["n1"]}) is True
+
+
+def test_is_valid_meta_field_rejects_invalid_entries() -> None:
+    from ego_dashboard.api import _is_valid_meta_field
+
+    assert _is_valid_meta_field(None) is False
+    assert _is_valid_meta_field("string") is False
+    assert _is_valid_meta_field([]) is False
+    assert _is_valid_meta_field({"type": "unknown"}) is False
+    assert _is_valid_meta_field({"type": "text"}) is False
+    assert _is_valid_meta_field({"type": "file_path"}) is False
+    assert _is_valid_meta_field({"type": "notion_ids", "notion_ids": "not_array"}) is False
+    assert _is_valid_meta_field({"type": "notion_ids", "notion_ids": [123]}) is False

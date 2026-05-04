@@ -546,7 +546,7 @@ def _handle_curate_notions_meta(
         if meta_key in notion.meta_fields:
             return _compose(f"Error: meta_field '{meta_key}' already exists. Use update_meta to modify.")
 
-        meta_field = _validate_and_build_meta_field(meta_type, meta_value, notion_store, config)
+        meta_field = _validate_and_build_meta_field(meta_type, meta_value, notion_store, config, owner_notion_id=notion_id)
         if isinstance(meta_field, str):
             return _compose(meta_field)
 
@@ -565,7 +565,7 @@ def _handle_curate_notions_meta(
 
         existing = notion.meta_fields[meta_key]
         meta_type = existing["type"]
-        meta_field = _validate_and_build_meta_field(meta_type, meta_value, notion_store, config)
+        meta_field = _validate_and_build_meta_field(meta_type, meta_value, notion_store, config, owner_notion_id=notion_id)
         if isinstance(meta_field, str):
             return _compose(meta_field)
 
@@ -614,6 +614,8 @@ def _validate_and_build_meta_field(
     meta_value: Any,
     notion_store: NotionStore,
     config: EgoConfig | None,
+    *,
+    owner_notion_id: str = "",
 ) -> MetaField | str:
     """Validate meta_value based on type and build a MetaField dict.
 
@@ -654,6 +656,8 @@ def _validate_and_build_meta_field(
                 )
             validated_ids.append(item.strip())
         unique_ids = list(dict.fromkeys(validated_ids))
+        if owner_notion_id and owner_notion_id in unique_ids:
+            return "Error: notion_ids must not reference the owning notion."
         missing = [nid for nid in unique_ids if notion_store.get_by_id(nid) is None]
         if missing:
             return f"Error: notion(s) not found: {', '.join(missing)}"
