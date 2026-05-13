@@ -14,6 +14,19 @@ from ego_mcp.config import EgoConfig
 
 
 
+_MAX_RETRY_DELAY = 60.0
+
+
+def _parse_retry_after(header: str | None, fallback: float) -> float:
+    """Parse Retry-After header value into seconds, capped at _MAX_RETRY_DELAY."""
+    if header is None:
+        return fallback
+    try:
+        return min(float(header), _MAX_RETRY_DELAY)
+    except (ValueError, OverflowError):
+        return fallback
+
+
 Documents = list[str]
 Embeddings = list[list[float]]
 
@@ -56,7 +69,7 @@ class GeminiEmbeddingProvider:
         self, url: str, payload: dict[str, Any], max_retries: int = 3
     ) -> dict[str, Any]:
         """HTTP POST with exponential backoff on 429."""
-        delays = [1.0, 2.0, 4.0]
+        fallback_delays = [1.0, 2.0, 4.0]
         last_error: httpx.HTTPStatusError | None = None
 
         for attempt in range(max_retries + 1):
@@ -68,7 +81,10 @@ class GeminiEmbeddingProvider:
             except httpx.HTTPStatusError as e:
                 if resp.status_code == 429 and attempt < max_retries:
                     last_error = e
-                    await asyncio.sleep(delays[attempt])
+                    delay = _parse_retry_after(
+                        resp.headers.get("retry-after"), fallback_delays[attempt]
+                    )
+                    await asyncio.sleep(delay)
                     continue
                 raise
 
@@ -105,7 +121,7 @@ class OpenAIEmbeddingProvider:
         max_retries: int = 3,
     ) -> dict[str, Any]:
         """HTTP POST with exponential backoff on 429."""
-        delays = [1.0, 2.0, 4.0]
+        fallback_delays = [1.0, 2.0, 4.0]
         last_error: httpx.HTTPStatusError | None = None
 
         for attempt in range(max_retries + 1):
@@ -117,7 +133,10 @@ class OpenAIEmbeddingProvider:
             except httpx.HTTPStatusError as e:
                 if resp.status_code == 429 and attempt < max_retries:
                     last_error = e
-                    await asyncio.sleep(delays[attempt])
+                    delay = _parse_retry_after(
+                        resp.headers.get("retry-after"), fallback_delays[attempt]
+                    )
+                    await asyncio.sleep(delay)
                     continue
                 raise
 

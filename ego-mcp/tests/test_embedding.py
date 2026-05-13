@@ -11,10 +11,34 @@ import respx
 
 from ego_mcp.config import EgoConfig
 from ego_mcp.embedding import (
+    _MAX_RETRY_DELAY,
     GeminiEmbeddingProvider,
     OpenAIEmbeddingProvider,
+    _parse_retry_after,
     create_embedding_provider,
 )
+
+# --- _parse_retry_after ---
+
+
+class TestParseRetryAfter:
+    """Tests for _parse_retry_after helper."""
+
+    def test_none_returns_fallback(self) -> None:
+        assert _parse_retry_after(None, 2.0) == 2.0
+
+    def test_valid_seconds(self) -> None:
+        assert _parse_retry_after("10", 2.0) == 10.0
+
+    def test_fractional_seconds(self) -> None:
+        assert _parse_retry_after("1.5", 2.0) == 1.5
+
+    def test_capped_at_max(self) -> None:
+        assert _parse_retry_after("9999", 2.0) == _MAX_RETRY_DELAY
+
+    def test_non_numeric_returns_fallback(self) -> None:
+        assert _parse_retry_after("not-a-number", 2.0) == 2.0
+
 
 # --- Gemini Provider ---
 
@@ -83,6 +107,33 @@ class TestGeminiEmbeddingProvider:
         finally:
             asyncio.sleep = original_sleep
 
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_429_respects_retry_after_header(self) -> None:
+        respx.post(
+            url__startswith="https://generativelanguage.googleapis.com/"
+        ).side_effect = [
+            httpx.Response(
+                429, json={"error": "rate limited"}, headers={"retry-after": "30"}
+            ),
+            httpx.Response(200, json={"embeddings": [{"values": [0.5]}]}),
+        ]
+
+        provider = GeminiEmbeddingProvider(api_key="test-key")
+        original_sleep = asyncio.sleep
+        sleep_calls: list[float] = []
+
+        async def mock_sleep(delay: float) -> None:
+            sleep_calls.append(delay)
+
+        asyncio.sleep = cast(Any, mock_sleep)
+        try:
+            result = await provider.embed(["hello"])
+            assert result == [[0.5]]
+            assert sleep_calls == [30.0]
+        finally:
+            asyncio.sleep = original_sleep
+
 
 # --- OpenAI Provider ---
 
@@ -141,6 +192,31 @@ class TestOpenAIEmbeddingProvider:
             result = await provider.embed(["hello"])
             assert result == [[0.9]]
             assert len(sleep_calls) == 2
+        finally:
+            asyncio.sleep = original_sleep
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_429_respects_retry_after_header(self) -> None:
+        respx.post("https://api.openai.com/v1/embeddings").side_effect = [
+            httpx.Response(
+                429, json={"error": "rate limited"}, headers={"retry-after": "15"}
+            ),
+            httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.9]}]}),
+        ]
+
+        provider = OpenAIEmbeddingProvider(api_key="sk-test")
+        original_sleep = asyncio.sleep
+        sleep_calls: list[float] = []
+
+        async def mock_sleep(delay: float) -> None:
+            sleep_calls.append(delay)
+
+        asyncio.sleep = cast(Any, mock_sleep)
+        try:
+            result = await provider.embed(["hello"])
+            assert result == [[0.9]]
+            assert sleep_calls == [15.0]
         finally:
             asyncio.sleep = original_sleep
 
