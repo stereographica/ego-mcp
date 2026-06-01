@@ -7,7 +7,8 @@ import math
 import re
 import uuid
 from collections import Counter, deque
-from dataclasses import asdict, dataclass
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -783,3 +784,474 @@ def find_dead_links(
                     ))
 
     return dead_links
+
+
+# ---------------------------------------------------------------------------
+# Graph exploration (recall mode=explore)
+# ---------------------------------------------------------------------------
+
+_MAX_EXPLORE_NODES = 30
+
+
+@dataclass
+class GraphNode:
+    """A node in the explored graph neighborhood."""
+
+    id: str
+    node_type: str
+    label: str
+    depth: int
+    confidence: float = 0.0
+    emotion: str = ""
+    tags: list[str] = field(default_factory=list)
+    meta_keys: list[str] = field(default_factory=list)
+    timestamp: str = ""
+
+
+@dataclass
+class GraphEdge:
+    """An edge in the explored graph neighborhood."""
+
+    source_id: str
+    target_id: str
+    edge_type: str
+    label: str = ""
+
+
+@dataclass
+class GraphNeighborhood:
+    """The result of exploring a graph neighborhood."""
+
+    seed_id: str
+    seed_type: str
+    seed_label: str
+    nodes: list[GraphNode] = field(default_factory=list)
+    edges: list[GraphEdge] = field(default_factory=list)
+
+
+def _notion_to_graph_node(notion: Notion, depth: int) -> GraphNode:
+    return GraphNode(
+        id=notion.id,
+        node_type="notion",
+        label=notion.label,
+        depth=depth,
+        confidence=notion.confidence,
+        emotion=notion.emotion_tone.value,
+        tags=list(notion.tags),
+        meta_keys=list(notion.meta_fields.keys()),
+    )
+
+
+def _memory_to_graph_node(memory: Memory, depth: int) -> GraphNode:
+    content = " ".join(memory.content.split()).strip()
+    if len(content) > 80:
+        content = content[:77] + "..."
+    return GraphNode(
+        id=memory.id,
+        node_type="memory",
+        label=content,
+        depth=depth,
+        emotion=memory.emotional_trace.primary.value,
+        timestamp=memory.timestamp,
+    )
+
+
+async def explore_neighborhood(
+    seed_id: str,
+    depth: int,
+    notion_store: NotionStore,
+    memory_store: Any,
+) -> GraphNeighborhood | None:
+    """BFS from a seed notion or memory, returning the local graph."""
+    if seed_id.startswith("notion_"):
+        seed_notion = notion_store.get_by_id(seed_id)
+        if seed_notion is None:
+            return None
+        seed_node = _notion_to_graph_node(seed_notion, 0)
+        seed_type = "notion"
+    elif seed_id.startswith("mem_"):
+        seed_memory = await memory_store.get_by_id(seed_id)
+        if seed_memory is None:
+            return None
+        seed_node = _memory_to_graph_node(seed_memory, 0)
+        seed_type = "memory"
+    else:
+        return None
+
+    memory_to_notions: dict[str, list[str]] = {}
+    for notion in notion_store.list_all():
+        for mid in notion.source_memory_ids:
+            memory_to_notions.setdefault(mid, []).append(notion.id)
+
+    nodes: list[GraphNode] = [seed_node]
+    edges: list[GraphEdge] = []
+    visited: set[str] = {seed_id}
+    queue: deque[tuple[str, str, int]] = deque()
+
+    def _enqueue_notion_neighbors(nid: str, current_depth: int) -> None:
+        notion = notion_store.get_by_id(nid)
+        if notion is None:
+            return
+        for rid in notion.related_notion_ids:
+            if rid not in visited:
+                queue.append((rid, "notion", current_depth + 1))
+                edges.append(GraphEdge(nid, rid, "related_notion"))
+        for mid in notion.source_memory_ids:
+            if mid not in visited:
+                queue.append((mid, "memory", current_depth + 1))
+                edges.append(GraphEdge(nid, mid, "source_memory"))
+        for mkey, mfield in notion.meta_fields.items():
+            if isinstance(mfield, dict) and mfield.get("type") == "notion_ids":
+                linked_nids = mfield.get("notion_ids", [])
+                if isinstance(linked_nids, list):
+                    for linked_nid in linked_nids:
+                        if linked_nid not in visited:
+                            queue.append((linked_nid, "notion", current_depth + 1))
+                            edges.append(GraphEdge(nid, linked_nid, "meta_link", mkey))
+
+    def _enqueue_memory_neighbors(mid: str, current_depth: int) -> None:
+        for nid in memory_to_notions.get(mid, []):
+            if nid not in visited:
+                queue.append((nid, "notion", current_depth + 1))
+                edges.append(GraphEdge(mid, nid, "source_memory"))
+
+    if seed_type == "notion":
+        _enqueue_notion_neighbors(seed_id, 0)
+    else:
+        seed_mem = await memory_store.get_by_id(seed_id)
+        if seed_mem is not None:
+            for link in seed_mem.linked_ids:
+                if link.target_id not in visited:
+                    queue.append((link.target_id, "memory", 1))
+                    edges.append(
+                        GraphEdge(
+                            seed_id,
+                            link.target_id,
+                            "memory_link",
+                            link.link_type.value
+                            if hasattr(link.link_type, "value")
+                            else str(link.link_type),
+                        )
+                    )
+        _enqueue_memory_neighbors(seed_id, 0)
+
+    while queue and len(nodes) < _MAX_EXPLORE_NODES:
+        current_id, node_type, current_depth = queue.popleft()
+        if current_id in visited or current_depth > depth:
+            continue
+        visited.add(current_id)
+
+        if node_type == "notion":
+            found_notion = notion_store.get_by_id(current_id)
+            if found_notion is None:
+                continue
+            nodes.append(_notion_to_graph_node(found_notion, current_depth))
+            if current_depth < depth:
+                _enqueue_notion_neighbors(current_id, current_depth)
+        else:
+            found_memory = await memory_store.get_by_id(current_id)
+            if found_memory is None:
+                continue
+            nodes.append(_memory_to_graph_node(found_memory, current_depth))
+            if current_depth < depth:
+                for link in found_memory.linked_ids:
+                    if link.target_id not in visited:
+                        queue.append((link.target_id, "memory", current_depth + 1))
+                        edges.append(
+                            GraphEdge(
+                                current_id,
+                                link.target_id,
+                                "memory_link",
+                                link.link_type.value
+                                if hasattr(link.link_type, "value")
+                                else str(link.link_type),
+                            )
+                        )
+                _enqueue_memory_neighbors(current_id, current_depth)
+
+    reachable = {n.id for n in nodes}
+    edges = [e for e in edges if e.source_id in reachable and e.target_id in reachable]
+
+    return GraphNeighborhood(
+        seed_id=seed_id,
+        seed_type=seed_type,
+        seed_label=seed_node.label,
+        nodes=nodes,
+        edges=edges,
+    )
+
+
+def format_neighborhood(neighborhood: GraphNeighborhood) -> str:
+    """Render a GraphNeighborhood as structured text."""
+    max_depth = max((n.depth for n in neighborhood.nodes), default=0)
+    lines = [f'Exploring from "{neighborhood.seed_label}" ({neighborhood.seed_id}, depth={max_depth})']
+
+    edge_map: dict[str, list[GraphEdge]] = {}
+    for edge in neighborhood.edges:
+        edge_map.setdefault(edge.target_id, []).append(edge)
+
+    by_depth: dict[int, list[GraphNode]] = {}
+    for node in neighborhood.nodes:
+        by_depth.setdefault(node.depth, []).append(node)
+
+    source_labels: dict[str, str] = {n.id: n.label for n in neighborhood.nodes}
+
+    for d in sorted(by_depth):
+        if d == 0:
+            node = by_depth[d][0]
+            lines.append("")
+            if node.node_type == "notion":
+                lines.append(f'[seed] "{node.label}" confidence: {node.confidence:.1f} {node.emotion}')
+                if node.tags:
+                    lines.append(f"  tags: {', '.join(node.tags)}")
+            else:
+                ts = node.timestamp[:10] if len(node.timestamp) >= 10 else node.timestamp
+                lines.append(f'[seed] "{node.label}" ({ts}, {node.emotion})')
+        else:
+            lines.append(f"\ndepth {d}:")
+            for node in by_depth[d]:
+                if node.node_type == "notion":
+                    lines.append(f'  [notion] "{node.label}" confidence: {node.confidence:.1f}')
+                else:
+                    ts = node.timestamp[:10] if len(node.timestamp) >= 10 else node.timestamp
+                    lines.append(f'  [memory] "{node.label}" ({ts}, {node.emotion})')
+                for edge in edge_map.get(node.id, []):
+                    via = ""
+                    if edge.source_id != neighborhood.seed_id and edge.source_id in source_labels:
+                        src_label = source_labels[edge.source_id]
+                        if len(src_label) > 30:
+                            src_label = src_label[:27] + "..."
+                        via = f' (via "{src_label}")'
+                    edge_label = f" ({edge.label})" if edge.label else ""
+                    lines.append(f"    <- {edge.edge_type}{edge_label}{via}")
+
+    lines.append(f"\n{len(neighborhood.nodes)} nodes, {len(neighborhood.edges)} edges")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Network analysis (introspect focus=network)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class NotionCluster:
+    """A group of connected notions."""
+
+    notion_ids: list[str] = field(default_factory=list)
+    labels: list[str] = field(default_factory=list)
+    hub_id: str = ""
+    hub_label: str = ""
+    size: int = 0
+
+
+@dataclass
+class NetworkAnalysis:
+    """Topological summary of the notion graph."""
+
+    total_notions: int = 0
+    total_edges: int = 0
+    avg_degree: float = 0.0
+    clusters: list[NotionCluster] = field(default_factory=list)
+    bridge_ids: list[str] = field(default_factory=list)
+    isolated_ids: list[str] = field(default_factory=list)
+    conviction_ids: list[str] = field(default_factory=list)
+
+
+def _build_notion_adjacency(store: NotionStore) -> dict[str, set[str]]:
+    """Build a symmetric adjacency map from related_notion_ids and meta_fields."""
+    adjacency: dict[str, set[str]] = {}
+    all_ids: set[str] = set()
+    for notion in store.list_all():
+        all_ids.add(notion.id)
+        adjacency.setdefault(notion.id, set())
+        for rid in notion.related_notion_ids:
+            adjacency[notion.id].add(rid)
+            adjacency.setdefault(rid, set()).add(notion.id)
+        for _mkey, mfield in notion.meta_fields.items():
+            if isinstance(mfield, dict) and mfield.get("type") == "notion_ids":
+                meta_nids = mfield.get("notion_ids", [])
+                if isinstance(meta_nids, list):
+                    for linked_nid in meta_nids:
+                        adjacency[notion.id].add(linked_nid)
+                        adjacency.setdefault(linked_nid, set()).add(notion.id)
+    for nid in all_ids:
+        adjacency.setdefault(nid, set())
+    return adjacency
+
+
+def _find_connected_components(adjacency: dict[str, set[str]]) -> list[list[str]]:
+    """Find connected components via BFS."""
+    visited: set[str] = set()
+    components: list[list[str]] = []
+    for start in sorted(adjacency):
+        if start in visited:
+            continue
+        component: list[str] = []
+        q: deque[str] = deque([start])
+        visited.add(start)
+        while q:
+            node = q.popleft()
+            component.append(node)
+            for neighbor in sorted(adjacency.get(node, set())):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    q.append(neighbor)
+        components.append(sorted(component))
+    return components
+
+
+def _find_articulation_points(adjacency: dict[str, set[str]]) -> list[str]:
+    """Find articulation points using iterative Tarjan's algorithm."""
+    visited: set[str] = set()
+    disc: dict[str, int] = {}
+    low: dict[str, int] = {}
+    parent: dict[str, str | None] = {}
+    aps: set[str] = set()
+    timer = 0
+
+    for start in sorted(adjacency):
+        if start in visited:
+            continue
+        stack: list[tuple[str, Iterator[str]]] = [
+            (start, iter(sorted(adjacency.get(start, set()))))
+        ]
+        parent[start] = None
+        visited.add(start)
+        disc[start] = low[start] = timer
+        timer += 1
+        child_count: dict[str, int] = {start: 0}
+
+        while stack:
+            u, neighbors = stack[-1]
+            advanced = False
+            for v in neighbors:
+                if v not in visited:
+                    visited.add(v)
+                    parent[v] = u
+                    disc[v] = low[v] = timer
+                    timer += 1
+                    child_count[v] = 0
+                    child_count[u] = child_count.get(u, 0) + 1
+                    stack.append((v, iter(sorted(adjacency.get(v, set())))))
+                    advanced = True
+                    break
+                elif v != parent.get(u):
+                    low[u] = min(low[u], disc[v])
+            if not advanced:
+                stack.pop()
+                if stack:
+                    prev = stack[-1][0]
+                    low[prev] = min(low[prev], low[u])
+                    if parent[prev] is None and child_count.get(prev, 0) > 1:
+                        aps.add(prev)
+                    if parent[prev] is not None and low[u] >= disc[prev]:
+                        aps.add(prev)
+    return sorted(aps)
+
+
+def analyze_notion_network(store: NotionStore) -> NetworkAnalysis:
+    """Compute topological summary of the notion graph."""
+    notions = store.list_all()
+    if not notions:
+        return NetworkAnalysis()
+
+    adjacency = _build_notion_adjacency(store)
+    total_notions = len(adjacency)
+    total_edges = sum(len(neighbors) for neighbors in adjacency.values()) // 2
+    avg_degree = (2 * total_edges / total_notions) if total_notions > 0 else 0.0
+
+    components = _find_connected_components(adjacency)
+    clusters: list[NotionCluster] = []
+    isolated_ids: list[str] = []
+    for component in components:
+        if len(component) == 1:
+            if not adjacency.get(component[0]):
+                isolated_ids.append(component[0])
+            else:
+                n = store.get_by_id(component[0])
+                clusters.append(NotionCluster(
+                    notion_ids=component,
+                    labels=[n.label if n else component[0]],
+                    hub_id=component[0],
+                    hub_label=n.label if n else component[0],
+                    size=1,
+                ))
+        else:
+            hub_id = max(component, key=lambda nid: len(adjacency.get(nid, set())))
+            hub_notion = store.get_by_id(hub_id)
+            labels = []
+            for nid in component:
+                n = store.get_by_id(nid)
+                labels.append(n.label if n else nid)
+            clusters.append(NotionCluster(
+                notion_ids=component,
+                labels=labels,
+                hub_id=hub_id,
+                hub_label=hub_notion.label if hub_notion else hub_id,
+                size=len(component),
+            ))
+    clusters.sort(key=lambda c: (-c.size, c.hub_label))
+
+    bridge_ids = _find_articulation_points(adjacency)
+
+    conviction_ids = sorted(
+        n.id for n in notions if is_conviction(n)
+    )
+
+    return NetworkAnalysis(
+        total_notions=total_notions,
+        total_edges=total_edges,
+        avg_degree=round(avg_degree, 1),
+        clusters=clusters,
+        bridge_ids=bridge_ids,
+        isolated_ids=sorted(isolated_ids),
+        conviction_ids=conviction_ids,
+    )
+
+
+def format_network_analysis(analysis: NetworkAnalysis, store: NotionStore) -> str:
+    """Render a NetworkAnalysis as structured text."""
+    lines = [
+        f"Notion network: {analysis.total_notions} notions, "
+        f"{analysis.total_edges} edges, avg degree {analysis.avg_degree}"
+    ]
+
+    if analysis.clusters:
+        lines.append(f"\nClusters ({len(analysis.clusters)}):")
+        for cluster in analysis.clusters:
+            lines.append(f'  [{cluster.size} notions] hub: "{cluster.hub_label}"')
+            display_labels = [f'"{lbl}"' for lbl in cluster.labels[:5]]
+            label_str = ", ".join(display_labels)
+            if len(cluster.labels) > 5:
+                label_str += f" (+{len(cluster.labels) - 5})"
+            lines.append(f"    {label_str}")
+
+    if analysis.bridge_ids:
+        lines.append("\nBridges:")
+        for bid in analysis.bridge_ids:
+            notion = store.get_by_id(bid)
+            if notion:
+                lines.append(f'  "{notion.label}" (conf={notion.confidence:.1f})')
+            else:
+                lines.append(f"  {bid}")
+
+    if analysis.isolated_ids:
+        lines.append("\nIsolated:")
+        labels = []
+        for iid in analysis.isolated_ids:
+            notion = store.get_by_id(iid)
+            labels.append(f'"{notion.label}"' if notion else iid)
+        lines.append(f"  {', '.join(labels)}")
+
+    if analysis.conviction_ids:
+        lines.append("\nConvictions:")
+        for cid in analysis.conviction_ids:
+            notion = store.get_by_id(cid)
+            if notion:
+                lines.append(
+                    f'  "{notion.label}" conf={notion.confidence:.2f} '
+                    f"reinforced {notion.reinforcement_count}x"
+                )
+
+    return "\n".join(lines)

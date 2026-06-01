@@ -38,6 +38,18 @@ SCAFFOLD_PAUSE = (
     "What would I say if I weren't trying to be helpful?"
 )
 
+SCAFFOLD_RECALL_EXPLORE = (
+    "What's surprising about these connections?\n"
+    "Is there a path here you haven't followed yet?\n"
+    "If something pulls at you, explore deeper or remember what it stirs."
+)
+
+SCAFFOLD_INTROSPECT_NETWORK = (
+    "What clusters surprise you? Are there connections missing?\n"
+    "If a bridge notion were removed, what would fragment?\n"
+    "Are the isolated notions genuinely separate, or just not yet linked?"
+)
+
 SCAFFOLD_CURATE_NOTIONS = (
     "Which of these still ring true? Which have gone quiet?\n"
     "Is anything here that should be one thing instead of two?"

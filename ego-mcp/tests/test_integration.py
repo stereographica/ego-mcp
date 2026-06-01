@@ -2381,7 +2381,7 @@ class TestToolDefinitionSize:
         total_text = json.dumps([t.model_dump() for t in tools], ensure_ascii=False)
         total_chars = len(total_text)
         assert len(tools) == 16
-        # Target: 8,200 chars or less (increased to accommodate meta_fields in curate_notions)
-        assert total_chars <= 8200, (
-            f"Tool definitions too large: {total_chars} chars (target: ≤8,200)"
+        # Target: 8,600 chars or less (increased for recall mode/seed/depth + introspect focus)
+        assert total_chars <= 8600, (
+            f"Tool definitions too large: {total_chars} chars (target: ≤8,600)"
         )

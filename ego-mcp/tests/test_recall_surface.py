@@ -18,8 +18,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ego_mcp.notion import NotionStore
 from ego_mcp.relationship import RelationshipStore
-from ego_mcp.types import Memory, MemorySearchResult
+from ego_mcp.types import Memory, MemorySearchResult, Notion
 
 
 def _make_memory(
@@ -648,3 +649,100 @@ class TestExplicitFilterInvoluntarySuppression:
                 assert "Master" in result
                 assert "Alice" in result
                 assert "surfaced on their own" in result
+
+
+# ---------------------------------------------------------------------------
+# recall mode=explore tests
+# ---------------------------------------------------------------------------
+
+
+class TestRecallExploreMode:
+    """Tests for recall with mode=explore."""
+
+    def test_handle_recall_explore_returns_neighborhood(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_surface_memory as mem_mod
+
+        notion_store = NotionStore(tmp_path / "notions.json")
+        notion_store.save(Notion(
+            id="notion_aaa", label="Alpha", confidence=0.8,
+            related_notion_ids=["notion_bbb"],
+        ))
+        notion_store.save(Notion(
+            id="notion_bbb", label="Beta", confidence=0.7,
+            related_notion_ids=["notion_aaa"],
+        ))
+        monkeypatch.setattr(mem_mod, "get_notion_store", lambda: notion_store)
+
+        mock_memory = MagicMock()
+        config = MagicMock()
+
+        result = asyncio.run(mem_mod._handle_recall(
+            config, mock_memory,
+            {"mode": "explore", "seed": "notion_aaa", "depth": 1},
+        ))
+        assert "Exploring from" in result
+        assert '"Alpha"' in result
+        assert '"Beta"' in result
+
+    def test_handle_recall_explore_missing_seed(self) -> None:
+        import ego_mcp._server_surface_memory as mem_mod
+
+        result = asyncio.run(mem_mod._handle_recall(
+            MagicMock(), MagicMock(),
+            {"mode": "explore"},
+        ))
+        assert "seed is required" in result
+
+    def test_handle_recall_explore_unknown_seed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_surface_memory as mem_mod
+
+        notion_store = NotionStore(tmp_path / "notions.json")
+        monkeypatch.setattr(mem_mod, "get_notion_store", lambda: notion_store)
+
+        result = asyncio.run(mem_mod._handle_recall(
+            MagicMock(), MagicMock(),
+            {"mode": "explore", "seed": "notion_nonexistent"},
+        ))
+        assert "Seed not found" in result
+
+    def test_handle_recall_search_missing_context(self) -> None:
+        import ego_mcp._server_surface_memory as mem_mod
+
+        result = asyncio.run(mem_mod._handle_recall(
+            MagicMock(), MagicMock(),
+            {"mode": "search"},
+        ))
+        assert "context is required" in result
+
+    def test_handle_recall_no_mode_no_context(self) -> None:
+        import ego_mcp._server_surface_memory as mem_mod
+
+        result = asyncio.run(mem_mod._handle_recall(
+            MagicMock(), MagicMock(), {},
+        ))
+        assert "context is required" in result
+
+    def test_handle_recall_explore_tool_context(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_surface_memory as mem_mod
+
+        notion_store = NotionStore(tmp_path / "notions.json")
+        notion_store.save(Notion(
+            id="notion_ctx", label="Context", confidence=0.5,
+        ))
+        monkeypatch.setattr(mem_mod, "get_notion_store", lambda: notion_store)
+        monkeypatch.setattr(mem_mod, "update_tool_metadata", lambda **kw: None)
+
+        asyncio.run(mem_mod._handle_recall(
+            MagicMock(), MagicMock(),
+            {"mode": "explore", "seed": "notion_ctx"},
+        ))
+        ctx = mem_mod.pop_tool_context("recall")
+        assert ctx.get("mode") == "explore"
+        assert ctx.get("seed_id") == "notion_ctx"
+        assert isinstance(ctx.get("node_count"), int)

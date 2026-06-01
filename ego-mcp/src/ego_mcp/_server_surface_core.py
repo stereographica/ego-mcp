@@ -40,11 +40,16 @@ from ego_mcp.desire_blend import blend_desires
 from ego_mcp.embers import generate_embers
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
-from ego_mcp.notion import is_conviction
+from ego_mcp.notion import (
+    analyze_notion_network,
+    format_network_analysis,
+    is_conviction,
+)
 from ego_mcp.proust import find_proust_memory
 from ego_mcp.scaffolds import (
     SCAFFOLD_CONSIDER_THEM,
     SCAFFOLD_INTROSPECT,
+    SCAFFOLD_INTROSPECT_NETWORK,
     SCAFFOLD_PAUSE,
     SCAFFOLD_WAKE_UP,
     compose_response,
@@ -392,10 +397,24 @@ async def _handle_wake_up(
     return render_with_data(data, SCAFFOLD_WAKE_UP, config.companion_name)
 
 
+def _handle_introspect_network() -> str:
+    """Notion graph topology summary."""
+    notion_store = get_notion_store()
+    analysis = analyze_notion_network(notion_store)
+    data = format_network_analysis(analysis, notion_store)
+    return compose_response(data, SCAFFOLD_INTROSPECT_NETWORK)
+
+
 async def _handle_introspect(
-    config: EgoConfig, memory: MemoryStore, desire: DesireEngine
+    config: EgoConfig,
+    memory: MemoryStore,
+    desire: DesireEngine,
+    args: dict[str, Any] | None = None,
 ) -> str:
     """Introspection materials: week/month layers + notions + questions + episodes + desire trend."""
+    focus = (args or {}).get("focus", "default")
+    if focus == "network":
+        return _handle_introspect_network()
     recent_all = await memory.list_recent(n=30)
     now = timezone_utils.now()
 
