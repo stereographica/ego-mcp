@@ -131,7 +131,7 @@ SURFACE_TOOLS: list[Tool] = [
                     "type": "string",
                     "enum": ["search", "explore"],
                     "default": "search",
-                    "description": "search: semantic recall (default). explore: graph neighborhood from a seed.",
+                    "description": "search: semantic recall. explore: graph neighborhood from a seed.",
                 },
                 "seed": {
                     "type": "string",
@@ -142,12 +142,12 @@ SURFACE_TOOLS: list[Tool] = [
                     "default": 2,
                     "minimum": 1,
                     "maximum": 4,
-                    "description": "Exploration depth (default 2, max 4). Only used with mode=explore.",
+                    "description": "Exploration depth. Only used with mode=explore.",
                 },
                 "n_results": {
                     "type": "integer",
                     "default": 3,
-                    "description": "Results (default 3, max 10)",
+                    "description": "Results (max 10).",
                 },
                 "emotion_filter": {"type": "string"},
                 "category_filter": {"type": "string"},

@@ -36,12 +36,12 @@ MCP server providing cognitive capabilities to AI agents.
 | Tool | Description |
 |---|---|
 | `wake_up` | Start a session. Returns last introspection + desire summary |
-| `feel_desires` | Check current desire levels with action guidance |
-| `introspect` | Get reflection materials: memories, desires, open questions |
+| `attune` | Unified emotional awareness: texture + desires + interests + body sense |
+| `introspect` | Get reflection materials: memories, desires, open questions (`focus=network` for notion graph topology) |
 | `consider_them` | Think about someone — Theory of Mind framework |
 | `remember` | Save a memory with emotion and importance |
-| `recall` | Recall related memories by context |
-| `am_i_being_genuine` | Authenticity self-check |
+| `recall` | Recall related memories by context (`mode=explore` for graph neighborhood) |
+| `pause` | Authenticity self-check |
 
 **Backend Tools** — guided by surface tools:
 

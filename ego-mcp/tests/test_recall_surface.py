@@ -674,6 +674,8 @@ class TestRecallExploreMode:
             related_notion_ids=["notion_aaa"],
         ))
         monkeypatch.setattr(mem_mod, "get_notion_store", lambda: notion_store)
+        # Avoid leaking explore metadata into the process-wide ContextVar.
+        monkeypatch.setattr(mem_mod, "update_tool_metadata", lambda **kw: None)
 
         mock_memory = MagicMock()
         config = MagicMock()

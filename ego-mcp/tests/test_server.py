@@ -2244,3 +2244,7 @@ class TestIntrospectNetwork:
         )
         # Default introspect should NOT contain network topology output
         assert "Notion network:" not in text
+        # ...but it MUST still produce the normal self-reflection material, so a
+        # regression that hollowed out the default path would be caught.
+        assert "This week:" in text
+        assert "This month" in text

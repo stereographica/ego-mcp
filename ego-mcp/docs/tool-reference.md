@@ -99,10 +99,38 @@ If something keeps surfacing, maybe it's worth sitting with.
 ```json
 {
   "type": "object",
-  "properties": {},
+  "properties": {
+    "focus": {
+      "type": "string",
+      "enum": ["default", "network"],
+      "default": "default",
+      "description": "default: full self-reflection. network: notion graph topology."
+    }
+  },
   "required": []
 }
 ```
+
+> With `focus="network"`, `introspect` skips the reflection material and instead returns a topological summary of the notion graph — total notions/edges and average degree, connected clusters with their hub notion, **bridges** (articulation points whose removal would fragment the graph), isolated notions, and convictions. Dead links (references to notions that no longer exist) and self-references are excluded so the topology reflects only live notions. Example:
+>
+> ```
+> Notion network: 12 notions, 14 edges, avg degree 2.3
+>
+> Clusters (2):
+>   [7 notions] hub: "continuity matters"
+>     "continuity matters", "steady shelter", "small rituals", ... (+4)
+>   [3 notions] hub: "curiosity as care"
+>     "curiosity as care", "asking opens doors", "shared wondering"
+>
+> Bridges:
+>   "steady shelter" (conf=0.8)
+>
+> Isolated:
+>   "music has texture", "sleep is a reset"
+>
+> Convictions:
+>   "continuity matters" conf=0.90 reinforced 7x
+> ```
 
 **Response example:**
 
@@ -359,7 +387,24 @@ Do any of these connections surprise you? Is there a pattern forming?
   "properties": {
     "context": {
       "type": "string",
-      "description": "What to recall"
+      "description": "What to recall (required for mode=search)"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["search", "explore"],
+      "default": "search",
+      "description": "search: semantic recall. explore: graph neighborhood from a seed."
+    },
+    "seed": {
+      "type": "string",
+      "description": "Notion ID or memory ID to explore from (required when mode=explore)"
+    },
+    "depth": {
+      "type": "integer",
+      "default": 2,
+      "minimum": 1,
+      "maximum": 4,
+      "description": "Exploration depth. Only used with mode=explore."
     },
     "n_results": {
       "type": "integer",
@@ -393,11 +438,32 @@ Do any of these connections surprise you? Is there a pattern forming?
       "maxItems": 2
     }
   },
-  "required": ["context"]
+  "required": []
 }
 ```
 
-**Response example:**
+> **Two modes:** `mode="search"` (default) is semantic recall and needs `context`. `mode="explore"` is graph traversal and needs `seed` (a `notion_*` or `mem_*` id); it ignores `context`/filters and walks `related_notion_ids`, `source_memory_ids`, `meta_fields` notion links, and memory links via BFS up to `depth` hops, returning the local neighborhood (capped at 30 nodes; truncation is shown). Back-edges and cycles among reached nodes are included. Example:
+>
+> ```
+> Exploring from "continuity matters" (notion_a1b2c3, depth=2)
+>
+> [seed] "continuity matters" confidence: 0.9 curious
+>   tags: continuity, care
+>
+> depth 1:
+>   [notion] "steady shelter" confidence: 0.8
+>     <- related_notion
+>   [memory] "Talked about keeping notes between sessions" (2026-02-18, moved)
+>     <- source_memory
+>
+> depth 2:
+>   [notion] "small rituals" confidence: 0.6
+>     <- related_notion (via "steady shelter")
+>
+> 3 nodes, 3 edges
+> ```
+
+**Response example (mode=search):**
 
 ```
 3 of ~50 memories (showing top matches):

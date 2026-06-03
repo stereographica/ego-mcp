@@ -827,6 +827,8 @@ class GraphNeighborhood:
     seed_label: str
     nodes: list[GraphNode] = field(default_factory=list)
     edges: list[GraphEdge] = field(default_factory=list)
+    requested_depth: int = 0
+    truncated: bool = False
 
 
 def _notion_to_graph_node(notion: Notion, depth: int) -> GraphNode:
@@ -863,6 +865,7 @@ async def explore_neighborhood(
     memory_store: Any,
 ) -> GraphNeighborhood | None:
     """BFS from a seed notion or memory, returning the local graph."""
+    seed_memory: Memory | None = None
     if seed_id.startswith("notion_"):
         seed_notion = notion_store.get_by_id(seed_id)
         if seed_notion is None:
@@ -888,51 +891,51 @@ async def explore_neighborhood(
     visited: set[str] = {seed_id}
     queue: deque[tuple[str, str, int]] = deque()
 
+    def _record_edge(source: str, target: str, edge_type: str, label: str = "") -> None:
+        # Record the edge even when the target is already visited, so back-edges
+        # and cycles among graph nodes are not silently dropped. Self-edges carry
+        # no information; unreachable and duplicate edges are pruned at the end.
+        if source != target:
+            edges.append(GraphEdge(source, target, edge_type, label))
+
+    def _link_type_label(link: Any) -> str:
+        link_type = link.link_type
+        return link_type.value if hasattr(link_type, "value") else str(link_type)
+
     def _enqueue_notion_neighbors(nid: str, current_depth: int) -> None:
         notion = notion_store.get_by_id(nid)
         if notion is None:
             return
         for rid in notion.related_notion_ids:
+            _record_edge(nid, rid, "related_notion")
             if rid not in visited:
                 queue.append((rid, "notion", current_depth + 1))
-                edges.append(GraphEdge(nid, rid, "related_notion"))
         for mid in notion.source_memory_ids:
+            _record_edge(nid, mid, "source_memory")
             if mid not in visited:
                 queue.append((mid, "memory", current_depth + 1))
-                edges.append(GraphEdge(nid, mid, "source_memory"))
         for mkey, mfield in notion.meta_fields.items():
             if isinstance(mfield, dict) and mfield.get("type") == "notion_ids":
                 linked_nids = mfield.get("notion_ids", [])
                 if isinstance(linked_nids, list):
                     for linked_nid in linked_nids:
+                        _record_edge(nid, linked_nid, "meta_link", mkey)
                         if linked_nid not in visited:
                             queue.append((linked_nid, "notion", current_depth + 1))
-                            edges.append(GraphEdge(nid, linked_nid, "meta_link", mkey))
 
     def _enqueue_memory_neighbors(mid: str, current_depth: int) -> None:
         for nid in memory_to_notions.get(mid, []):
+            _record_edge(mid, nid, "source_memory")
             if nid not in visited:
                 queue.append((nid, "notion", current_depth + 1))
-                edges.append(GraphEdge(mid, nid, "source_memory"))
 
     if seed_type == "notion":
         _enqueue_notion_neighbors(seed_id, 0)
-    else:
-        seed_mem = await memory_store.get_by_id(seed_id)
-        if seed_mem is not None:
-            for link in seed_mem.linked_ids:
-                if link.target_id not in visited:
-                    queue.append((link.target_id, "memory", 1))
-                    edges.append(
-                        GraphEdge(
-                            seed_id,
-                            link.target_id,
-                            "memory_link",
-                            link.link_type.value
-                            if hasattr(link.link_type, "value")
-                            else str(link.link_type),
-                        )
-                    )
+    elif seed_memory is not None:
+        for link in seed_memory.linked_ids:
+            _record_edge(seed_id, link.target_id, "memory_link", _link_type_label(link))
+            if link.target_id not in visited:
+                queue.append((link.target_id, "memory", 1))
         _enqueue_memory_neighbors(seed_id, 0)
 
     while queue and len(nodes) < _MAX_EXPLORE_NODES:
@@ -955,36 +958,48 @@ async def explore_neighborhood(
             nodes.append(_memory_to_graph_node(found_memory, current_depth))
             if current_depth < depth:
                 for link in found_memory.linked_ids:
+                    _record_edge(
+                        current_id, link.target_id, "memory_link", _link_type_label(link)
+                    )
                     if link.target_id not in visited:
                         queue.append((link.target_id, "memory", current_depth + 1))
-                        edges.append(
-                            GraphEdge(
-                                current_id,
-                                link.target_id,
-                                "memory_link",
-                                link.link_type.value
-                                if hasattr(link.link_type, "value")
-                                else str(link.link_type),
-                            )
-                        )
                 _enqueue_memory_neighbors(current_id, current_depth)
 
+    # The cap stops the BFS early; surface that so a truncated view isn't
+    # mistaken for a complete one.
+    truncated = bool(queue) and len(nodes) >= _MAX_EXPLORE_NODES
+
+    # Keep only edges between nodes that made it into the graph, and drop exact
+    # duplicates (the same link reached via multiple paths or listed twice).
     reachable = {n.id for n in nodes}
-    edges = [e for e in edges if e.source_id in reachable and e.target_id in reachable]
+    seen_edges: set[tuple[str, str, str, str]] = set()
+    deduped_edges: list[GraphEdge] = []
+    for edge in edges:
+        if edge.source_id not in reachable or edge.target_id not in reachable:
+            continue
+        key = (edge.source_id, edge.target_id, edge.edge_type, edge.label)
+        if key in seen_edges:
+            continue
+        seen_edges.add(key)
+        deduped_edges.append(edge)
 
     return GraphNeighborhood(
         seed_id=seed_id,
         seed_type=seed_type,
         seed_label=seed_node.label,
         nodes=nodes,
-        edges=edges,
+        edges=deduped_edges,
+        requested_depth=depth,
+        truncated=truncated,
     )
 
 
 def format_neighborhood(neighborhood: GraphNeighborhood) -> str:
     """Render a GraphNeighborhood as structured text."""
-    max_depth = max((n.depth for n in neighborhood.nodes), default=0)
-    lines = [f'Exploring from "{neighborhood.seed_label}" ({neighborhood.seed_id}, depth={max_depth})']
+    lines = [
+        f'Exploring from "{neighborhood.seed_label}" '
+        f"({neighborhood.seed_id}, depth={neighborhood.requested_depth})"
+    ]
 
     edge_map: dict[str, list[GraphEdge]] = {}
     for edge in neighborhood.edges:
@@ -1026,6 +1041,10 @@ def format_neighborhood(neighborhood: GraphNeighborhood) -> str:
                     lines.append(f"    <- {edge.edge_type}{edge_label}{via}")
 
     lines.append(f"\n{len(neighborhood.nodes)} nodes, {len(neighborhood.edges)} edges")
+    if neighborhood.truncated:
+        lines.append(
+            f"(truncated at {_MAX_EXPLORE_NODES} nodes — neighborhood may be larger)"
+        )
     return "\n".join(lines)
 
 
@@ -1059,24 +1078,31 @@ class NetworkAnalysis:
 
 
 def _build_notion_adjacency(store: NotionStore) -> dict[str, set[str]]:
-    """Build a symmetric adjacency map from related_notion_ids and meta_fields."""
-    adjacency: dict[str, set[str]] = {}
-    all_ids: set[str] = set()
-    for notion in store.list_all():
-        all_ids.add(notion.id)
-        adjacency.setdefault(notion.id, set())
+    """Build a symmetric adjacency map from related_notion_ids and meta_fields.
+
+    Only links between notions that actually exist in the store are kept;
+    dangling references (dead links) and self-references are ignored so the
+    topology reflects live notions only and is not inflated by phantom nodes.
+    """
+    notions = store.list_all()
+    all_ids: set[str] = {notion.id for notion in notions}
+    adjacency: dict[str, set[str]] = {nid: set() for nid in all_ids}
+
+    def _link(source: str, target: str) -> None:
+        if target not in all_ids or source == target:
+            return
+        adjacency[source].add(target)
+        adjacency[target].add(source)
+
+    for notion in notions:
         for rid in notion.related_notion_ids:
-            adjacency[notion.id].add(rid)
-            adjacency.setdefault(rid, set()).add(notion.id)
+            _link(notion.id, rid)
         for _mkey, mfield in notion.meta_fields.items():
             if isinstance(mfield, dict) and mfield.get("type") == "notion_ids":
                 meta_nids = mfield.get("notion_ids", [])
                 if isinstance(meta_nids, list):
                     for linked_nid in meta_nids:
-                        adjacency[notion.id].add(linked_nid)
-                        adjacency.setdefault(linked_nid, set()).add(notion.id)
-    for nid in all_ids:
-        adjacency.setdefault(nid, set())
+                        _link(notion.id, linked_nid)
     return adjacency
 
 
@@ -1166,17 +1192,9 @@ def analyze_notion_network(store: NotionStore) -> NetworkAnalysis:
     isolated_ids: list[str] = []
     for component in components:
         if len(component) == 1:
-            if not adjacency.get(component[0]):
-                isolated_ids.append(component[0])
-            else:
-                n = store.get_by_id(component[0])
-                clusters.append(NotionCluster(
-                    notion_ids=component,
-                    labels=[n.label if n else component[0]],
-                    hub_id=component[0],
-                    hub_label=n.label if n else component[0],
-                    size=1,
-                ))
+            # After dead-link/self-reference filtering, a single-node component
+            # has no live neighbors, so it is genuinely isolated.
+            isolated_ids.append(component[0])
         else:
             hub_id = max(component, key=lambda nid: len(adjacency.get(nid, set())))
             hub_notion = store.get_by_id(hub_id)
