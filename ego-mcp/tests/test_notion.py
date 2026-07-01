@@ -9,11 +9,23 @@ from pathlib import Path
 import pytest
 
 from ego_mcp.notion import (
+    GraphEdge,
+    GraphNeighborhood,
+    GraphNode,
+    NetworkAnalysis,
+    NotionCluster,
     NotionStore,
+    _build_notion_adjacency,
+    _find_articulation_points,
+    _find_connected_components,
+    analyze_notion_network,
     apply_time_decay,
     auto_link_notions,
+    explore_neighborhood,
     find_duplicate_components,
     find_duplicates,
+    format_neighborhood,
+    format_network_analysis,
     generate_notion_from_cluster,
     get_associated,
     infer_person_id,
@@ -22,7 +34,15 @@ from ego_mcp.notion import (
     merge_notions,
     update_notion_from_memory,
 )
-from ego_mcp.types import Category, Emotion, EmotionalTrace, Memory, Notion
+from ego_mcp.types import (
+    Category,
+    Emotion,
+    EmotionalTrace,
+    LinkType,
+    Memory,
+    MemoryLink,
+    Notion,
+)
 
 
 def _memory(
@@ -852,3 +872,426 @@ def test_find_dead_links_healthy_meta_fields_not_reported(tmp_path: Path) -> Non
     dead = find_dead_links(store, tmp_path)
 
     assert len(dead) == 0
+
+
+# ---------------------------------------------------------------------------
+# Graph exploration tests (recall mode=explore)
+# ---------------------------------------------------------------------------
+
+
+class _FakeMemoryStore:
+    """Minimal async memory store for testing explore_neighborhood."""
+
+    def __init__(self, memories: dict[str, Memory] | None = None) -> None:
+        self._memories = memories or {}
+
+    async def get_by_id(self, memory_id: str) -> Memory | None:
+        return self._memories.get(memory_id)
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_from_notion(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion("notion_a", label="A", related_notion_ids=["notion_b"]))
+    store.save(_saved_notion("notion_b", label="B", related_notion_ids=["notion_a", "notion_c"]))
+    store.save(_saved_notion("notion_c", label="C", related_notion_ids=["notion_b"]))
+
+    result = await explore_neighborhood("notion_a", 2, store, _FakeMemoryStore())
+    assert result is not None
+    assert result.seed_id == "notion_a"
+    assert result.seed_type == "notion"
+    node_ids = {n.id for n in result.nodes}
+    assert "notion_a" in node_ids
+    assert "notion_b" in node_ids
+    assert "notion_c" in node_ids
+    assert any(e.edge_type == "related_notion" for e in result.edges)
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_from_memory(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion("notion_x", label="X", source_memory_ids=["mem_1"]))
+    mem1 = Memory(
+        id="mem_1",
+        content="first memory",
+        linked_ids=[MemoryLink(target_id="mem_2", link_type=LinkType.RELATED)],
+    )
+    mem2 = Memory(id="mem_2", content="second memory")
+    mem_store = _FakeMemoryStore({"mem_1": mem1, "mem_2": mem2})
+
+    result = await explore_neighborhood("mem_1", 1, store, mem_store)
+    assert result is not None
+    assert result.seed_type == "memory"
+    node_ids = {n.id for n in result.nodes}
+    assert "mem_1" in node_ids
+    assert "mem_2" in node_ids
+    assert "notion_x" in node_ids
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_unknown_seed(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    result = await explore_neighborhood("notion_missing", 1, store, _FakeMemoryStore())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_invalid_prefix(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    result = await explore_neighborhood("unknown_prefix_id", 1, store, _FakeMemoryStore())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_depth_limit(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion("notion_a", label="A", related_notion_ids=["notion_b"]))
+    store.save(_saved_notion("notion_b", label="B", related_notion_ids=["notion_a", "notion_c"]))
+    store.save(_saved_notion("notion_c", label="C", related_notion_ids=["notion_b"]))
+
+    result = await explore_neighborhood("notion_a", 1, store, _FakeMemoryStore())
+    assert result is not None
+    node_ids = {n.id for n in result.nodes}
+    assert "notion_a" in node_ids
+    assert "notion_b" in node_ids
+    assert "notion_c" not in node_ids
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_meta_link(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    n_a = _saved_notion("notion_a", label="A")
+    n_a.meta_fields = {"influences": {"type": "notion_ids", "notion_ids": ["notion_d"]}}
+    store.save(n_a)
+    store.save(_saved_notion("notion_d", label="D"))
+
+    result = await explore_neighborhood("notion_a", 1, store, _FakeMemoryStore())
+    assert result is not None
+    node_ids = {n.id for n in result.nodes}
+    assert "notion_d" in node_ids
+    assert any(e.edge_type == "meta_link" and e.label == "influences" for e in result.edges)
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_max_nodes(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    ids = [f"notion_{i:03d}" for i in range(40)]
+    for nid in ids:
+        related = [rid for rid in ids if rid != nid]
+        store.save(_saved_notion(nid, label=f"N{nid[-3:]}", related_notion_ids=related))
+
+    result = await explore_neighborhood(ids[0], 4, store, _FakeMemoryStore())
+    assert result is not None
+    assert len(result.nodes) <= 30
+
+
+def test_format_neighborhood() -> None:
+    neighborhood = GraphNeighborhood(
+        seed_id="notion_a",
+        seed_type="notion",
+        seed_label="Alpha",
+        nodes=[
+            GraphNode("notion_a", "notion", "Alpha", 0, confidence=0.8, emotion="curious", tags=["tag1"]),
+            GraphNode("notion_b", "notion", "Beta", 1, confidence=0.7, emotion="calm"),
+        ],
+        edges=[GraphEdge("notion_a", "notion_b", "related_notion")],
+    )
+    text = format_neighborhood(neighborhood)
+    assert 'Exploring from "Alpha"' in text
+    assert "[seed]" in text
+    assert '"Beta"' in text
+    assert "2 nodes, 1 edges" in text
+
+
+# ---------------------------------------------------------------------------
+# Network analysis tests (introspect focus=network)
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_network_basic(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion("notion_a", label="A", related_notion_ids=["notion_b"]))
+    store.save(_saved_notion("notion_b", label="B", related_notion_ids=["notion_a", "notion_c"]))
+    store.save(_saved_notion("notion_c", label="C", related_notion_ids=["notion_b"]))
+    store.save(_saved_notion("notion_d", label="D"))
+
+    analysis = analyze_notion_network(store)
+    assert analysis.total_notions == 4
+    assert analysis.total_edges == 2
+    assert len(analysis.clusters) == 1
+    assert analysis.clusters[0].size == 3
+    assert len(analysis.isolated_ids) == 1
+    assert "notion_d" in analysis.isolated_ids
+
+
+def test_analyze_network_bridges(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion("notion_a", label="A", related_notion_ids=["notion_b"]))
+    store.save(_saved_notion("notion_b", label="B", related_notion_ids=["notion_a", "notion_c"]))
+    store.save(_saved_notion("notion_c", label="C", related_notion_ids=["notion_b"]))
+
+    analysis = analyze_notion_network(store)
+    assert "notion_b" in analysis.bridge_ids
+
+
+def test_analyze_network_empty(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    analysis = analyze_notion_network(store)
+    assert analysis.total_notions == 0
+    assert analysis.total_edges == 0
+    assert analysis.clusters == []
+    assert analysis.bridge_ids == []
+    assert analysis.isolated_ids == []
+
+
+def test_analyze_network_all_isolated(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion("notion_a", label="A"))
+    store.save(_saved_notion("notion_b", label="B"))
+    store.save(_saved_notion("notion_c", label="C"))
+
+    analysis = analyze_notion_network(store)
+    assert len(analysis.clusters) == 0
+    assert len(analysis.isolated_ids) == 3
+
+
+def test_analyze_network_meta_edges(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    n_a = _saved_notion("notion_a", label="A")
+    n_a.meta_fields = {"related": {"type": "notion_ids", "notion_ids": ["notion_b"]}}
+    store.save(n_a)
+    store.save(_saved_notion("notion_b", label="B"))
+
+    analysis = analyze_notion_network(store)
+    assert analysis.total_edges == 1
+    assert len(analysis.clusters) == 1
+
+
+def test_analyze_network_convictions(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion(
+        "notion_conv", label="Conviction", confidence=0.8, reinforcement_count=6,
+    ))
+    store.save(_saved_notion("notion_weak", label="Weak", confidence=0.3))
+
+    analysis = analyze_notion_network(store)
+    assert "notion_conv" in analysis.conviction_ids
+    assert "notion_weak" not in analysis.conviction_ids
+
+
+def test_format_network_analysis(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion("notion_a", label="Hub", confidence=0.9, reinforcement_count=7))
+    store.save(_saved_notion("notion_b", label="Isolated"))
+
+    analysis = NetworkAnalysis(
+        total_notions=5,
+        total_edges=3,
+        avg_degree=1.2,
+        clusters=[NotionCluster(
+            notion_ids=["notion_a"], labels=["Hub"],
+            hub_id="notion_a", hub_label="Hub", size=3,
+        )],
+        bridge_ids=["notion_a"],
+        isolated_ids=["notion_b"],
+        conviction_ids=["notion_a"],
+    )
+    text = format_network_analysis(analysis, store)
+    assert "5 notions" in text
+    assert "3 edges" in text
+    assert "Clusters" in text
+    assert "Bridges" in text
+    assert "Isolated" in text
+    assert "Convictions" in text
+
+
+def test_articulation_points_chain() -> None:
+    adjacency = {
+        "a": {"b"},
+        "b": {"a", "c"},
+        "c": {"b"},
+    }
+    aps = _find_articulation_points(adjacency)
+    assert "b" in aps
+
+
+def test_articulation_points_cycle() -> None:
+    adjacency = {
+        "a": {"b", "c"},
+        "b": {"a", "c"},
+        "c": {"a", "b"},
+    }
+    aps = _find_articulation_points(adjacency)
+    assert aps == []
+
+
+def test_connected_components_basic() -> None:
+    adjacency: dict[str, set[str]] = {
+        "a": {"b"},
+        "b": {"a"},
+        "c": set(),
+    }
+    components = _find_connected_components(adjacency)
+    assert len(components) == 2
+    sizes = sorted(len(c) for c in components)
+    assert sizes == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# Dead-link / self-reference hygiene in network analysis
+# ---------------------------------------------------------------------------
+
+
+def test_build_adjacency_drops_dead_links_and_self_refs(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    # notion_a points at a non-existent notion (dead link) and at itself.
+    store.save(_saved_notion(
+        "notion_a", label="A", related_notion_ids=["notion_ghost", "notion_a"],
+    ))
+    adjacency = _build_notion_adjacency(store)
+    # No phantom key for the ghost, no self-edge, only the real notion remains.
+    assert set(adjacency) == {"notion_a"}
+    assert adjacency["notion_a"] == set()
+
+
+def test_analyze_network_ignores_dead_links(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion("notion_a", label="A", related_notion_ids=["notion_ghost"]))
+
+    analysis = analyze_notion_network(store)
+    # The dangling target must not be counted as a node, edge, or cluster member.
+    assert analysis.total_notions == 1
+    assert analysis.total_edges == 0
+    assert analysis.avg_degree == 0.0
+    assert analysis.clusters == []
+    assert analysis.bridge_ids == []
+    assert analysis.isolated_ids == ["notion_a"]
+
+
+def test_analyze_network_dead_link_not_reported_as_bridge(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    # Two real notions both reference the same missing notion. The shared dead
+    # link must not become a phantom hub/bridge connecting them.
+    store.save(_saved_notion("notion_r1", label="R1", related_notion_ids=["notion_ghost"]))
+    store.save(_saved_notion("notion_r2", label="R2", related_notion_ids=["notion_ghost"]))
+
+    analysis = analyze_notion_network(store)
+    assert "notion_ghost" not in analysis.bridge_ids
+    assert analysis.bridge_ids == []
+    assert analysis.clusters == []
+    assert analysis.isolated_ids == ["notion_r1", "notion_r2"]
+
+
+def test_analyze_network_self_loop_is_isolated(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion("notion_d", label="D", related_notion_ids=["notion_d"]))
+
+    analysis = analyze_notion_network(store)
+    assert analysis.isolated_ids == ["notion_d"]
+    assert analysis.clusters == []
+    assert analysis.total_edges == 0
+
+
+def test_analyze_network_dead_meta_link_ignored(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    n_a = _saved_notion("notion_a", label="A")
+    n_a.meta_fields = {"influences": {"type": "notion_ids", "notion_ids": ["notion_gone"]}}
+    store.save(n_a)
+
+    analysis = analyze_notion_network(store)
+    assert analysis.total_notions == 1
+    assert analysis.total_edges == 0
+    assert analysis.isolated_ids == ["notion_a"]
+
+
+# ---------------------------------------------------------------------------
+# explore_neighborhood: back-edges, dedup, truncation, depth header
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_records_back_edges(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    # Mutual link: 1 -> 9 and 9 -> 1. Both directed edges should survive even
+    # though notion_1 is already visited when notion_9 is processed.
+    store.save(_saved_notion("notion_1", label="One", related_notion_ids=["notion_9"]))
+    store.save(_saved_notion("notion_9", label="Nine", related_notion_ids=["notion_1"]))
+
+    result = await explore_neighborhood("notion_1", 3, store, _FakeMemoryStore())
+    assert result is not None
+    pairs = {(e.source_id, e.target_id) for e in result.edges}
+    assert ("notion_1", "notion_9") in pairs
+    assert ("notion_9", "notion_1") in pairs
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_dedupes_edges(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    # The same neighbour listed twice must not produce two identical edges.
+    store.save(_saved_notion(
+        "notion_a", label="A", related_notion_ids=["notion_b", "notion_b"],
+    ))
+    store.save(_saved_notion("notion_b", label="B"))
+
+    result = await explore_neighborhood("notion_a", 1, store, _FakeMemoryStore())
+    assert result is not None
+    ab_edges = [
+        e for e in result.edges
+        if (e.source_id, e.target_id, e.edge_type) == ("notion_a", "notion_b", "related_notion")
+    ]
+    assert len(ab_edges) == 1
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_no_self_edges(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion("notion_a", label="A", related_notion_ids=["notion_a"]))
+
+    result = await explore_neighborhood("notion_a", 2, store, _FakeMemoryStore())
+    assert result is not None
+    assert all(e.source_id != e.target_id for e in result.edges)
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_truncation_flag(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    ids = [f"notion_{i:03d}" for i in range(40)]
+    for nid in ids:
+        related = [rid for rid in ids if rid != nid]
+        store.save(_saved_notion(nid, label=f"N{nid[-3:]}", related_notion_ids=related))
+
+    result = await explore_neighborhood(ids[0], 4, store, _FakeMemoryStore())
+    assert result is not None
+    assert len(result.nodes) <= 30
+    assert result.truncated is True
+    assert "truncated" in format_neighborhood(result)
+
+
+@pytest.mark.asyncio
+async def test_explore_neighborhood_not_truncated_when_complete(tmp_path: Path) -> None:
+    store = NotionStore(tmp_path / "notions.json")
+    store.save(_saved_notion("notion_a", label="A", related_notion_ids=["notion_b"]))
+    store.save(_saved_notion("notion_b", label="B", related_notion_ids=["notion_a"]))
+
+    result = await explore_neighborhood("notion_a", 2, store, _FakeMemoryStore())
+    assert result is not None
+    assert result.truncated is False
+    assert "truncated" not in format_neighborhood(result)
+
+
+def test_format_neighborhood_header_shows_requested_depth() -> None:
+    # Sparse graph reached only depth 1, but the header should report the
+    # requested depth (3), not the max depth actually reached.
+    neighborhood = GraphNeighborhood(
+        seed_id="notion_a",
+        seed_type="notion",
+        seed_label="Alpha",
+        nodes=[
+            GraphNode("notion_a", "notion", "Alpha", 0, confidence=0.8),
+            GraphNode("notion_b", "notion", "Beta", 1, confidence=0.7),
+        ],
+        edges=[GraphEdge("notion_a", "notion_b", "related_notion")],
+        requested_depth=3,
+    )
+    text = format_neighborhood(neighborhood)
+    assert "depth=3" in text

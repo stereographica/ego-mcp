@@ -280,10 +280,10 @@ References:
 |---|---|
 | `wake_up` | Start a session. Returns last introspection + desire summary |
 | `attune` | Unified emotional awareness: texture + desires + interests + body sense |
-| `introspect` | Get reflection materials: emotional layers, desires, open questions |
+| `introspect` | Get reflection materials: emotional layers, desires, open questions (`focus=network` for notion graph topology) |
 | `consider_them` | Think about someone — ToM framework |
 | `remember` | Save a memory with emotion and importance |
-| `recall` | Recall related memories by context |
+| `recall` | Recall related memories by context (`mode=explore` for graph neighborhood) |
 | `pause` | Authenticity self-check |
 
 ### Backend Tools (guided by surface tools)

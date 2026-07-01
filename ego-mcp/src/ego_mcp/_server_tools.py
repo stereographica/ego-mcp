@@ -37,7 +37,18 @@ SURFACE_TOOLS: list[Tool] = [
     Tool(
         name="introspect",
         description="Get self-reflection materials.",
-        inputSchema={"type": "object", "properties": {}, "required": []},
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "focus": {
+                    "type": "string",
+                    "enum": ["default", "network"],
+                    "default": "default",
+                    "description": "default: full self-reflection. network: notion graph topology.",
+                },
+            },
+            "required": [],
+        },
     ),
     Tool(
         name="consider_them",
@@ -116,10 +127,27 @@ SURFACE_TOOLS: list[Tool] = [
                     "type": "string",
                     "description": "Search context.",
                 },
+                "mode": {
+                    "type": "string",
+                    "enum": ["search", "explore"],
+                    "default": "search",
+                    "description": "search: semantic recall. explore: graph neighborhood from a seed.",
+                },
+                "seed": {
+                    "type": "string",
+                    "description": "Notion ID or memory ID to explore from (required when mode=explore).",
+                },
+                "depth": {
+                    "type": "integer",
+                    "default": 2,
+                    "minimum": 1,
+                    "maximum": 4,
+                    "description": "Exploration depth. Only used with mode=explore.",
+                },
                 "n_results": {
                     "type": "integer",
                     "default": 3,
-                    "description": "Results (default 3, max 10)",
+                    "description": "Results (max 10).",
                 },
                 "emotion_filter": {"type": "string"},
                 "category_filter": {"type": "string"},
@@ -144,7 +172,7 @@ SURFACE_TOOLS: list[Tool] = [
                     "maxItems": 2,
                 },
             },
-            "required": ["context"],
+            "required": [],
         },
     ),
     Tool(

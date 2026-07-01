@@ -2148,3 +2148,103 @@ class TestParameterFormatValidation:
         # Downstream handler must not be invoked and desire must not shift.
         assert handler_calls == []
         assert desire.compute_levels()["expression"] == pytest.approx(before)
+
+
+# ---------------------------------------------------------------------------
+# introspect focus=network tests
+# ---------------------------------------------------------------------------
+
+
+class TestIntrospectNetwork:
+    """Tests for introspect with focus=network."""
+
+    @pytest.mark.asyncio
+    async def test_handle_introspect_network_returns_topology(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ego_mcp.notion import NotionStore
+        from ego_mcp.types import Notion
+
+        notion_store = NotionStore(tmp_path / "notions.json")
+        notion_store.save(Notion(
+            id="notion_a", label="Alpha", confidence=0.8,
+            related_notion_ids=["notion_b"],
+        ))
+        notion_store.save(Notion(
+            id="notion_b", label="Beta", confidence=0.7,
+            related_notion_ids=["notion_a"],
+        ))
+        monkeypatch.setattr("ego_mcp._server_surface_core.get_notion_store", lambda: notion_store)
+
+        text = await server_mod._handle_introspect(
+            cast(Any, SimpleNamespace(companion_name="Master", data_dir=tmp_path)),
+            cast(Any, SimpleNamespace()),
+            cast(Any, SimpleNamespace()),
+            {"focus": "network"},
+        )
+        assert "Notion network:" in text
+        assert "2 notions" in text
+
+    @pytest.mark.asyncio
+    async def test_handle_introspect_network_empty_store(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ego_mcp.notion import NotionStore
+
+        notion_store = NotionStore(tmp_path / "notions.json")
+        monkeypatch.setattr("ego_mcp._server_surface_core.get_notion_store", lambda: notion_store)
+
+        text = await server_mod._handle_introspect(
+            cast(Any, SimpleNamespace(companion_name="Master", data_dir=tmp_path)),
+            cast(Any, SimpleNamespace()),
+            cast(Any, SimpleNamespace()),
+            {"focus": "network"},
+        )
+        assert "0 notions" in text
+
+    @pytest.mark.asyncio
+    async def test_handle_introspect_no_args_unchanged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeMemoryStore:
+            async def list_recent(self, n: int = 10) -> list[Memory]:
+                return []
+
+        class FakeDesire:
+            @property
+            def ema_levels(self) -> dict[str, float]:
+                return {}
+
+            def compute_levels_with_modulation(self, **kwargs: Any) -> dict[str, float]:
+                return {}
+
+        async def fake_relationship_snapshot(
+            _config: object, _memory: object, _person: str
+        ) -> str:
+            return "snapshot"
+
+        async def fake_derive_desire_modulation(
+            _memory: object, *_args: Any, **_kwargs: Any,
+        ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+            return {}, {}, {}
+
+        monkeypatch.setattr(server_mod, "_relationship_snapshot", fake_relationship_snapshot)
+        monkeypatch.setattr(server_mod, "_derive_desire_modulation", fake_derive_desire_modulation)
+
+        text = await server_mod._handle_introspect(
+            cast(Any, SimpleNamespace(companion_name="Master", data_dir=tmp_path)),
+            cast(Any, FakeMemoryStore()),
+            cast(Any, FakeDesire()),
+        )
+        # Default introspect should NOT contain network topology output
+        assert "Notion network:" not in text
+        # ...but it MUST still produce the normal self-reflection material, so a
+        # regression that hollowed out the default path would be caught.
+        assert "This week:" in text
+        assert "This month" in text

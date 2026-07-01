@@ -32,8 +32,16 @@ from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_satisfaction import SignalEmbeddingCache, infer_desire_satisfaction
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
-from ego_mcp.notion import update_notion_from_memory
-from ego_mcp.scaffolds import SCAFFOLD_REMEMBER, compose_response
+from ego_mcp.notion import (
+    explore_neighborhood,
+    format_neighborhood,
+    update_notion_from_memory,
+)
+from ego_mcp.scaffolds import (
+    SCAFFOLD_RECALL_EXPLORE,
+    SCAFFOLD_REMEMBER,
+    compose_response,
+)
 
 logger = logging.getLogger(__name__)
 _REMEMBER_DUPLICATE_PREFIX = "Not saved — very similar memory already exists."
@@ -414,12 +422,60 @@ async def _handle_remember(
     return compose_response(data, scaffold)
 
 
+async def _handle_recall_explore(
+    config: EgoConfig, memory: MemoryStore, args: dict[str, Any]
+) -> str:
+    """Explore graph neighborhood from a seed notion or memory."""
+    seed = str(args.get("seed", "")).strip()
+    if not seed:
+        return compose_response(
+            "seed is required for recall (mode=explore).",
+            "Provide a notion_id or memory_id as seed.",
+        )
+    raw_depth = args.get("depth", 2)
+    try:
+        depth = max(1, min(4, int(raw_depth)))
+    except (TypeError, ValueError):
+        depth = 2
+
+    neighborhood = await explore_neighborhood(seed, depth, get_notion_store(), memory)
+    if neighborhood is None:
+        return compose_response(
+            f"Seed not found: {seed}",
+            "Check the ID. Use recall (mode=search) to find memories or curate_notions(action=list) to see notions.",
+        )
+    data = format_neighborhood(neighborhood)
+    _set_tool_context("recall", {
+        "mode": "explore",
+        "seed_id": seed,
+        "seed_type": neighborhood.seed_type,
+        "node_count": len(neighborhood.nodes),
+        "edge_count": len(neighborhood.edges),
+    })
+    update_tool_metadata(
+        mode="explore",
+        seed_id=seed,
+        seed_type=neighborhood.seed_type,
+        node_count=len(neighborhood.nodes),
+        edge_count=len(neighborhood.edges),
+    )
+    return compose_response(data, SCAFFOLD_RECALL_EXPLORE)
+
+
 async def _handle_recall(
     config: EgoConfig, memory: MemoryStore, args: dict[str, Any]
 ) -> str:
     """Recall memories by context."""
     _set_tool_context("recall", {})
-    context = args["context"]
+    mode = args.get("mode", "search")
+    if mode == "explore":
+        return await _handle_recall_explore(config, memory, args)
+    context = args.get("context")
+    if not context:
+        return compose_response(
+            "context is required for recall (mode=search).",
+            "Provide a search context, or use mode=explore with a seed.",
+        )
     raw_n_results = args.get("n_results", 3)
     try:
         n_results = min(int(raw_n_results), 10)

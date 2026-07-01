@@ -52,6 +52,7 @@ uv run python -m ego_mcp
 - After significant experiences: `remember`
 - Periodic self-maintenance: `consolidate` -> if notions feel cluttered `curate_notions`
 - Desire configuration: `configure_desires` (check/show/set_sentence/set_signals)
+- Graph exploration: `recall` (mode=explore, seed=...) for a local neighborhood, `introspect` (focus=network) for notion graph topology
 
 ## dashboard
 

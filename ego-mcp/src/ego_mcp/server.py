@@ -151,10 +151,13 @@ async def _handle_attune(
 
 
 async def _handle_introspect(
-    config: EgoConfig, memory: MemoryStore, desire: DesireEngine
+    config: EgoConfig,
+    memory: MemoryStore,
+    desire: DesireEngine,
+    args: dict[str, Any] | None = None,
 ) -> str:
     _sync_handler_overrides()
-    return await _handlers._handle_introspect(config, memory, desire)
+    return await _handlers._handle_introspect(config, memory, desire, args)
 
 
 async def _handle_consider_them(
@@ -454,7 +457,7 @@ async def _dispatch(
         _safe_satisfy_implicit("attune")
         return result
     elif name == "introspect":
-        result = await _handle_introspect(config, memory, desire)
+        result = await _handle_introspect(config, memory, desire, args)
         _safe_satisfy_implicit("introspect")
         return result
     elif name == "consider_them":

@@ -2,6 +2,26 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [1.3.0] - 2026-06-03
+
+### Added
+- ego-mcp: `recall` に graph exploration モード (`mode=explore`) を追加 — `seed`（notion_id / memory_id）を起点に関連 notion・memory を BFS で `depth`（1–4, default 2）ホップまで辿り、近傍グラフ（双方向 back-edge やサイクルを含む）を構造化テキストで返す。最大 30 ノードで打ち切り、打ち切り時はその旨を明示する
+- ego-mcp: `introspect` に `focus=network` を追加 — notion グラフのトポロジ要約（クラスタ + ハブ、bridge = articulation point、孤立 notion、conviction）を返す。dead-link（存在しない notion への参照）と自己参照は実トポロジから除外する
+- ego-mcp: `recall`(mode=explore) のテレメトリに `mode` / `seed_id` / `seed_type` / `node_count` / `edge_count` を出力
+
+### Changed
+- バージョンアップ: ego-mcp `1.2.0` → `1.3.0`
+
+## [1.2.0] - 2026-05-04
+
+### Added
+- ego-mcp: Notion に `meta_fields`（`text` / `file_path` / `notion_ids` 型）を追加し、migration `0009_notion_meta_fields` で既存データを拡張。`curate_notions` に `add_meta` / `update_meta` / `remove_meta` アクションを追加
+- dashboard: Relationships タブのチャート tooltip にタイムスタンプを表示
+
+### Fixed
+- ego-mcp: migration `0009` が legacy list 形式を常に変換するよう修正。`merge_notions` が self-referential な `notion_ids` を除去し、malformed な `meta_fields` を安全に扱うよう修正
+- dashboard: Now タブの relationship データを file-based ソースから取得するよう修正
+
 ## [1.1.0] - 2026-04-29
 
 ### Added
