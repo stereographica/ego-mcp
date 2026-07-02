@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -785,8 +786,9 @@ class TestAttunePersonOption:
             result = asyncio.run(attune_mod._handle_attune(config, mem_store, {"person": "Alice"}, engine))
             # Should contain Alice's relationship snapshot
             assert "Regarding Alice:" in result
-            assert "trust 0.7" in result
-            assert "42 interactions" in result
+            line = next(line for line in result.splitlines() if line.startswith("Regarding Alice:"))
+            assert line == "Regarding Alice: deep trust; a growing history."
+            assert re.search(r"\d", line) is None
 
     def test_attune_resolves_alias(self, tmp_path: Path) -> None:
         """alias 指定で canonical name に解決される."""

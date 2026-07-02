@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -235,10 +236,11 @@ class TestRelationshipSnapshot:
         mem.list_recent = AsyncMock(return_value=[])
         result = await _relationship_snapshot(config, mem, "TestUser")
         assert "TestUser" in result
-        assert "trust=" in result
+        assert "steady ground between you" in result
+        assert "trust=" not in result
 
     @pytest.mark.asyncio
-    async def test_snapshot_words_last_interaction_and_recent_frequency(
+    async def test_snapshot_words_relationship_without_digits(
         self,
         config: EgoConfig,
         monkeypatch: pytest.MonkeyPatch,
@@ -248,18 +250,57 @@ class TestRelationshipSnapshot:
         store = RelationshipStore(config.data_dir / "relationships" / "models.json")
         store.update(
             "TestUser",
-            {"last_interaction": "2026-06-11T12:00:00+00:00"},
+            {
+                "trust_level": 0.52,
+                "first_interaction": "2026-06-01T12:00:00+00:00",
+                "last_interaction": "2026-06-11T12:00:00+00:00",
+                "total_interactions": 12,
+                "shared_episode_ids": ["ep-alpha", "ep-beta", "ep-gamma"],
+            },
         )
         mem = AsyncMock()
-        mem.list_recent = AsyncMock(return_value=[])
+        mem.list_recent = AsyncMock(
+            return_value=[
+                _make_conversation_at(
+                    "TestUser asked about code",
+                    now - timedelta(days=1),
+                )
+            ]
+        )
 
         result = await _relationship_snapshot(config, mem, "TestUser")
 
-        assert "last_interaction=about three weeks ago" in result
-        assert "last_interaction=2026" not in result
-        assert "recent_frequency=no recent conversation memories" in result
+        assert result == (
+            "TestUser: steady ground between you; "
+            "a growing history, a few shared chapters; "
+            "usually calm between you; "
+            "last shared moment about three weeks ago; "
+            "they've come up once or twice this week."
+        )
+        assert re.search(r"\d", result) is None
+        assert "trust=" not in result
+        assert "interactions=" not in result
+        assert "shared_episodes=" not in result
+        assert "last_interaction=" not in result
+        assert "recent_frequency=" not in result
         assert "mentions in last 7d" not in result
         assert "conversations in last 7d" not in result
+
+    @pytest.mark.asyncio
+    async def test_snapshot_omits_empty_episode_and_last_interaction_clauses(
+        self,
+        config: EgoConfig,
+    ) -> None:
+        mem = AsyncMock()
+        mem.list_recent = AsyncMock(return_value=[])
+
+        result = await _relationship_snapshot(config, mem, "Stranger")
+
+        assert result.startswith(
+            "Stranger: steady ground between you; still new to each other"
+        )
+        assert "shared chapters" not in result
+        assert "last shared moment" not in result
 
 
 class TestSummarizeConversationTendencyFrequencyWords:

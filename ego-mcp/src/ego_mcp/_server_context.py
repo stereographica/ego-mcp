@@ -13,6 +13,7 @@ from ego_mcp.absence import approx_duration_words
 from ego_mcp.config import EgoConfig
 from ego_mcp.memory import MemoryStore
 from ego_mcp.relationship import RelationshipStore
+from ego_mcp.relationship_wording import episode_words, history_words, trust_words
 from ego_mcp.self_model import (
     QUESTION_ACTIVE_MIN_SALIENCE,
     QUESTION_DORMANT_MAX_SALIENCE,
@@ -129,7 +130,7 @@ def _frequency_words(last_7d: int, *, matched_person: bool) -> str:
     return "a talkative week"
 
 
-def _last_interaction_words(timestamp: str) -> str:
+def _last_interaction_words(timestamp: str, now: datetime) -> str:
     try:
         parsed = datetime.fromisoformat(timestamp)
     except ValueError:
@@ -137,7 +138,7 @@ def _last_interaction_words(timestamp: str) -> str:
     parsed = timezone_utils.localize(parsed)
     elapsed_days = max(
         0.0,
-        (timezone_utils.now() - parsed).total_seconds() / 86400.0,
+        (now - parsed).total_seconds() / 86400.0,
     )
     return f"{approx_duration_words(elapsed_days)} ago"
 
@@ -211,21 +212,23 @@ async def _relationship_snapshot(
     """Build a compact relationship summary line for surface tools."""
     store = _relationship_store(config)
     rel = store.get(person)
+    now = timezone_utils.now()
     frequency, dominant_tone, _, _ = await _summarize_conversation_tendency(
         memory, person
     )
-    parts = [
-        f"{person}: trust={rel.trust_level:.2f}",
-        f"interactions={rel.total_interactions}",
-        f"shared_episodes={len(rel.shared_episode_ids)}",
-        f"dominant_tone={dominant_tone}",
+    clauses = [
+        trust_words(rel.trust_level),
+        history_words(rel.first_interaction, rel.total_interactions, now),
     ]
+    if rel.shared_episode_ids:
+        clauses[-1] += f", {episode_words(len(rel.shared_episode_ids))}"
+    clauses.append(f"usually {dominant_tone} between you")
     if rel.last_interaction:
-        last_interaction = _last_interaction_words(rel.last_interaction)
+        last_interaction = _last_interaction_words(rel.last_interaction, now)
         if last_interaction:
-            parts.append(f"last_interaction={last_interaction}")
-    parts.append(f"recent_frequency={frequency}")
-    return ", ".join(parts)
+            clauses.append(f"last shared moment {last_interaction}")
+    clauses.append(frequency)
+    return f"{person}: " + "; ".join(clauses) + "."
 
 
 async def _derive_desire_modulation(

@@ -314,7 +314,7 @@ class TestWakeUp:
         result = await _call(
             "wake_up", {}, config, memory, desire, episodes, consolidation
         )
-        assert "trust=0.82" in result
+        assert "deep trust" in result
 
     @pytest.mark.asyncio
     async def test_prefers_workspace_latest_introspection(
@@ -594,7 +594,7 @@ class TestIntrospect:
             "introspect", {}, config, memory, desire, episodes, consolidation
         )
         assert "Self model:" in result
-        assert "Master: trust=" in result
+        assert "Master: steady ground between you" in result
         assert "[high]" not in result
         assert "[mid]" not in result
         assert "[low]" not in result
@@ -642,7 +642,7 @@ class TestConsiderThem:
         result = await _call(
             "consider_them", {}, config, memory, desire, episodes, consolidation
         )
-        assert "trust=0.91" in result
+        assert "the kind of trust you don't need to name" in result
         assert "Recent dialog tendency" in result
 
     @pytest.mark.asyncio
@@ -1974,7 +1974,7 @@ class TestUpdateRelationship:
             episodes,
             consolidation,
         )
-        assert "trust=0.90" in consider
+        assert "the kind of trust you don't need to name" in consider
 
     @pytest.mark.asyncio
     async def test_invalid_field_returns_error(

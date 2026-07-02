@@ -44,6 +44,7 @@ from ego_mcp.desire import (
 from ego_mcp.desire_blend import blend_desires
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
+from ego_mcp.relationship_wording import history_words, trust_words
 from ego_mcp.scaffolds import SCAFFOLD_ATTUNE, compose_response, render
 from ego_mcp.self_model import SelfModelStore
 from ego_mcp.types import Memory, Notion
@@ -309,8 +310,8 @@ async def _handle_attune(
             if rel and rel.name:
                 sections.insert(
                     len(sections) - 1 if active_persons else len(sections),
-                    f"Regarding {rel.name}: trust {rel.trust_level:.1f}, "
-                    f"{rel.total_interactions} interactions.",
+                    f"Regarding {rel.name}: {trust_words(rel.trust_level)}; "
+                    f"{history_words(rel.first_interaction, rel.total_interactions, now)}.",
                 )
         except Exception:
             pass

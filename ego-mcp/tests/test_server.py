@@ -391,8 +391,10 @@ class TestImplicitSatisfactionFromServer:
         store = server_mod._relationship_store(config)
         rel = store.get("Master")
 
-        assert "interactions=0" in first
-        assert "interactions=0" in second
+        assert "still new to each other" in first
+        assert "still new to each other" in second
+        assert "interactions=" not in first
+        assert "interactions=" not in second
         assert rel.total_interactions == 0
 
     @pytest.mark.asyncio

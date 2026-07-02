@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -259,7 +260,7 @@ class TestHandleConsiderThem:
         mem.list_recent = AsyncMock(return_value=[])
         result = await _handle_consider_them(config, mem, {})
 
-        assert "last_interaction=about two weeks ago" in result
+        assert "last shared moment about two weeks ago" in result
         assert (
             "It's been about about two weeks since you last shared something "
             "with TestUser."
@@ -271,6 +272,56 @@ class TestHandleConsiderThem:
         )
         reloaded = RelationshipStore(config.data_dir / "relationships" / "models.json")
         assert reloaded.get("TestUser").total_interactions == 1
+
+    @pytest.mark.asyncio
+    async def test_summary_words_relationship_numbers_and_preserves_topic_fields(
+        self,
+        config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update(
+            "TestUser",
+            {
+                "trust_level": 0.85,
+                "first_interaction": "2026-01-01T12:00:00+00:00",
+                "last_interaction": "2026-06-11T12:00:00+00:00",
+                "total_interactions": 42,
+                "shared_episode_ids": ["ep-a", "ep-b", "ep-c", "ep-d"],
+                "emotional_baseline": {"warm": 0.7},
+            },
+        )
+
+        async def fake_tendency(
+            _mem: object,
+            _person: str,
+        ) -> tuple[str, str, list[str], list[str]]:
+            return "they've come up once or twice this week", "curious", [
+                "technical",
+            ], ["health"]
+
+        monkeypatch.setattr(core_mod, "_summarize_conversation_tendency", fake_tendency)
+        mock_store = MagicMock()
+        mock_store.list_all.return_value = []
+        monkeypatch.setattr(core_mod, "get_notion_store", lambda: mock_store)
+
+        mem = AsyncMock()
+        result = await _handle_consider_them(config, mem, {})
+        summary = result.splitlines()[0]
+
+        assert summary == (
+            "TestUser: the kind of trust you don't need to name; "
+            "a long history together, many shared chapters, "
+            "preferred_topics=technical, sensitive_topics=health, "
+            "last shared moment about three weeks ago, baseline_tone=warm"
+        )
+        assert "trust=" not in summary
+        assert "interactions=" not in summary
+        assert "shared_episodes=" not in summary
+        assert "last_interaction=" not in summary
+        assert re.search(r"\d", summary) is None
 
     @pytest.mark.asyncio
     async def test_usual_absence_frame_is_not_shown(
@@ -650,6 +701,41 @@ class TestConsiderThemPersonTelemetry:
         meta = get_tool_metadata()
         assert meta is not None
         assert meta.get("trust_level") is not None
+
+    @pytest.mark.asyncio
+    async def test_numeric_relationship_metadata_is_preserved(
+        self,
+        config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Relationship wording does not change telemetry fields."""
+        reset_tool_metadata()
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update(
+            "alice",
+            {
+                "trust_level": 0.74,
+                "total_interactions": 8,
+                "shared_episode_ids": ["a", "b", "c", "d"],
+            },
+        )
+
+        async def fake_tendency(
+            _mem: object,
+            _person: str,
+        ) -> tuple[str, str, list[str], list[str]]:
+            return "occasional", "neutral", [], []
+
+        monkeypatch.setattr(core_mod, "_summarize_conversation_tendency", fake_tendency)
+        mem = AsyncMock()
+        result = await _handle_consider_them(config, mem, {"person": "alice"})
+        assert result is not None
+
+        meta = get_tool_metadata()
+        assert meta["person_id"] == "alice"
+        assert meta["trust_level"] == 0.74
+        assert meta["total_interactions"] == 8
+        assert meta["shared_episodes_count"] == 4
 
 
 class TestActivePersonsTelemetry:

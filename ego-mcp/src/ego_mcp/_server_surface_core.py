@@ -56,6 +56,7 @@ from ego_mcp.notion import (
     is_conviction,
 )
 from ego_mcp.proust import find_proust_memory
+from ego_mcp.relationship_wording import episode_words, history_words, trust_words
 from ego_mcp.scaffolds import (
     SCAFFOLD_CONSIDER_THEM,
     SCAFFOLD_INTROSPECT,
@@ -778,11 +779,13 @@ async def _handle_consider_them(
         inferred_sensitive_topics,
     )
 
+    now = timezone_utils.now()
     relationship_summary = (
-        f"{person}: trust={rel.trust_level:.2f}, "
-        f"interactions={rel.total_interactions}, "
-        f"shared_episodes={len(rel.shared_episode_ids)}"
+        f"{person}: {trust_words(rel.trust_level)}; "
+        f"{history_words(rel.first_interaction, rel.total_interactions, now)}"
     )
+    if rel.shared_episode_ids:
+        relationship_summary += f", {episode_words(len(rel.shared_episode_ids))}"
     if preferred_topics:
         relationship_summary += (
             f", preferred_topics={','.join(preferred_topics[:2])}"
@@ -792,9 +795,9 @@ async def _handle_consider_them(
             f", sensitive_topics={','.join(sensitive_topics[:2])}"
         )
     if rel.last_interaction:
-        last_interaction = _last_interaction_words(rel.last_interaction, timezone_utils.now())
+        last_interaction = _last_interaction_words(rel.last_interaction, now)
         if last_interaction:
-            relationship_summary += f", last_interaction={last_interaction}"
+            relationship_summary += f", last shared moment {last_interaction}"
     if rel.emotional_baseline:
         baseline_tone = max(
             rel.emotional_baseline.items(),
@@ -803,7 +806,7 @@ async def _handle_consider_them(
         relationship_summary += f", baseline_tone={baseline_tone}"
 
     tendency = f"Recent dialog tendency: {frequency}, observed_tone={dominant_tone}"
-    band, elapsed_days = absence_band(store.raw(person), timezone_utils.now())
+    band, elapsed_days = absence_band(store.raw(person), now)
     absence_frame = ""
     if band in ("quiet", "long"):
         name = rel.name if rel and rel.name else person
