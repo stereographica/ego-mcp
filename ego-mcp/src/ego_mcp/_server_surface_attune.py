@@ -22,6 +22,11 @@ from ego_mcp._server_surface_person import (
     _format_active_persons,
     _get_active_person_ids,
 )
+from ego_mcp.absence import (
+    ABSENCE_SOCIAL_THIRST_BOOST,
+    absence_band,
+    approx_duration_words,
+)
 from ego_mcp.anticipation import (
     format_approaching_anticipation,
     format_arrived_anticipation,
@@ -220,6 +225,32 @@ async def _handle_attune(
         )
         curiosity_tonus_applied = True
 
+    absence_line = ""
+    absence_band_value: str | None = None
+    absence_social_thirst_boost: str | None = None
+    try:
+        band, elapsed_days = absence_band(_ws.raw(person), now)
+        absence_band_value = band
+        if band in ("quiet", "long"):
+            rel = _ws.get(person)
+            name = rel.name if rel and rel.name else person
+            elapsed_words = approx_duration_words(elapsed_days)
+            absence_line = (
+                f"It's been quieter than usual with {name} — "
+                f"about {elapsed_words}."
+            )
+            if band == "long" and "social_thirst" in levels:
+                levels["social_thirst"] = round(
+                    min(
+                        1.0,
+                        levels["social_thirst"] + ABSENCE_SOCIAL_THIRST_BOOST,
+                    ),
+                    3,
+                )
+                absence_social_thirst_boost = f"{ABSENCE_SOCIAL_THIRST_BOOST:.2f}"
+    except Exception:
+        pass
+
     desire_text = blend_desires(
         levels,
         ema_levels=desire.ema_levels,
@@ -256,9 +287,12 @@ async def _handle_attune(
 
     if body_text:
         sections.append(f"Body sense: {body_text}")
+    if absence_line:
+        sections.append(absence_line)
 
     # Active persons
     _active_person_ids: list[str] = []
+    active_persons = ""
     try:
         _ws = _relationship_store(config)
         active_persons = _format_active_persons(_ws, max_persons=2)
@@ -289,6 +323,9 @@ async def _handle_attune(
         curiosity_tonus_boost=(
             f"{CURIOSITY_TONUS_BOOST:.2f}" if curiosity_tonus_applied else None
         ),
+        absence_band=absence_band_value,
+        absence_person=person if absence_band_value is not None else None,
+        absence_social_thirst_boost=absence_social_thirst_boost,
         attune_person=person,
         active_person_ids=json.dumps(_active_person_ids) if _active_person_ids else None,
     )

@@ -11,6 +11,8 @@ from typing import Any
 from ego_mcp import timezone_utils
 from ego_mcp.types import RelationshipModel
 
+INTERACTION_LOG_MAX = 200
+
 _UPDATABLE_FIELDS = frozenset(
     field.name
     for field in dataclasses.fields(RelationshipModel)
@@ -72,6 +74,9 @@ class RelationshipStore:
     def _get_raw(self, person_id: str) -> dict[str, Any]:
         return dict(self._data.get(person_id, self._default_model(person_id)))
 
+    def raw(self, person_id: str) -> dict[str, Any]:
+        return self._get_raw(person_id)
+
     def get(self, person_id: str) -> RelationshipModel:
         raw = self._get_raw(person_id)
         return RelationshipModel(
@@ -123,9 +128,9 @@ class RelationshipStore:
         interaction_log = raw.get("interaction_log", [])
         if not isinstance(interaction_log, list):
             interaction_log = []
+        raw["total_interactions"] = int(raw.get("total_interactions", 0) or 0) + 1
         interaction_log.append({"timestamp": timestamp, "tone": tone})
-        raw["interaction_log"] = interaction_log
-        raw["total_interactions"] = len(interaction_log)
+        raw["interaction_log"] = interaction_log[-INTERACTION_LOG_MAX:]
 
         if not raw.get("first_interaction"):
             raw["first_interaction"] = timestamp
@@ -146,6 +151,32 @@ class RelationshipStore:
         self._data[person_id] = raw
         self._save()
         return self.get(person_id)
+
+    def set_reunion_note(
+        self,
+        person_id: str,
+        *,
+        gap_days: float,
+        noted_at: str,
+    ) -> None:
+        raw = self._get_raw(person_id)
+        raw["reunion_note"] = {
+            "gap_days": gap_days,
+            "noted_at": noted_at,
+            "wake_up_shown": False,
+        }
+        self._data[person_id] = raw
+        self._save()
+
+    def mark_reunion_wake_up_shown(self, person_id: str) -> None:
+        raw = self._get_raw(person_id)
+        note = raw.get("reunion_note")
+        if not isinstance(note, dict):
+            return
+        note["wake_up_shown"] = True
+        raw["reunion_note"] = note
+        self._data[person_id] = raw
+        self._save()
 
     def add_shared_episode(self, person_id: str, episode_id: str) -> RelationshipModel:
         raw = self._get_raw(person_id)
@@ -200,4 +231,3 @@ class RelationshipStore:
             if isinstance(aliases, list) and query in aliases:
                 return pid
         return None
-

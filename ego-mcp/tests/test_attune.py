@@ -19,6 +19,7 @@ from ego_mcp._server_surface_attune import (
 )
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
+from ego_mcp.relationship import RelationshipStore
 from ego_mcp.types import Category, Emotion, EmotionalTrace, Memory
 
 
@@ -475,6 +476,98 @@ class TestHandleAttune:
         )
         result = await _handle_attune(config, mem_store, {}, engine)
         assert "This keeps coming back" not in result
+
+
+class TestAttuneAbsence:
+    @pytest.mark.asyncio
+    async def test_quiet_absence_line_after_body_sense_without_counting_interaction(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update("TestUser", {"name": "TestUser"})
+        store.add_interaction("TestUser", "2026-06-18T12:00:00+00:00", "calm")
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert "Body sense:" in result
+        assert (
+            "It's been quieter than usual with TestUser — about about two weeks."
+            in result
+        )
+        assert result.index("Body sense:") < result.index(
+            "It's been quieter than usual"
+        )
+        reloaded = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        assert reloaded.get("TestUser").total_interactions == 1
+        assert get_tool_metadata().get("absence_band") == "quiet"
+        assert get_tool_metadata().get("absence_person") == "TestUser"
+        assert "absence_social_thirst_boost" not in get_tool_metadata()
+
+    @pytest.mark.asyncio
+    async def test_long_absence_boosts_social_thirst_and_clips(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_surface_attune as attune_mod
+
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update("TestUser", {"name": "TestUser"})
+        store.add_interaction("TestUser", "2026-06-01T12:00:00+00:00", "calm")
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"social_thirst": 0.97},
+        )
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            attune_mod,
+            "update_tool_metadata",
+            lambda **kwargs: captured.update(kwargs),
+        )
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert (
+            "It's been quieter than usual with TestUser — about about a month."
+            in result
+        )
+        assert captured["absence_band"] == "long"
+        assert captured["absence_social_thirst_boost"] == "0.08"
+        assert captured["desire_levels"] == {"social_thirst": 1.0}
+
+    @pytest.mark.asyncio
+    async def test_usual_absence_band_stays_silent(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update("TestUser", {"name": "TestUser"})
+        store.add_interaction("TestUser", "2026-06-25T12:00:00+00:00", "calm")
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert "It's been quieter than usual" not in result
+        reloaded = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        assert reloaded.get("TestUser").total_interactions == 1
+        assert get_tool_metadata().get("absence_band") == "usual"
 
 
 class TestHasOlderMemoryEcho:

@@ -37,6 +37,7 @@ from ego_mcp._server_surface_person import (
     _format_active_persons,
     _get_active_person_ids,
 )
+from ego_mcp.absence import absence_band, approx_duration_words
 from ego_mcp.anticipation import (
     format_approaching_anticipation,
     format_arrived_anticipation,
@@ -121,6 +122,55 @@ def _call_get_body_state() -> dict[str, Any]:
     if _get_body_state_override is not None:
         return _get_body_state_override()
     return get_body_state()
+
+
+def _last_interaction_words(timestamp: str, now: datetime) -> str:
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return ""
+    parsed = timezone_utils.localize(parsed)
+    elapsed_days = max(0.0, (now - parsed).total_seconds() / 86400.0)
+    return f"{approx_duration_words(elapsed_days)} ago"
+
+
+def _parse_reunion_noted_at(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    return timezone_utils.localize(parsed)
+
+
+def _pending_reunion_note(store: Any) -> tuple[str, dict[str, Any]] | None:
+    candidates: list[tuple[datetime, str, dict[str, Any]]] = []
+    raw_data = getattr(store, "_data", {})
+    if not isinstance(raw_data, dict):
+        return None
+    for person_id, raw in raw_data.items():
+        if not isinstance(person_id, str) or not isinstance(raw, dict):
+            continue
+        note = raw.get("reunion_note")
+        if not isinstance(note, dict) or note.get("wake_up_shown") is True:
+            continue
+        noted_at = _parse_reunion_noted_at(note.get("noted_at"))
+        if noted_at is None:
+            continue
+        candidates.append((noted_at, person_id, note))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    _, person_id, note = candidates[0]
+    return person_id, note
+
+
+def _reunion_gap_days(note: dict[str, Any]) -> float:
+    try:
+        return max(0.0, float(note.get("gap_days", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _merge_topic_hints(*topic_groups: list[str]) -> list[str]:
@@ -442,11 +492,25 @@ async def _handle_wake_up(
         config, memory, config.companion_name
     )
     parts.append(relationship_line)
+    try:
+        reunion_store = _relationship_store(config)
+        pending_reunion = _pending_reunion_note(reunion_store)
+        if pending_reunion is not None:
+            person_id, note = pending_reunion
+            rel = reunion_store.get(person_id)
+            name = rel.name if rel and rel.name else person_id
+            gap_words = approx_duration_words(_reunion_gap_days(note))
+            parts.append(
+                f"Reunited with {name} recently — "
+                f"the first shared moment in about {gap_words}."
+            )
+            reunion_store.mark_reunion_wake_up_shown(person_id)
+    except Exception:
+        pass
 
     # 7. Active persons
     _active_person_ids: list[str] = []
     try:
-        from ego_mcp._server_context import _relationship_store
         _ws = _relationship_store(config)
         active_persons = _format_active_persons(_ws, max_persons=2)
         if active_persons:
@@ -728,7 +792,9 @@ async def _handle_consider_them(
             f", sensitive_topics={','.join(sensitive_topics[:2])}"
         )
     if rel.last_interaction:
-        relationship_summary += f", last_interaction={rel.last_interaction[:10]}"
+        last_interaction = _last_interaction_words(rel.last_interaction, timezone_utils.now())
+        if last_interaction:
+            relationship_summary += f", last_interaction={last_interaction}"
     if rel.emotional_baseline:
         baseline_tone = max(
             rel.emotional_baseline.items(),
@@ -737,18 +803,27 @@ async def _handle_consider_them(
         relationship_summary += f", baseline_tone={baseline_tone}"
 
     tendency = f"Recent dialog tendency: {frequency}, observed_tone={dominant_tone}"
+    band, elapsed_days = absence_band(store.raw(person), timezone_utils.now())
+    absence_frame = ""
+    if band in ("quiet", "long"):
+        name = rel.name if rel and rel.name else person
+        elapsed_words = approx_duration_words(elapsed_days)
+        absence_frame = (
+            f"It's been about {elapsed_words} since you last shared something with {name}.\n"
+            "They may have changed in that time. What would you want to ask first?"
+        )
     recent_moods = rel.recent_mood_trajectory[-3:]
+    data_lines = [relationship_summary, tendency]
     if recent_moods:
         mood_tail = " > ".join(
             str(item.get("mood", "unknown"))
             for item in recent_moods
             if isinstance(item, dict)
         )
-        data = (
-            f"{relationship_summary}\n{tendency}\nRecent mood trajectory: {mood_tail}"
-        )
-    else:
-        data = f"{relationship_summary}\n{tendency}"
+        data_lines.append(f"Recent mood trajectory: {mood_tail}")
+    if absence_frame:
+        data_lines.append(absence_frame)
+    data = "\n".join(data_lines)
     person_notions = sorted(
         (
             notion for notion in _list_notions_safe() if notion.person_id == person

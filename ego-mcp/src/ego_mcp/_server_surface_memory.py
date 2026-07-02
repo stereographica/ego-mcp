@@ -27,6 +27,7 @@ from ego_mcp._server_runtime import (
     update_tool_metadata,
 )
 from ego_mcp._server_surface_person import _collect_resonant_persons
+from ego_mcp.absence import absence_band, approx_duration_words
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_satisfaction import SignalEmbeddingCache, infer_desire_satisfaction
@@ -310,6 +311,7 @@ async def _handle_remember(
         shared_with = list(dict.fromkeys(canonicalized))
 
     shared_episode_section = ""
+    reunion_section = ""
     if shared_with:
         related_ids: list[str] = []
         if isinstance(related_memories_raw, list):
@@ -347,10 +349,35 @@ async def _handle_remember(
                     )
             except (AttributeError, TypeError, KeyError, ValueError) as exc:
                 logger.debug("involved_person_ids persist failed (non-fatal): %s", exc)
+            relationship_store = _relationship_store(config)
+            interaction_now = timezone_utils.now()
+            interaction_now_iso = interaction_now.isoformat()
+            reunion_tone = mem.emotional_trace.primary.value
+            for person in shared_with:
+                band, elapsed_days = absence_band(
+                    relationship_store.raw(person),
+                    interaction_now,
+                )
+                relationship_store.add_interaction(
+                    person,
+                    mem.timestamp,
+                    tone=reunion_tone,
+                )
+                if band in ("quiet", "long"):
+                    relationship_store.set_reunion_note(
+                        person,
+                        gap_days=elapsed_days,
+                        noted_at=interaction_now_iso,
+                    )
+                    if not reunion_section:
+                        elapsed_words = approx_duration_words(elapsed_days)
+                        reunion_section = (
+                            "A shared moment after a while — "
+                            f"about {elapsed_words} since the last."
+                        )
             try:
                 episode_store = get_episodes()
                 episode = await episode_store.create(related_ids, summary)
-                relationship_store = _relationship_store(config)
                 for person in shared_with:
                     relationship_store.add_shared_episode(person, episode.id)
                 shared_episode_section = (
@@ -404,6 +431,8 @@ async def _handle_remember(
         data_parts.append(forgotten_section.strip())
     if shared_episode_section:
         data_parts.append(shared_episode_section.strip())
+    if reunion_section:
+        data_parts.append(reunion_section)
     if desire_settling_section:
         data_parts.append(desire_settling_section)
     if anticipation_note:

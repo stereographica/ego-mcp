@@ -24,6 +24,7 @@ from ego_mcp._server_surface_core import (
     _sanitize_impulse_event,
 )
 from ego_mcp.config import EgoConfig
+from ego_mcp.relationship import RelationshipStore
 from ego_mcp.self_model import SelfModelStore
 from ego_mcp.types import Emotion, Memory, Notion
 
@@ -238,6 +239,60 @@ class TestHandleConsiderThem:
         result = await _handle_consider_them(config, mem, {})
         assert "Always curious" in result
         assert "Impressions of TestUser:" in result
+
+    @pytest.mark.asyncio
+    async def test_quiet_absence_frame_is_shown_without_counting_interaction(
+        self,
+        config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update("TestUser", {"name": "TestUser"})
+        store.add_interaction("TestUser", "2026-06-18T12:00:00+00:00", "calm")
+        mock_store = MagicMock()
+        mock_store.list_all.return_value = []
+        monkeypatch.setattr(core_mod, "get_notion_store", lambda: mock_store)
+
+        mem = AsyncMock()
+        mem.list_recent = AsyncMock(return_value=[])
+        result = await _handle_consider_them(config, mem, {})
+
+        assert "last_interaction=about two weeks ago" in result
+        assert (
+            "It's been about about two weeks since you last shared something "
+            "with TestUser."
+            in result
+        )
+        assert (
+            "They may have changed in that time. What would you want to ask first?"
+            in result
+        )
+        reloaded = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        assert reloaded.get("TestUser").total_interactions == 1
+
+    @pytest.mark.asyncio
+    async def test_usual_absence_frame_is_not_shown(
+        self,
+        config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.add_interaction("TestUser", "2026-06-25T12:00:00+00:00", "calm")
+        mock_store = MagicMock()
+        mock_store.list_all.return_value = []
+        monkeypatch.setattr(core_mod, "get_notion_store", lambda: mock_store)
+
+        mem = AsyncMock()
+        mem.list_recent = AsyncMock(return_value=[])
+        result = await _handle_consider_them(config, mem, {})
+
+        assert "They may have changed in that time" not in result
+        reloaded = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        assert reloaded.get("TestUser").total_interactions == 1
 
 
 class TestHandleIntrospect:
@@ -472,6 +527,83 @@ class TestHandleWakeUpAnticipation:
 
         assert 'Approaching: "private future note" (within a day).' in result
         assert "anticipation_presented" not in get_tool_metadata()
+
+
+class TestHandleWakeUpReunion:
+    @pytest.mark.asyncio
+    async def test_reunion_note_is_shown_once_and_marked(
+        self,
+        config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update("alice", {"name": "Alice"})
+        store.set_reunion_note(
+            "alice",
+            gap_days=21.0,
+            noted_at=now.isoformat(),
+        )
+        memory = _FakeWakeMemory([])
+
+        first = await _handle_wake_up(
+            config,
+            cast(Any, memory),
+            cast(Any, _FakeWakeDesire()),
+        )
+        second = await _handle_wake_up(
+            config,
+            cast(Any, memory),
+            cast(Any, _FakeWakeDesire()),
+        )
+
+        assert (
+            "Reunited with Alice recently — the first shared moment in "
+            "about about three weeks."
+            in first
+        )
+        assert "Reunited with Alice recently" not in second
+        reloaded = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        assert reloaded.raw("alice")["reunion_note"]["wake_up_shown"] is True
+
+    @pytest.mark.asyncio
+    async def test_multiple_reunion_notes_are_shown_latest_first_one_per_wake(
+        self,
+        config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update("alice", {"name": "Alice"})
+        store.update("bob", {"name": "Bob"})
+        store.set_reunion_note(
+            "alice",
+            gap_days=14.0,
+            noted_at=(now - timedelta(hours=1)).isoformat(),
+        )
+        store.set_reunion_note(
+            "bob",
+            gap_days=31.0,
+            noted_at=now.isoformat(),
+        )
+        memory = _FakeWakeMemory([])
+
+        first = await _handle_wake_up(
+            config,
+            cast(Any, memory),
+            cast(Any, _FakeWakeDesire()),
+        )
+        second = await _handle_wake_up(
+            config,
+            cast(Any, memory),
+            cast(Any, _FakeWakeDesire()),
+        )
+
+        assert "Reunited with Bob recently" in first
+        assert "Reunited with Alice recently" not in first
+        assert "Reunited with Alice recently" in second
 
 
 class TestConsiderThemPersonTelemetry:

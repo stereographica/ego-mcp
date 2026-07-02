@@ -24,6 +24,7 @@ from ego_mcp._server_surface_memory import (
 from ego_mcp._server_tools import SURFACE_TOOLS
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
+from ego_mcp.relationship import RelationshipStore
 from ego_mcp.types import (
     Category,
     Emotion,
@@ -161,6 +162,25 @@ def mock_memory() -> AsyncMock:
     mem.save_with_auto_link = AsyncMock(return_value=(saved, 0, [], None))
     mem.get_by_id = AsyncMock(return_value=saved)
     return mem
+
+
+def _memory_saving(saved: Memory) -> AsyncMock:
+    memory = AsyncMock()
+    memory.save_with_auto_link = AsyncMock(return_value=(saved, 0, [], None))
+    memory.get_by_id = AsyncMock(return_value=saved)
+    collection = MagicMock()
+    collection.update = MagicMock()
+    memory._ensure_connected = MagicMock(return_value=collection)
+    return memory
+
+
+def _episode_store(episode_id: str = "ep-shared") -> AsyncMock:
+    episodes = AsyncMock()
+    episode = MagicMock()
+    episode.id = episode_id
+    episode.memory_ids = ["test-mem-1"]
+    episodes.create = AsyncMock(return_value=episode)
+    return episodes
 
 
 @pytest.fixture(autouse=True)
@@ -989,6 +1009,143 @@ class TestHandleRememberSharedWith:
             )
         assert "Saved (" in result
         assert "Shared episode creation failed" in caplog.text
+
+
+class TestHandleRememberSharedWithInteractions:
+    @pytest.mark.asyncio
+    async def test_shared_with_adds_interactions_after_alias_resolution(
+        self,
+        remember_config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_runtime as runtime
+
+        fixed_now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+        monkeypatch.setattr(runtime, "_episodes_getter", lambda: _episode_store())
+
+        store = RelationshipStore(
+            remember_config.data_dir / "relationships" / "models.json"
+        )
+        store.update("alice", {"name": "Alice", "aliases": ["A"]})
+        store.update("bob", {"name": "Bob"})
+        saved = Memory(
+            id="test-mem-1",
+            content="A shared return",
+            timestamp=fixed_now.isoformat(),
+            emotional_trace=EmotionalTrace(
+                primary=Emotion.HAPPY,
+                intensity=0.6,
+                valence=0.6,
+            ),
+        )
+        memory = _memory_saving(saved)
+
+        result = await _handle_remember(
+            remember_config,
+            memory,
+            {
+                "content": "A shared return",
+                "emotion": "happy",
+                "shared_with": ["A", "bob", "A"],
+            },
+        )
+
+        reloaded = RelationshipStore(
+            remember_config.data_dir / "relationships" / "models.json"
+        )
+        assert "Shared episode created" in result
+        assert saved.involved_person_ids == ["alice", "bob"]
+        assert reloaded.get("alice").total_interactions == 1
+        assert reloaded.get("bob").total_interactions == 1
+        assert reloaded.get("alice").communication_style["happy"] == 1.0
+        assert reloaded.get("bob").recent_mood_trajectory[-1]["mood"] == "happy"
+
+    @pytest.mark.asyncio
+    async def test_add_interaction_survives_episode_creation_failure(
+        self,
+        remember_config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import ego_mcp._server_runtime as runtime
+
+        episodes = AsyncMock()
+        episodes.create = AsyncMock(side_effect=RuntimeError("episode failed"))
+        monkeypatch.setattr(runtime, "_episodes_getter", lambda: episodes)
+        fixed_now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+        saved = Memory(
+            id="test-mem-1",
+            content="A shared return",
+            timestamp=fixed_now.isoformat(),
+            emotional_trace=EmotionalTrace(primary=Emotion.CALM),
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = await _handle_remember(
+                remember_config,
+                _memory_saving(saved),
+                {
+                    "content": "A shared return",
+                    "emotion": "calm",
+                    "shared_with": "Dana",
+                },
+            )
+
+        reloaded = RelationshipStore(
+            remember_config.data_dir / "relationships" / "models.json"
+        )
+        assert "Saved (" in result
+        assert "Shared episode creation failed" in caplog.text
+        assert reloaded.get("Dana").total_interactions == 1
+        assert reloaded.get("Dana").communication_style["calm"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_reunion_frame_is_one_line_but_notes_each_person(
+        self,
+        remember_config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_runtime as runtime
+
+        fixed_now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+        monkeypatch.setattr(runtime, "_episodes_getter", lambda: _episode_store())
+        store = RelationshipStore(
+            remember_config.data_dir / "relationships" / "models.json"
+        )
+        store.update("alice", {"name": "Alice"})
+        store.update("bob", {"name": "Bob"})
+        store.add_interaction("alice", "2026-06-01T12:00:00+00:00", "calm")
+        store.add_interaction("bob", "2026-06-01T12:00:00+00:00", "calm")
+        saved = Memory(
+            id="test-mem-1",
+            content="A shared return",
+            timestamp=fixed_now.isoformat(),
+            emotional_trace=EmotionalTrace(primary=Emotion.GRATEFUL),
+        )
+
+        result = await _handle_remember(
+            remember_config,
+            _memory_saving(saved),
+            {
+                "content": "A shared return",
+                "emotion": "grateful",
+                "shared_with": ["alice", "bob"],
+            },
+        )
+
+        reloaded = RelationshipStore(
+            remember_config.data_dir / "relationships" / "models.json"
+        )
+        assert result.count("A shared moment after a while") == 1
+        assert (
+            "A shared moment after a while — about about a month since the last."
+            in result
+        )
+        assert reloaded.raw("alice")["reunion_note"]["wake_up_shown"] is False
+        assert reloaded.raw("bob")["reunion_note"]["wake_up_shown"] is False
 
 
 class TestHandleRememberResurfaced:

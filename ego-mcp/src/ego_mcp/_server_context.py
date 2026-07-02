@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ego_mcp import timezone_utils
+from ego_mcp.absence import approx_duration_words
 from ego_mcp.config import EgoConfig
 from ego_mcp.memory import MemoryStore
 from ego_mcp.relationship import RelationshipStore
@@ -110,6 +111,37 @@ def _relationship_store(config: EgoConfig) -> RelationshipStore:
     return RelationshipStore(config.data_dir / "relationships" / "models.json")
 
 
+def _frequency_words(last_7d: int, *, matched_person: bool) -> str:
+    if matched_person:
+        if last_7d == 0:
+            return "quiet on that front lately"
+        if last_7d <= 2:
+            return "they've come up once or twice this week"
+        if last_7d <= 6:
+            return "they've been a steady presence this week"
+        return "they've been woven through the week"
+    if last_7d == 0:
+        return "a quiet week for conversation"
+    if last_7d <= 2:
+        return "a few conversations this week"
+    if last_7d <= 6:
+        return "a steady week of conversation"
+    return "a talkative week"
+
+
+def _last_interaction_words(timestamp: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return ""
+    parsed = timezone_utils.localize(parsed)
+    elapsed_days = max(
+        0.0,
+        (timezone_utils.now() - parsed).total_seconds() / 86400.0,
+    )
+    return f"{approx_duration_words(elapsed_days)} ago"
+
+
 async def _summarize_conversation_tendency(
     memory: MemoryStore, person: str
 ) -> tuple[str, str, list[str], list[str]]:
@@ -139,11 +171,7 @@ async def _summarize_conversation_tendency(
             continue
 
     dominant_tone = max(tones.items(), key=lambda x: x[1])[0]
-    frequency = (
-        f"{last_7d} mentions in last 7d"
-        if filtered
-        else f"{last_7d} conversations in last 7d"
-    )
+    frequency = _frequency_words(last_7d, matched_person=bool(filtered))
     preferred_topics, sensitive_topics = _infer_topics_from_memories(pool)
     return frequency, dominant_tone, preferred_topics, sensitive_topics
 
@@ -193,7 +221,9 @@ async def _relationship_snapshot(
         f"dominant_tone={dominant_tone}",
     ]
     if rel.last_interaction:
-        parts.append(f"last_interaction={rel.last_interaction[:10]}")
+        last_interaction = _last_interaction_words(rel.last_interaction)
+        if last_interaction:
+            parts.append(f"last_interaction={last_interaction}")
     parts.append(f"recent_frequency={frequency}")
     return ", ".join(parts)
 
