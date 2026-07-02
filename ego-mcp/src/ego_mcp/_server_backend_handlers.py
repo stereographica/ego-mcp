@@ -32,12 +32,19 @@ from ego_mcp.notion import (
     infer_person_id,
     is_ephemeral_cluster,
 )
+from ego_mcp.preciousness import (
+    PRECIOUS_ACCESS_MIN,
+    PRECIOUS_IMPORTANCE_MAX,
+    PRECIOUS_INTENSITY_MIN,
+    is_precious,
+)
+from ego_mcp.relationship import RelationshipStore
 from ego_mcp.scaffolds import (
     SCAFFOLD_CURATE_NOTIONS,
     compose_response,
 )
 from ego_mcp.self_model import SelfModelStore
-from ego_mcp.types import MetaField
+from ego_mcp.types import Memory, MetaField
 
 logger = logging.getLogger(__name__)
 _relative_time_override: Callable[[str, datetime | None], str] | None = None
@@ -65,6 +72,84 @@ def _set_tool_context(name: str, context: dict[str, object]) -> None:
 
 def pop_tool_context(name: str) -> dict[str, object]:
     return _last_tool_context.pop(name, {})
+
+
+def _preciousness_signature(memory: Memory) -> str | None:
+    if not is_precious(memory):
+        return None
+    shared = (
+        bool(memory.involved_person_ids)
+        and memory.emotional_trace.intensity >= PRECIOUS_INTENSITY_MIN
+    )
+    repeated = (
+        memory.access_count >= PRECIOUS_ACCESS_MIN
+        and memory.importance <= PRECIOUS_IMPORTANCE_MAX
+    )
+    if shared and repeated:
+        return "AB"
+    if shared:
+        return "A"
+    if repeated:
+        return "B"
+    return None
+
+
+def _relationship_store_for_memory(memory: MemoryStore) -> RelationshipStore | None:
+    data_dir = getattr(memory, "data_dir", None)
+    if data_dir is None:
+        return None
+    try:
+        return RelationshipStore(Path(data_dir) / "relationships" / "models.json")
+    except TypeError:
+        return None
+
+
+def _involved_person_names(memory: MemoryStore, person_ids: list[str]) -> str:
+    relationship_store = _relationship_store_for_memory(memory)
+    names: list[str] = []
+    for pid in person_ids:
+        name = pid
+        if relationship_store is not None:
+            rel = relationship_store.get(pid)
+            name = rel.name or pid
+        names.append(name)
+    return " and ".join(names)
+
+
+def _forget_scaffold_for_memory(memory_store: MemoryStore, deleted: Memory) -> str:
+    signature = _preciousness_signature(deleted)
+    if signature is None:
+        return (
+            "This memory is gone. Was there anything worth preserving in a new form?\n"
+            "If this was part of a merge, save the consolidated version with remember."
+        )
+
+    update_tool_metadata(
+        precious_forgotten=deleted.id,
+        preciousness_signature=signature,
+    )
+    if signature == "A":
+        names = _involved_person_names(memory_store, deleted.involved_person_ids)
+        return (
+            f"This one was shared with {names}.\n"
+            "What made you let it go?\n"
+            "If the letting-go itself means something, remember can hold that."
+        )
+    if signature == "B":
+        return (
+            "Something kept drawing you back to this — "
+            f"{deleted.access_count} times, though it never seemed important.\n"
+            "Do you know what that was?\n"
+            "If the letting-go itself means something, remember can hold that."
+        )
+
+    names = _involved_person_names(memory_store, deleted.involved_person_ids)
+    return (
+        f"This one was shared with {names} — and something kept drawing you back "
+        f"to it, {deleted.access_count} times.\n"
+        "What made you let it go? Do you know what kept pulling?\n"
+        "If the letting-go itself means something, remember can hold that."
+    )
 
 
 def _load_person_memory_ids(memory: MemoryStore) -> dict[str, set[str]]:
@@ -338,10 +423,7 @@ async def _handle_forget(memory: MemoryStore, args: dict[str, Any]) -> str:
         f"emotion: {deleted.emotional_trace.primary.value} | "
         f"importance: {deleted.importance}{sync_note}"
     )
-    scaffold = (
-        "This memory is gone. Was there anything worth preserving in a new form?\n"
-        "If this was part of a merge, save the consolidated version with remember."
-    )
+    scaffold = _forget_scaffold_for_memory(memory, deleted)
     return compose_response(data, scaffold)
 
 

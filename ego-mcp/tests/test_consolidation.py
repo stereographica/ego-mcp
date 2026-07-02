@@ -23,6 +23,7 @@ from ego_mcp.memory import MemoryStore
 from ego_mcp.notion import NotionStore
 from ego_mcp.types import (
     Emotion,
+    EmotionalTrace,
     LinkType,
     Memory,
     MemoryLink,
@@ -205,6 +206,52 @@ class TestConsolidationEngine:
             monkeypatch.undo()
 
         assert len(stats.merge_candidates) == 1
+
+    @pytest.mark.asyncio
+    async def test_precious_memory_is_excluded_from_merge_candidates(
+        self, store: MemoryStore
+    ) -> None:
+        precious = await store.save(content="shared repeated morning coffee")
+        near_duplicate = await store.save(content="shared repeated morning tea")
+        ordinary = await store.save(content="ordinary duplicate morning tea")
+        precious.involved_person_ids = ["person_a"]
+        precious.emotional_trace = EmotionalTrace(intensity=0.6)
+        store._ensure_connected().update(
+            ids=[precious.id],
+            metadatas=[memory_to_chromadb(precious)],
+        )
+        mapping = {
+            precious.content: [
+                self._result(precious, 0.0),
+                self._result(near_duplicate, 0.05),
+            ],
+            near_duplicate.content: [
+                self._result(near_duplicate, 0.0),
+                self._result(precious, 0.05),
+                self._result(ordinary, 0.04),
+            ],
+            ordinary.content: [
+                self._result(ordinary, 0.0),
+                self._result(near_duplicate, 0.04),
+            ],
+        }
+
+        async def fake_search(query: str, **_kwargs: object) -> list[MemorySearchResult]:
+            return list(mapping.get(query, []))
+
+        engine = ConsolidationEngine()
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(store, "search", fake_search)
+        try:
+            stats = await engine.run(store, window_hours=24, merge_threshold=0.10)
+        finally:
+            monkeypatch.undo()
+
+        assert len(stats.merge_candidates) == 1
+        assert {
+            stats.merge_candidates[0].memory_a_id,
+            stats.merge_candidates[0].memory_b_id,
+        } == {near_duplicate.id, ordinary.id}
 
     def test_to_dict_includes_merge_candidates(self) -> None:
         stats = ConsolidationStats(
