@@ -28,11 +28,13 @@ def _render_sentence(
     *,
     ema: float | None = None,
     catalog: DesireCatalog | None = None,
+    emergent_directions: dict[str, str] | None = None,
 ) -> str:
     template_map = catalog.template_map() if catalog is not None else _TEMPLATES
     templates = template_map.get(name)
     if templates is None:
-        emergent_sentence = emergent_desire_sentence(name)
+        direction = (emergent_directions or {}).get(name, "steady")
+        emergent_sentence = emergent_desire_sentence(name, direction)
         if emergent_sentence is not None:
             return emergent_sentence
         return name if name.endswith(".") else f"{name}."
@@ -61,6 +63,7 @@ def blend_desires(
     *,
     ema_levels: dict[str, float] | None = None,
     catalog: DesireCatalog | None = None,
+    emergent_directions: dict[str, str] | None = None,
 ) -> str:
     """Blend top desire signals into opaque, directional language."""
     active = _sorted_active(levels)
@@ -74,6 +77,7 @@ def blend_desires(
             float(level),
             ema=(ema_levels or {}).get(name),
             catalog=catalog,
+            emergent_directions=emergent_directions,
         )
         for name, level in top
     ]

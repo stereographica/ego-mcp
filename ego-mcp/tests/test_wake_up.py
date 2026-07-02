@@ -137,6 +137,25 @@ class TestHandleWakeUp:
         assert "Embers:" not in result
 
     @pytest.mark.asyncio
+    async def test_active_emergent_desire_does_not_render_emergent_pull(
+        self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
+    ) -> None:
+        engine._state["grasp_something"] = {
+            "is_emergent": True,
+            "created": datetime.now(timezone.utc).isoformat(),
+            "last_satisfied": "",
+            "satisfaction_quality": 0.5,
+            "boost": 0.0,
+            "satisfaction_hours": 24.0,
+        }
+
+        result = await _handle_wake_up(config, memory, engine)
+
+        assert "Emergent pull:" not in result
+        assert "...grasp something" in result
+        assert "There's a pull toward something that doesn't have a name yet." in result
+
+    @pytest.mark.asyncio
     async def test_stale_emergent_desire_not_rendered(
         self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
     ) -> None:

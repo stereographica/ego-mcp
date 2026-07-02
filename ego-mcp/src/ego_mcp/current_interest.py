@@ -1,4 +1,4 @@
-"""Derive current interests as a computed view from recent memories, notions, and emergent desires.
+"""Derive current interests as a computed view from recent memories and notions.
 
 This module does not create new stores; it synthesizes existing data.
 """
@@ -10,7 +10,6 @@ from collections import Counter
 from datetime import datetime
 
 from ego_mcp import timezone_utils
-from ego_mcp.emergent_desires import EMERGENT_DESIRE_BY_ID
 from ego_mcp.types import Memory, Notion
 
 # Weight constants per source type
@@ -52,7 +51,6 @@ def _generic_categories(
 def derive_current_interests(
     recent_memories: list[Memory],
     background_memories: list[Memory],
-    emergent_desires: list[str],
     recent_notions: list[Notion],
     *,
     max_interests: int = 3,
@@ -98,12 +96,6 @@ def derive_current_interests(
         recency = _recency_weight(notion.last_reinforced, now)
         emotion_val = notion.emotion_tone.value
         _add(notion.label, _WEIGHT_NOTION_LABEL * recency, "notion", emotion_val)
-
-    # 3. Emergent desires
-    for desire_id in emergent_desires:
-        definition = EMERGENT_DESIRE_BY_ID.get(desire_id)
-        if definition is not None:
-            _add(desire_id, 1.0, "emergent_desire", None)
 
     if not scores:
         return []

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ego_mcp.emergent_desires import emergent_desire_sentence
+from ego_mcp.emergent_desires import emergent_desire_fragment
 from ego_mcp.types import Memory, Notion
 
 _MAX_EMBERS = 2
@@ -55,15 +55,11 @@ def generate_embers(
 
     # Active emergent desires
     for desire_id in emergent_desires:
-        sentence = emergent_desire_sentence(desire_id)
-        if sentence is None:
+        fragment = emergent_desire_fragment(desire_id)
+        if fragment is None:
             continue
         score = 0.5
-        # Strip "You want to " prefix for fragment style
-        fragment = sentence
-        if fragment.lower().startswith("you want to "):
-            fragment = fragment[len("You want to "):]
-        text = f"...{fragment.rstrip('.')}"
+        text = f"...{fragment}"
         candidates.append((score, text))
 
     # Weakened notions

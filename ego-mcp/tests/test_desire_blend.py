@@ -69,6 +69,27 @@ def test_blend_desires_returns_low_signal_when_inactive() -> None:
     )
 
 
+def test_blend_desires_uses_emergent_direction_templates() -> None:
+    text = blend_desires(
+        {"grasp_something": 0.8},
+        emergent_directions={"grasp_something": "rising"},
+    )
+    assert "There's a pull toward something that doesn't have a name yet." in text
+
+
+def test_blend_desires_emergent_direction_unknown_falls_back_to_steady() -> None:
+    text = blend_desires(
+        {"grasp_something": 0.8},
+        emergent_directions={"grasp_something": "unknown"},
+    )
+    assert "That unnamed something is still there, quietly." in text
+
+
+def test_blend_desires_emergent_directions_default_to_steady() -> None:
+    text = blend_desires({"grasp_something": 0.8})
+    assert text == "That unnamed something is still there, quietly."
+
+
 def test_threshold_is_0_3() -> None:
     """Desires at 0.3 should be included (lowered from 0.4)."""
     text = blend_desires({"curiosity": 0.3})

@@ -125,20 +125,20 @@ class TestHandleAttune:
         assert "What am I actually feeling right now" in result
 
     @pytest.mark.asyncio
-    async def test_emergent_pull_shown_when_emergent_desire_active(
+    async def test_active_emergent_desire_only_appears_in_desire_currents(
         self,
         config: EgoConfig,
         memory: AsyncMock,
         engine: DesireEngine,
     ) -> None:
-        """Lines 160-162: emergent_desire_sentence returns a sentence."""
         engine._state["be_with_someone"] = {"is_emergent": True}
         result = await _handle_attune(config, memory, {}, engine)
-        assert "Emergent pull:" in result
-        assert "You want to be with someone." in result
+        assert "Emergent pull:" not in result
+        assert "The wish for company sits quietly underneath." in result
+        assert "You want to be with someone." not in result
 
     @pytest.mark.asyncio
-    async def test_recent_memories_can_trigger_emergent_pull_without_notions(
+    async def test_recent_memories_can_trigger_emergent_desire_without_pull_section(
         self,
         config: EgoConfig,
         memory: AsyncMock,
@@ -162,8 +162,150 @@ class TestHandleAttune:
 
         result = await _handle_attune(config, memory, {}, engine)
 
-        assert "Emergent pull:" in result
-        assert "You want to be with someone." in result
+        assert "Emergent pull:" not in result
+        assert "Something in this reaches toward company." in result
+        assert "You want to be with someone." not in result
+
+    @pytest.mark.asyncio
+    async def test_curious_tonus_boosts_curiosity(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_surface_attune as attune_mod
+
+        now = datetime.now(timezone.utc)
+        memory.list_recent = AsyncMock(
+            return_value=[
+                Memory(
+                    id=f"curious-{i}",
+                    content="following a question",
+                    timestamp=(now - timedelta(hours=i + 1)).isoformat(),
+                    emotional_trace=EmotionalTrace(
+                        primary=Emotion.CURIOUS,
+                        valence=0.4,
+                    ),
+                )
+                for i in range(3)
+            ]
+        )
+        monkeypatch.setattr(
+            attune_mod,
+            "_get_body_state_override",
+            lambda: {"time_phase": "unknown"},
+        )
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"curiosity": 0.4},
+        )
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            attune_mod,
+            "update_tool_metadata",
+            lambda **kwargs: captured.update(kwargs),
+        )
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["curiosity_tonus_boost"] == "0.05"
+        assert captured["desire_levels"] == {"curiosity": 0.45}
+
+    @pytest.mark.asyncio
+    async def test_curious_tonus_boost_clips_at_one(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_surface_attune as attune_mod
+
+        now = datetime.now(timezone.utc)
+        memory.list_recent = AsyncMock(
+            return_value=[
+                Memory(
+                    id=f"curious-clip-{i}",
+                    content="following a question",
+                    timestamp=(now - timedelta(hours=i + 1)).isoformat(),
+                    emotional_trace=EmotionalTrace(
+                        primary=Emotion.CURIOUS,
+                        valence=0.4,
+                    ),
+                )
+                for i in range(3)
+            ]
+        )
+        monkeypatch.setattr(
+            attune_mod,
+            "_get_body_state_override",
+            lambda: {"time_phase": "unknown"},
+        )
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"curiosity": 0.98},
+        )
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            attune_mod,
+            "update_tool_metadata",
+            lambda **kwargs: captured.update(kwargs),
+        )
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["curiosity_tonus_boost"] == "0.05"
+        assert captured["desire_levels"] == {"curiosity": 1.0}
+
+    @pytest.mark.asyncio
+    async def test_curious_tonus_skips_when_curiosity_level_missing(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_surface_attune as attune_mod
+
+        now = datetime.now(timezone.utc)
+        memory.list_recent = AsyncMock(
+            return_value=[
+                Memory(
+                    id=f"curious-missing-{i}",
+                    content="following a question",
+                    timestamp=(now - timedelta(hours=i + 1)).isoformat(),
+                    emotional_trace=EmotionalTrace(
+                        primary=Emotion.CURIOUS,
+                        valence=0.4,
+                    ),
+                )
+                for i in range(3)
+            ]
+        )
+        monkeypatch.setattr(
+            attune_mod,
+            "_get_body_state_override",
+            lambda: {"time_phase": "unknown"},
+        )
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"expression": 0.4},
+        )
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            attune_mod,
+            "update_tool_metadata",
+            lambda **kwargs: captured.update(kwargs),
+        )
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["curiosity_tonus_boost"] is None
+        assert captured["desire_levels"] == {"expression": 0.4}
 
     @pytest.mark.asyncio
     async def test_current_interests_section_when_memories_present(

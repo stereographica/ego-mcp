@@ -19,9 +19,13 @@ from ego_mcp._server_surface_person import (
 )
 from ego_mcp.config import EgoConfig
 from ego_mcp.current_interest import derive_current_interests
-from ego_mcp.desire import DesireEngine, generate_emergent_from_recent_memories
+from ego_mcp.desire import (
+    CURIOSITY_TONUS_BOOST,
+    DesireEngine,
+    detect_curious_tonus,
+    generate_emergent_from_recent_memories,
+)
 from ego_mcp.desire_blend import blend_desires
-from ego_mcp.emergent_desires import emergent_desire_sentence
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
 from ego_mcp.scaffolds import SCAFFOLD_ATTUNE, compose_response, render
@@ -65,15 +69,6 @@ def _list_notions_safe() -> list[Notion]:
         notion
         for notion in store.list_all()
         if isinstance(notion, Notion) and notion.id
-    ]
-
-
-def _active_emergent_desires(desire: DesireEngine) -> list[str]:
-    """Return IDs of currently active emergent desires."""
-    return [
-        name
-        for name, state in desire._state.items()
-        if isinstance(state, dict) and state.get("is_emergent", False)
     ]
 
 
@@ -156,21 +151,21 @@ async def _handle_attune(
         if "curiosity" in levels:
             levels["curiosity"] = round(min(1.0, levels["curiosity"] + 0.05), 3)
 
+    curiosity_tonus_applied = False
+    if detect_curious_tonus(recent_all) and "curiosity" in levels:
+        levels["curiosity"] = round(
+            min(1.0, levels["curiosity"] + CURIOSITY_TONUS_BOOST), 3
+        )
+        curiosity_tonus_applied = True
+
     desire_text = blend_desires(
         levels,
         ema_levels=desire.ema_levels,
         catalog=getattr(desire, "catalog", None),
+        emergent_directions=desire.emergent_directions(),
     )
 
-    # 3. Emergent pull
-    emergent_ids = _active_emergent_desires(desire)
-    emergent_lines: list[str] = []
-    for eid in emergent_ids:
-        sentence = emergent_desire_sentence(eid)
-        if sentence:
-            emergent_lines.append(sentence)
-
-    # 4. Current interests
+    # 3. Current interests
     notions = _list_notions_safe()
     recent_notions = [
         n for n in notions
@@ -179,20 +174,16 @@ async def _handle_attune(
     interests = derive_current_interests(
         recent_memories=list(recent_all[:10]),
         background_memories=list(recent_all),
-        emergent_desires=emergent_ids,
         recent_notions=recent_notions,
     )
 
-    # 5. Body sense text
+    # 4. Body sense text
     body_text = f"time: {phase}" if phase != "unknown" else ""
 
     # Compose output
     sections: list[str] = []
     sections.append(emotional_texture)
     sections.append(f"Desire currents: {desire_text}")
-
-    if emergent_lines:
-        sections.append("Emergent pull: " + " ".join(emergent_lines))
 
     if interests:
         interest_items = [item["topic"] for item in interests[:3]]
@@ -230,6 +221,9 @@ async def _handle_attune(
         desire_levels=levels,
         emergent_desire_created=",".join(created_emergent) if created_emergent else None,
         emergent_desire_expired=",".join(expired_emergent) if expired_emergent else None,
+        curiosity_tonus_boost=(
+            f"{CURIOSITY_TONUS_BOOST:.2f}" if curiosity_tonus_applied else None
+        ),
         attune_person=person,
         active_person_ids=json.dumps(_active_person_ids) if _active_person_ids else None,
     )

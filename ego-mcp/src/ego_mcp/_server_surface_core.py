@@ -275,7 +275,6 @@ async def _handle_wake_up(
     """Session start: emotional texture + embers + Proust + introspection + desires + relationship."""
     from ego_mcp import timezone_utils
     from ego_mcp._server_context import _fading_important_questions
-    from ego_mcp.emergent_desires import emergent_desire_sentence
 
     now = timezone_utils.now()
     recent_all = await memory.list_recent(n=30)
@@ -361,23 +360,17 @@ async def _handle_wake_up(
         levels,
         ema_levels=desire.ema_levels,
         catalog=getattr(desire, "catalog", None),
+        emergent_directions=desire.emergent_directions(),
     )
     parts.append(f"Desire currents: {desire_summary}")
 
-    # 6. Emergent pull
-    for desire_id in active_emergent:
-        sentence = emergent_desire_sentence(desire_id)
-        if sentence:
-            parts.append(f"Emergent pull: {sentence}")
-            break
-
-    # 7. Relationship note
+    # 6. Relationship note
     relationship_line = await _call_relationship_snapshot(
         config, memory, config.companion_name
     )
     parts.append(relationship_line)
 
-    # 8. Active persons
+    # 7. Active persons
     _active_person_ids: list[str] = []
     try:
         from ego_mcp._server_context import _relationship_store

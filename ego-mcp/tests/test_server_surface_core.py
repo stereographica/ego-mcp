@@ -375,6 +375,9 @@ class TestActivePersonsTelemetry:
             def expire_emergent_desires(self) -> None:
                 pass
 
+            def emergent_directions(self) -> dict[str, str]:
+                return {}
+
             _state: dict[str, Any] = {}
 
         result = await _handle_wake_up(config, mem, cast(Any, FakeDesire()))

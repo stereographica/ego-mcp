@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,73 +37,38 @@ REMEMBER_INTROSPECTION_IMPLICIT_SATISFACTION = ("cognitive_coherence", 0.4)
 EMERGENT_EXPIRY_HOURS = float(DEFAULT_EMERGENT["expiry_hours"])
 EMERGENT_SATISFACTION_HOURS = float(DEFAULT_EMERGENT["satisfaction_hours"])
 EMERGENT_SATISFIED_TTL_HOURS = float(DEFAULT_EMERGENT["satisfied_ttl_hours"])
+EMERGENT_RISING_MAX_RATIO = 0.25
+EMERGENT_SETTLING_MIN_RATIO = 0.60
+CURIOSITY_TONUS_BOOST = 0.05
+
+
+def _emergent_template_for(
+    emotion: Emotion, valence: float
+) -> EmergentDesireDefinition | None:
+    if emotion in {Emotion.MELANCHOLY, Emotion.SAD} and valence < 0:
+        return EMERGENT_DESIRE_BY_ID["be_with_someone"]
+    if emotion == Emotion.FRUSTRATED and valence < 0:
+        return EMERGENT_DESIRE_BY_ID["get_away_from_something"]
+    if emotion == Emotion.ANXIOUS and valence < 0:
+        return EMERGENT_DESIRE_BY_ID["feel_safe"]
+    if emotion == Emotion.EXCITED and valence > 0:
+        return EMERGENT_DESIRE_BY_ID["grasp_something"]
+    if emotion in {Emotion.HAPPY, Emotion.CONTENTMENT} and valence > 0:
+        return EMERGENT_DESIRE_BY_ID["stay_in_this"]
+    if emotion == Emotion.NOSTALGIC:
+        return EMERGENT_DESIRE_BY_ID["go_back_to_something"]
+    return None
 
 
 def _emergent_template_for_notion(notion: Notion) -> EmergentDesireDefinition | None:
-    emotion = notion.emotion_tone
-    valence = notion.valence
-    if emotion in {Emotion.MELANCHOLY, Emotion.SAD} and valence < 0:
-        return EMERGENT_DESIRE_BY_ID["be_with_someone"]
-    if emotion == Emotion.FRUSTRATED and valence < 0:
-        return EMERGENT_DESIRE_BY_ID["get_away_from_something"]
-    if emotion == Emotion.ANXIOUS and valence < 0:
-        return EMERGENT_DESIRE_BY_ID["feel_safe"]
-    if emotion in {Emotion.EXCITED, Emotion.CURIOUS} and valence > 0:
-        return EMERGENT_DESIRE_BY_ID["grasp_something"]
-    if emotion in {Emotion.HAPPY, Emotion.CONTENTMENT} and valence > 0:
-        return EMERGENT_DESIRE_BY_ID["stay_in_this"]
-    if emotion == Emotion.NOSTALGIC:
-        return EMERGENT_DESIRE_BY_ID["go_back_to_something"]
-    return None
+    return _emergent_template_for(notion.emotion_tone, notion.valence)
 
 
-def _emergent_template_for_emotion(
-    emotion: Emotion, valence: float
-) -> EmergentDesireDefinition | None:
-    """Map an emotion + valence pair to an emergent desire definition.
-
-    Uses the same mapping as ``_emergent_template_for_notion`` but
-    accepts raw emotion/valence rather than a Notion object.
-    """
-    if emotion in {Emotion.MELANCHOLY, Emotion.SAD} and valence < 0:
-        return EMERGENT_DESIRE_BY_ID["be_with_someone"]
-    if emotion == Emotion.FRUSTRATED and valence < 0:
-        return EMERGENT_DESIRE_BY_ID["get_away_from_something"]
-    if emotion == Emotion.ANXIOUS and valence < 0:
-        return EMERGENT_DESIRE_BY_ID["feel_safe"]
-    if emotion in {Emotion.EXCITED, Emotion.CURIOUS} and valence > 0:
-        return EMERGENT_DESIRE_BY_ID["grasp_something"]
-    if emotion in {Emotion.HAPPY, Emotion.CONTENTMENT} and valence > 0:
-        return EMERGENT_DESIRE_BY_ID["stay_in_this"]
-    if emotion == Emotion.NOSTALGIC:
-        return EMERGENT_DESIRE_BY_ID["go_back_to_something"]
-    return None
-
-
-def generate_emergent_from_recent_memories(
-    engine: DesireEngine,
+def _dominant_recent_emotion(
     memories: list[Memory],
-    window_hours: float = 6.0,
-    min_memories: int | None = None,
-) -> str | None:
-    """Generate an emergent desire from a short-term emotion flow.
-
-    Analyses recent memories within *window_hours*, finds the dominant
-    emotion + average valence, and maps it to an emergent desire.
-    Returns the desire ID if created, or ``None``.
-
-    *min_memories* defaults to ``catalog.emergent.min_recent_memories``
-    (3 if the catalog is unavailable).
-    """
-    from collections import Counter
-
-    if min_memories is None:
-        try:
-            catalog = engine.require_valid_catalog()
-            min_memories = catalog.emergent.min_recent_memories
-        except Exception:
-            min_memories = 3
-
+    window_hours: float,
+    min_memories: int,
+) -> tuple[Emotion, float] | None:
     now = timezone_utils.now()
     recent: list[Memory] = []
     for mem in memories:
@@ -129,8 +95,54 @@ def generate_emergent_from_recent_memories(
 
     dominant_emotion = emotion_counts.most_common(1)[0][0]
     avg_valence = valence_sum / len(recent)
+    return dominant_emotion, avg_valence
 
-    definition = _emergent_template_for_emotion(dominant_emotion, avg_valence)
+
+def detect_curious_tonus(
+    memories: list[Memory],
+    window_hours: float = 6.0,
+    min_memories: int | None = None,
+) -> bool:
+    """Detect a curious tonus window without creating an emergent desire."""
+    if min_memories is None:
+        min_memories = default_desire_catalog().emergent.min_recent_memories
+    dominant = _dominant_recent_emotion(memories, window_hours, min_memories)
+    if dominant is None:
+        return False
+    dominant_emotion, avg_valence = dominant
+    if dominant_emotion == Emotion.CURIOUS and avg_valence > 0:
+        return True
+    return False
+
+
+def generate_emergent_from_recent_memories(
+    engine: DesireEngine,
+    memories: list[Memory],
+    window_hours: float = 6.0,
+    min_memories: int | None = None,
+) -> str | None:
+    """Generate an emergent desire from a short-term emotion flow.
+
+    Analyses recent memories within *window_hours*, finds the dominant
+    emotion + average valence, and maps it to an emergent desire.
+    Returns the desire ID if created, or ``None``.
+
+    *min_memories* defaults to ``catalog.emergent.min_recent_memories``
+    (3 if the catalog is unavailable).
+    """
+    if min_memories is None:
+        try:
+            catalog = engine.require_valid_catalog()
+            min_memories = catalog.emergent.min_recent_memories
+        except Exception:
+            min_memories = 3
+
+    dominant = _dominant_recent_emotion(memories, window_hours, min_memories)
+    if dominant is None:
+        return None
+    dominant_emotion, avg_valence = dominant
+
+    definition = _emergent_template_for(dominant_emotion, avg_valence)
     if definition is None:
         return None
 
@@ -138,6 +150,7 @@ def generate_emergent_from_recent_memories(
         return None
 
     catalog = engine.require_valid_catalog()
+    now = timezone_utils.now()
     engine._state[definition.id] = {
         "last_satisfied": "",
         "satisfaction_quality": 0.5,
@@ -330,6 +343,39 @@ class DesireEngine:
         if expired:
             self.save_state()
         return expired
+
+    def emergent_directions(self) -> dict[str, str]:
+        """active な創発欲求 ID → "rising"|"steady"|"settling"。"""
+        catalog = self.require_valid_catalog()
+        now = timezone_utils.now()
+        directions: dict[str, str] = {}
+        for name, state in self._state.items():
+            if not isinstance(state, dict) or not state.get("is_emergent", False):
+                continue
+            canonical_name = self._canonical_desire_name(name, is_emergent=True)
+            if str(state.get("last_satisfied", "")):
+                directions[canonical_name] = "settling"
+                continue
+            created_str = str(state.get("created", ""))
+            if not created_str:
+                directions[canonical_name] = "steady"
+                continue
+            try:
+                created = datetime.fromisoformat(created_str)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone_utils.app_timezone())
+            except ValueError:
+                directions[canonical_name] = "steady"
+                continue
+            age_hours = (now - created).total_seconds() / 3600
+            ratio = age_hours / catalog.emergent.expiry_hours
+            if ratio < EMERGENT_RISING_MAX_RATIO:
+                directions[canonical_name] = "rising"
+            elif ratio < EMERGENT_SETTLING_MIN_RATIO:
+                directions[canonical_name] = "steady"
+            else:
+                directions[canonical_name] = "settling"
+        return directions
 
     def generate_emergent_desires(self, notions: list[Notion]) -> list[str]:
         catalog = self.require_valid_catalog()

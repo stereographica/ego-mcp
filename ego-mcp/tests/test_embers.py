@@ -54,8 +54,7 @@ class TestGenerateEmbers:
 
     def test_emergent_desire_produces_ember(self) -> None:
         result = generate_embers([], [], ["be_with_someone"], [])
-        assert len(result) == 1
-        assert "be with someone" in result[0].lower()
+        assert result == ["...be with someone"]
 
     def test_weakened_notion_produces_ember(self) -> None:
         n = _notion(label="trust is always repaid", confidence=0.3)
