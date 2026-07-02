@@ -2,6 +2,19 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [1.5.0] - 2026-07-02
+
+### Added
+- ego-mcp: `remember` に `anticipated_at`(ISO 8601)を追加 — 未来の時点を指す記憶は到達まで decay 1.0(ランキング・表示とも)で保持され、wake_up / attune が arrived(`That time came:`)または接近中の予期を最大 1 件提示する。日付のみ / naive はアプリタイムゾーンへ正規化し、パース不能・過去は通常記憶として保存して Note を返す
+- ego-mcp: `anticipation.py` を新設 — importance × 7 日の τ による接近顕在度、帯域(arrived / imminent / approaching / distant)、approaching の確率 0.5 提示。`list_anticipations` / `mark_anticipation_surfaced` を MemoryStore に追加(local ChromaDB に `$ne` フィルタ対応を追加)
+- ego-mcp: `remember(shared_with=...)` が `add_interaction` を暗黙配線 — 対話間隔 EMA から不在帯域(2 倍で quiet / 4 倍で long)を導出し、attune に不在行 + long 時 social_thirst +0.08、consider_them に不在 frame 2 行、wake_up に再会 note(一度だけ)を提示
+- ego-mcp: `absence.py` / `relationship_wording.py` を新設 — 期間・頻度・trust(5 帯)・歴史・shared episodes を数字を含まない言葉に変換(第 4 条: 数値は内部、外は言葉)
+
+### Changed
+- ego-mcp: `add_interaction` の `total_interactions` を len 同期から増分方式に変更し、`interaction_log` を直近 200 件に cap
+- ego-mcp: relationship snapshot と consider_them summary、attune の Regarding 行から数値露出を全廃 — `trust= / interactions= / shared_episodes= / last_interaction=` 形式を廃止し、セミコロン節結合の言葉形式へ移行(テレメトリの数値フィールドは不変)
+- バージョンアップ: ego-mcp `1.4.0` → `1.5.0`
+
 ## [1.4.0] - 2026-07-02
 
 ### Added
