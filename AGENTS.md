@@ -53,6 +53,8 @@ uv run python -m ego_mcp
 - Periodic self-maintenance: `consolidate` -> if notions feel cluttered `curate_notions`
 - Desire configuration: `configure_desires` (check/show/set_sentence/set_signals)
 - Graph exploration: `recall` (mode=explore, seed=...) for a local neighborhood, `introspect` (focus=network) for notion graph topology
+- Open questions: hold with `update_self` (field=new_question, optional supersedes/with) -> resolve with `update_self` (field=resolve_question). wake_up surfaces one open edge; consolidate lets resting questions ripen
+- Future events: `remember` with `anticipated_at` — wake_up / attune surface them as they approach
 
 ## dashboard
 

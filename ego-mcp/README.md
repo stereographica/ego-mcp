@@ -44,7 +44,7 @@ export EGO_MCP_WORKSPACE_DIR="/path/to/openclaw-workspace"
 ### 3. Verify
 
 ```bash
-uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 1.1.0
+uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 1.6.0
 uv run python -m ego_mcp  # Starts the server
 ```
 
@@ -282,7 +282,7 @@ References:
 | `attune` | Unified emotional awareness: texture + desires + interests + body sense |
 | `introspect` | Get reflection materials: emotional layers, desires, open questions (`focus=network` for notion graph topology) |
 | `consider_them` | Think about someone — ToM framework |
-| `remember` | Save a memory with emotion and importance |
+| `remember` | Save a memory with emotion and importance (`shared_with` for shared moments, `anticipated_at` for future-directed memories) |
 | `recall` | Recall related memories by context (`mode=explore` for graph neighborhood) |
 | `pause` | Authenticity self-check |
 
@@ -291,11 +291,11 @@ References:
 | Tool | Description |
 |---|---|
 | `configure_desires` | Check/set desire sentence templates and satisfaction signals |
-| `consolidate` | Run memory consolidation |
+| `consolidate` | Run memory consolidation (also feeds resting open questions) |
 | `forget` | Delete a memory by ID |
 | `link_memories` | Link two memories |
 | `update_relationship` | Update relationship model |
-| `update_self` | Update self model |
+| `update_self` | Update self model (`field="new_question"` / `"resolve_question"` for open questions) |
 | `curate_notions` | Merge, prune, or reinforce notions |
 | `get_episode` | Get episode details |
 | `create_episode` | Create episode from memories |

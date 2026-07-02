@@ -11,6 +11,7 @@ ego-mcp is a monorepo containing an [MCP (Model Context Protocol)](https://model
 - **Cognitive Scaffolding** — Tool responses include thinking frameworks, not just data, guiding natural AI behavior
 - **Relationship Model** — Theory of Mind framework for structuring relationships with others
 - **Self-Maintaining Notions** — Reinforcement, decay, duplicate merge, person association, and related-notion links
+- **Temporal & Relational Sense** — Anticipation of future events, absence/reunion awareness, ripening open questions, and implicit protection of precious memories
 - **Telemetry Dashboard** — Real-time visualization of tool usage, emotion trends, and logs
 
 ## Repository Structure
@@ -39,7 +40,7 @@ MCP server providing cognitive capabilities to AI agents.
 | `attune` | Unified emotional awareness: texture + desires + interests + body sense |
 | `introspect` | Get reflection materials: memories, desires, open questions (`focus=network` for notion graph topology) |
 | `consider_them` | Think about someone — Theory of Mind framework |
-| `remember` | Save a memory with emotion and importance |
+| `remember` | Save a memory with emotion and importance (`shared_with` for shared moments, `anticipated_at` for future-directed memories) |
 | `recall` | Recall related memories by context (`mode=explore` for graph neighborhood) |
 | `pause` | Authenticity self-check |
 
@@ -48,11 +49,11 @@ MCP server providing cognitive capabilities to AI agents.
 | Tool | Description |
 |---|---|
 | `satisfy_desire` | Mark a desire as satisfied |
-| `consolidate` | Run memory consolidation |
+| `consolidate` | Run memory consolidation (also feeds resting open questions) |
 | `forget` | Delete a memory by ID |
 | `link_memories` | Link two memories |
 | `update_relationship` | Update relationship model |
-| `update_self` | Update self model |
+| `update_self` | Update self model (`field="new_question"` / `"resolve_question"` for open questions) |
 | `emotion_trend` | Analyze emotional patterns over time |
 | `get_episode` | Get episode details |
 | `create_episode` | Create episode from memories |
