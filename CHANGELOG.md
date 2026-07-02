@@ -2,6 +2,18 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [1.6.0] - 2026-07-02
+
+### Added
+- ego-mcp: 問いのライフサイクル — question_log に `person_id` / `companions` / `lineage` / `last_fed_at` を追加(すべて optional・追記的、migration 不要)。`update_self(field="new_question")` が `supersedes`(lineage 継承 + 旧問いの冪等 resolve)と `with`(person 紐づけ)を受け付ける
+- ego-mcp: `ripening.py` を新設 — consolidate が休眠寄りの問い(importance ≥ 2、salience 0.1〜0.3)に中間距離(0.35〜0.65)の companion 記憶と張力ペア(valence 対立)を給餌する。応答には `A few resting questions gathered company.` の 1 行のみ
+- ego-mcp: 熟成した問いの再浮上 — 堆積 3 件で wake_up の Open edges / introspect に companion snippet・張力・共有相手つきで提示(提示後に堆積をクリアし、どの面でも一度だけ)。削除済み記憶の堆積は静かにスキップ
+- ego-mcp: 共有された問いの表示 — consider_them の `Held together with {name}:`(最大 2 件)、introspect の `(importance: N, with {name})`、再会 frame への未解決の共有問い 1 件の付加
+- ego-mcp: attune に確率 0.25 の気配行 `Something is ripening where you're not looking.` を追加(表示時のみテレメトリ記録)
+
+### Changed
+- バージョンアップ: ego-mcp `1.5.0` → `1.6.0`
+
 ## [1.5.0] - 2026-07-02
 
 ### Added
