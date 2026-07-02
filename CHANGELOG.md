@@ -2,6 +2,22 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [1.4.0] - 2026-07-02
+
+### Added
+- ego-mcp: `remember(category="introspection")` に内省専用スキャフォールドを追加 — 独白の末尾に `Still open:` を残す慣行を案内し、wake_up が未完の縁を持ち越せるようにした
+- ego-mcp: `update_self(field="new_question")` の構造化入口を追加(ID 発行・importance clamp・登録応答)。`unresolved_questions` 生リスト経路は互換シムで question_log へ変換し、ロード時に孤児の問いを救出する
+- ego-mcp: wake_up に `Open edges` 節を追加 — 最も顕著な active な問いを 1 件だけ提示。introspect には問い登録の案内行を常時表示
+- ego-mcp: かけがえのなさの暗黙保護(`preciousness.py`)を追加 — 感情ピークの共有記憶(intensity ≥ 0.6)と反復想起される低重要度記憶(access ≥ 3, importance ≤ 2)を merge 候補から除外し、検索ランキングにのみ decay 床 0.25 を適用(表示の鮮明さは生 decay のまま)。precious な記憶の forget には手放した理由を尋ねる反射スキャフォールドを返し、`precious_forgotten` / `preciousness_signature` をテレメトリに出力
+- ego-mcp: 創発欲求に方向性(rising / steady / settling)を追加 — 寿命比(< 25% / ≥ 60%)と充足履歴から導出し、Desire currents の文面に反映
+- ego-mcp: CURIOUS 主調 + 正の valence を curiosity トーヌス(attune で +0.05 boost)として扱うよう変更(grasp_something の生成トリガーからは除外)
+
+### Changed
+- ego-mcp: wake_up の独白引用を先頭 220 字截断から末尾主義(`Still open:` マーカー優先)へ変更
+- ego-mcp: `Emergent pull:` 節を attune / wake_up から削除し、創発欲求の提示チャネルを Desire currents に一本化。embers は fragment 参照に変更(出力形式は不変)
+- ego-mcp: 感情→創発テンプレートの二重定義マップを単一関数に統合。問い帯域の閾値を名前付き定数(`QUESTION_ACTIVE_MIN_SALIENCE` / `QUESTION_DORMANT_MAX_SALIENCE`)に集約(挙動不変)
+- バージョンアップ: ego-mcp `1.3.0` → `1.4.0`
+
 ## [1.3.0] - 2026-06-03
 
 ### Added
