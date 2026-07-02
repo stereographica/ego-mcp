@@ -69,6 +69,56 @@ class TestSelfModelStore:
         entry = next(item for item in payload["question_log"] if item["id"] == qid)
         assert entry["importance"] == 5
         assert entry["created_at"]
+        assert entry["person_id"] is None
+        assert entry["companions"] == []
+        assert entry["lineage"] == []
+        assert entry["last_fed_at"] == ""
+
+    def test_question_log_normalizes_ripening_fields(self, tmp_path: Path) -> None:
+        path = tmp_path / "self_model.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "question_log": [
+                        {
+                            "id": "q_with_fields",
+                            "question": "Who shares this edge?",
+                            "resolved": False,
+                            "importance": 4,
+                            "created_at": "2026-07-01T12:00:00+00:00",
+                            "person_id": "alice",
+                            "companions": [
+                                {"memory_id": "m1", "kind": "companion"},
+                                "bad",
+                            ],
+                            "lineage": ["q_old", 123],
+                            "last_fed_at": "2026-07-02T12:00:00+00:00",
+                        },
+                        {
+                            "id": "q_bad_fields",
+                            "question": "What survives bad metadata?",
+                            "person_id": 123,
+                            "companions": "bad",
+                            "lineage": "bad",
+                            "last_fed_at": 456,
+                        },
+                    ],
+                    "unresolved_questions": ["q_with_fields", "q_bad_fields"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        entries = SelfModelStore(path).get_question_log()
+
+        assert entries[0]["person_id"] == "alice"
+        assert entries[0]["companions"] == [{"memory_id": "m1", "kind": "companion"}]
+        assert entries[0]["lineage"] == ["q_old"]
+        assert entries[0]["last_fed_at"] == "2026-07-02T12:00:00+00:00"
+        assert entries[1]["person_id"] is None
+        assert entries[1]["companions"] == []
+        assert entries[1]["lineage"] == []
+        assert entries[1]["last_fed_at"] == ""
 
     def test_add_question_clamps_importance(self, tmp_path: Path) -> None:
         path = tmp_path / "self_model.json"

@@ -38,12 +38,14 @@ from ego_mcp.notion import (
     format_neighborhood,
     update_notion_from_memory,
 )
+from ego_mcp.ripening import format_shared_question_line
 from ego_mcp.scaffolds import (
     SCAFFOLD_RECALL_EXPLORE,
     SCAFFOLD_REMEMBER,
     SCAFFOLD_REMEMBER_INTROSPECTION,
     compose_response,
 )
+from ego_mcp.self_model import SelfModelStore
 
 logger = logging.getLogger(__name__)
 _REMEMBER_DUPLICATE_PREFIX = "Not saved — very similar memory already exists."
@@ -312,6 +314,7 @@ async def _handle_remember(
 
     shared_episode_section = ""
     reunion_section = ""
+    reunion_question_section = ""
     if shared_with:
         related_ids: list[str] = []
         if isinstance(related_memories_raw, list):
@@ -375,6 +378,11 @@ async def _handle_remember(
                             "A shared moment after a while — "
                             f"about {elapsed_words} since the last."
                         )
+                    if not reunion_question_section:
+                        reunion_question_section = format_shared_question_line(
+                            SelfModelStore(config.data_dir / "self_model.json"),
+                            person,
+                        )
             try:
                 episode_store = get_episodes()
                 episode = await episode_store.create(related_ids, summary)
@@ -433,6 +441,8 @@ async def _handle_remember(
         data_parts.append(shared_episode_section.strip())
     if reunion_section:
         data_parts.append(reunion_section)
+    if reunion_question_section:
+        data_parts.append(reunion_question_section)
     if desire_settling_section:
         data_parts.append(desire_settling_section)
     if anticipation_note:

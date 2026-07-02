@@ -45,6 +45,7 @@ from ego_mcp.desire_blend import blend_desires
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
 from ego_mcp.relationship_wording import history_words, trust_words
+from ego_mcp.ripening import should_show_ripening_presence
 from ego_mcp.scaffolds import SCAFFOLD_ATTUNE, compose_response, render
 from ego_mcp.self_model import SelfModelStore
 from ego_mcp.types import Memory, Notion
@@ -173,6 +174,10 @@ async def _handle_attune(
 
     self_store = SelfModelStore(config.data_dir / "self_model.json")
     fading_questions = _fading_important_questions(memory, store=self_store)
+    ripening_presence_shown = should_show_ripening_presence(
+        self_store.get_unresolved_questions_with_salience(),
+        random,
+    )
 
     if _derive_desire_modulation_override is not None:
         context_boosts, emotional_modulation, prediction_error = (
@@ -277,6 +282,8 @@ async def _handle_attune(
     # Compose output
     sections: list[str] = []
     sections.append(emotional_texture)
+    if ripening_presence_shown:
+        sections.append("Something is ripening where you're not looking.")
     anticipation_line = await _anticipation_surface_line(memory, now)
     if anticipation_line:
         sections.append(anticipation_line)
@@ -329,6 +336,7 @@ async def _handle_attune(
         absence_social_thirst_boost=absence_social_thirst_boost,
         attune_person=person,
         active_person_ids=json.dumps(_active_person_ids) if _active_person_ids else None,
+        ripening_presence_shown=True if ripening_presence_shown else None,
     )
 
     data = "\n".join(sections)

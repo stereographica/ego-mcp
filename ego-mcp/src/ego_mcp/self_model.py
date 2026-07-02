@@ -148,6 +148,10 @@ class SelfModelStore:
                         "resolved": False,
                         "importance": 3,
                         "created_at": now_iso,
+                        "person_id": None,
+                        "companions": [],
+                        "lineage": [],
+                        "last_fed_at": "",
                     }
                 )
                 known_ids.add(question_id)
@@ -243,10 +247,37 @@ class SelfModelStore:
             entry["importance"] = _clamp_question_importance(item.get("importance", 3))
             created_at = item.get("created_at", "")
             entry["created_at"] = created_at if isinstance(created_at, str) else ""
+            person_id = item.get("person_id")
+            entry["person_id"] = (
+                person_id if isinstance(person_id, str) and person_id else None
+            )
+            companions = item.get("companions", [])
+            entry["companions"] = (
+                [dict(companion) for companion in companions if isinstance(companion, dict)]
+                if isinstance(companions, list)
+                else []
+            )
+            lineage = item.get("lineage", [])
+            entry["lineage"] = (
+                [str(question_id) for question_id in lineage if isinstance(question_id, str)]
+                if isinstance(lineage, list)
+                else []
+            )
+            last_fed_at = item.get("last_fed_at", "")
+            entry["last_fed_at"] = (
+                last_fed_at if isinstance(last_fed_at, str) else ""
+            )
             normalized.append(entry)
         return normalized
 
-    def add_question(self, question: str, importance: int = 3) -> str:
+    def add_question(
+        self,
+        question: str,
+        importance: int = 3,
+        *,
+        person_id: str | None = None,
+        lineage: list[str] | None = None,
+    ) -> str:
         question_id = f"q_{uuid.uuid4().hex[:10]}"
         question_log = self._data.get("question_log", [])
         if not isinstance(question_log, list):
@@ -259,6 +290,10 @@ class SelfModelStore:
                 "resolved": False,
                 "importance": _clamp_question_importance(importance),
                 "created_at": now_iso,
+                "person_id": person_id,
+                "companions": [],
+                "lineage": list(lineage or []),
+                "last_fed_at": "",
             }
         )
         self._data["question_log"] = question_log
@@ -272,6 +307,20 @@ class SelfModelStore:
 
         self._save()
         return question_id
+
+    def update_question_fields(self, question_id: str, updates: dict[str, Any]) -> bool:
+        """Update stored question metadata by id."""
+        question_log = self._data.get("question_log", [])
+        if not isinstance(question_log, list):
+            return False
+
+        for item in question_log:
+            if isinstance(item, dict) and item.get("id") == question_id:
+                item.update(updates)
+                self._data["last_updated"] = timezone_utils.now().isoformat()
+                self._save()
+                return True
+        return False
 
     def resolve_question(self, question_id: str) -> bool:
         unresolved = self._data.get("unresolved_questions", [])

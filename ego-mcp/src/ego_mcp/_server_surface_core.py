@@ -57,6 +57,13 @@ from ego_mcp.notion import (
 )
 from ego_mcp.proust import find_proust_memory
 from ego_mcp.relationship_wording import episode_words, history_words, trust_words
+from ego_mcp.ripening import (
+    build_ripened_question_block,
+    format_shared_question_line,
+    person_display_name,
+    pick_ripened_question,
+    shared_open_questions_for_person,
+)
 from ego_mcp.scaffolds import (
     SCAFFOLD_CONSIDER_THEM,
     SCAFFOLD_INTROSPECT,
@@ -257,6 +264,20 @@ def _format_associated_from_map(
     if not associated:
         return ""
     return " → " + ", ".join(f'"{item.label}"' for item in associated[:limit])
+
+
+def _format_question_line(
+    item: dict[str, Any],
+    relationship_store: Any | None,
+) -> str:
+    person_id = item.get("person_id")
+    if isinstance(person_id, str) and person_id and relationship_store is not None:
+        name = person_display_name(relationship_store, person_id)
+        return (
+            f"- [{item['id']}] {item['question']} "
+            f"(importance: {item['importance']}, with {name})"
+        )
+    return f"- [{item['id']}] {item['question']} (importance: {item['importance']})"
 
 
 def _catalog_fixed_ids(desire: DesireEngine | None) -> set[str] | None:
@@ -463,16 +484,34 @@ async def _handle_wake_up(
 
     self_store = SelfModelStore(config.data_dir / "self_model.json")
     entries = self_store.get_unresolved_questions_with_salience()
-    active = [
-        e
-        for e in entries
-        if float(e.get("salience", 0.0)) > QUESTION_ACTIVE_MIN_SALIENCE
-    ]
-    if active:
-        top = max(active, key=lambda e: float(e.get("salience", 0.0)))
-        parts.append(
-            f"Open edges:\n  [{top['id']}] {top['question']} (importance: {top['importance']})"
-        )
+    ripened_block = ""
+    ripened = pick_ripened_question(entries)
+    if ripened is not None:
+        try:
+            ripened_block = await build_ripened_question_block(
+                self_store,
+                memory,
+                ripened,
+                relationship_store=_relationship_store(config),
+                notion_store=get_notion_store(),
+                now=now,
+            ) or ""
+        except Exception:
+            ripened_block = ""
+    if ripened_block:
+        parts.append(f"Open edges:\n{ripened_block}")
+    else:
+        active = [
+            e
+            for e in self_store.get_unresolved_questions_with_salience()
+            if float(e.get("salience", 0.0)) > QUESTION_ACTIVE_MIN_SALIENCE
+        ]
+        if active:
+            top = max(active, key=lambda e: float(e.get("salience", 0.0)))
+            parts.append(
+                f"Open edges:\n  [{top['id']}] {top['question']} "
+                f"(importance: {top['importance']})"
+            )
 
     anticipation_line = await _anticipation_surface_line(memory, now)
     if anticipation_line:
@@ -505,6 +544,9 @@ async def _handle_wake_up(
                 f"Reunited with {name} recently — "
                 f"the first shared moment in about {gap_words}."
             )
+            shared_question_line = format_shared_question_line(self_store, person_id)
+            if shared_question_line:
+                parts.append(shared_question_line)
             reunion_store.mark_reunion_wake_up_shown(person_id)
     except Exception:
         pass
@@ -604,15 +646,34 @@ async def _handle_introspect(
 
     # §10.1 unresolved questions
     active_questions, resurfacing_questions = self_store.get_visible_questions()
+    try:
+        question_relationship_store = _relationship_store(config)
+    except Exception:
+        question_relationship_store = None
     question_lines: list[str] = []
     if active_questions:
         question_lines.append("Unresolved questions:")
         for item in active_questions:
-            question_lines.append(
-                f"- [{item['id']}] {item['question']} (importance: {item['importance']})"
-            )
+            question_lines.append(_format_question_line(item, question_relationship_store))
     else:
         question_lines.append("No unresolved questions yet.")
+
+    ripened_block = ""
+    ripened = pick_ripened_question(
+        self_store.get_unresolved_questions_with_salience()
+    )
+    if ripened is not None:
+        try:
+            ripened_block = await build_ripened_question_block(
+                self_store,
+                memory,
+                ripened,
+                relationship_store=question_relationship_store,
+                notion_store=get_notion_store(),
+                now=now,
+            ) or ""
+        except Exception:
+            ripened_block = ""
 
     recent = recent_all[:3]
     resurfacing_triggered_by_recent = False
@@ -628,7 +689,10 @@ async def _handle_introspect(
         coherence_level >= 0.6 or resurfacing_triggered_by_recent
     )
 
-    if show_resurfacing:
+    if ripened_block:
+        question_lines.append("")
+        question_lines.append(ripened_block)
+    elif show_resurfacing:
         question_lines.append("")
         question_lines.append("Resurfacing (you'd almost forgotten):")
         for item in resurfacing_questions:
@@ -720,7 +784,6 @@ async def _handle_introspect(
     # Active persons
     _introspect_active_ids: list[str] = []
     try:
-        from ego_mcp._server_context import _relationship_store
         _ws = _relationship_store(config)
         active_persons = _format_active_persons(_ws, max_persons=2)
         if active_persons:
@@ -826,6 +889,16 @@ async def _handle_consider_them(
         data_lines.append(f"Recent mood trajectory: {mood_tail}")
     if absence_frame:
         data_lines.append(absence_frame)
+    held_questions = shared_open_questions_for_person(
+        SelfModelStore(config.data_dir / "self_model.json"),
+        person,
+        limit=2,
+    )
+    if held_questions:
+        name = rel.name if rel and rel.name else person
+        data_lines.append(f"Held together with {name}:")
+        for question in held_questions:
+            data_lines.append(f"- [{question['id']}] {question['question']}")
     data = "\n".join(data_lines)
     person_notions = sorted(
         (

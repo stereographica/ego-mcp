@@ -39,6 +39,7 @@ from ego_mcp.preciousness import (
     is_precious,
 )
 from ego_mcp.relationship import RelationshipStore
+from ego_mcp.ripening import feed_ripening_questions
 from ego_mcp.scaffolds import (
     SCAFFOLD_CURATE_NOTIONS,
     compose_response,
@@ -315,6 +316,16 @@ async def _handle_consolidate(
 
     dead_links_file_path = sum(1 for dl in dead_links if dl.link_type == "file_path")
     dead_links_notion_ids = sum(1 for dl in dead_links if dl.link_type == "notion_ids")
+    ripening_fed_questions = 0
+    ripening_deposits = 0
+    if config is not None:
+        ripening_stats = await feed_ripening_questions(
+            SelfModelStore(config.data_dir / "self_model.json"),
+            memory,
+            notion_store,
+        )
+        ripening_fed_questions = ripening_stats.fed_questions
+        ripening_deposits = ripening_stats.deposits
 
     update_tool_metadata(
         consolidation_replay_events=stats.replay_events,
@@ -350,6 +361,8 @@ async def _handle_consolidate(
         person_backfilled=_backfilled_count or None,
         dead_links_file_path=dead_links_file_path or None,
         dead_links_notion_ids=dead_links_notion_ids or None,
+        ripening_fed_questions=ripening_fed_questions,
+        ripening_deposits=ripening_deposits,
     )
     base = (
         f"Consolidation complete. "
@@ -370,6 +383,8 @@ async def _handle_consolidate(
         base += f" Linked {notion_links_created} notion pair(s)."
     if _backfilled_count:
         base += f" Backfilled involved_person_ids for {_backfilled_count} memory(s)."
+    if ripening_deposits:
+        base += "\nA few resting questions gathered company."
     if dead_links:
         dead_link_lines = []
         for dl in dead_links:
@@ -538,9 +553,54 @@ def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
         importance = (
             int(raw_importance) if isinstance(raw_importance, (int, float)) else 3
         )
-        question_id = store.add_question(question, importance)
+        person_id: str | None = None
+        display_name: str | None = None
+        raw_with = value.get("with")
+        if isinstance(raw_with, str) and raw_with.strip():
+            requested_person = raw_with.strip()
+            relationship_store = _relationship_store(config)
+            resolved = relationship_store.resolve_person(requested_person)
+            person_id = resolved if resolved is not None else requested_person
+            rel = relationship_store.get(person_id)
+            display_name = rel.name if rel and rel.name else person_id
+
+        lineage: list[str] = []
+        supersedes_not_found = ""
+        carries_forward = ""
+        supersedes = value.get("supersedes")
+        if isinstance(supersedes, str) and supersedes.strip():
+            old_id = supersedes.strip()
+            old_entry = next(
+                (entry for entry in store.get_question_log() if entry["id"] == old_id),
+                None,
+            )
+            if old_entry is None:
+                supersedes_not_found = (
+                    f" (supersedes {old_id} not found — held as a fresh question.)"
+                )
+            else:
+                lineage = list(old_entry.get("lineage", [])) + [old_id]
+                if person_id is None:
+                    inherited_person = old_entry.get("person_id")
+                    if isinstance(inherited_person, str) and inherited_person:
+                        person_id = inherited_person
+                carries_forward = f" It carries forward {old_id}."
+
+        question_id = store.add_question(
+            question,
+            importance,
+            person_id=person_id,
+            lineage=lineage,
+        )
+        if carries_forward:
+            store.resolve_question(str(supersedes).strip())
         clamped = _clamp_question_importance(importance)
-        return f"Holding new question {question_id} (importance: {clamped})."
+        response = f"Holding new question {question_id} (importance: {clamped})."
+        response += carries_forward
+        if display_name is not None:
+            response += f" Held with {display_name}."
+        response += supersedes_not_found
+        return response
 
     if field_name == "resolve_question":
         question_id = str(value)
