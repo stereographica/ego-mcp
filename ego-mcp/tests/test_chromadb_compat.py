@@ -47,3 +47,21 @@ def test_init_server_uses_real_chromadb_client(tmp_path: Path) -> None:
     assert server_mod._memory is not None
     client = server_mod._memory.get_client()
     assert client.__class__.__module__.startswith("chromadb.")
+
+
+def test_local_chromadb_supports_ne_operator() -> None:
+    from ego_mcp.local_chromadb import Collection
+
+    collection = Collection(lambda docs: [[1.0] for _ in docs])
+    collection.add(
+        ids=["empty", "future"],
+        documents=["empty", "future"],
+        metadatas=[
+            {"anticipated_at": ""},
+            {"anticipated_at": "2026-07-10T00:00:00+00:00"},
+        ],
+    )
+
+    result = collection.get(where={"anticipated_at": {"$ne": ""}})
+
+    assert result["ids"] == ["future"]

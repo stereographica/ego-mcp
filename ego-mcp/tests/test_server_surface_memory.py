@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ego_mcp import timezone_utils
 from ego_mcp._server_surface_memory import (
     EMOTION_DEFAULTS,
     _call_get_body_state,
@@ -19,8 +21,10 @@ from ego_mcp._server_surface_memory import (
     _normalize_tags,
     configure_overrides,
 )
+from ego_mcp._server_tools import SURFACE_TOOLS
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
+from ego_mcp.relationship import RelationshipStore
 from ego_mcp.types import (
     Category,
     Emotion,
@@ -40,6 +44,16 @@ def test_emotion_defaults_cover_all_enum_members() -> None:
 def test_emotion_defaults_include_contentment_and_melancholy_values() -> None:
     assert EMOTION_DEFAULTS["contentment"] == pytest.approx((0.5, 0.5, 0.2))
     assert EMOTION_DEFAULTS["melancholy"] == pytest.approx((0.5, -0.4, 0.2))
+
+
+def test_remember_schema_includes_anticipated_at_verbatim() -> None:
+    remember_tool = next(tool for tool in SURFACE_TOOLS if tool.name == "remember")
+    anticipated_at = remember_tool.inputSchema["properties"]["anticipated_at"]
+
+    assert anticipated_at == {
+        "type": "string",
+        "description": "ISO 8601 time of an event this memory looks forward to.",
+    }
 
 
 # --- Helpers and override tests ---
@@ -148,6 +162,25 @@ def mock_memory() -> AsyncMock:
     mem.save_with_auto_link = AsyncMock(return_value=(saved, 0, [], None))
     mem.get_by_id = AsyncMock(return_value=saved)
     return mem
+
+
+def _memory_saving(saved: Memory) -> AsyncMock:
+    memory = AsyncMock()
+    memory.save_with_auto_link = AsyncMock(return_value=(saved, 0, [], None))
+    memory.get_by_id = AsyncMock(return_value=saved)
+    collection = MagicMock()
+    collection.update = MagicMock()
+    memory._ensure_connected = MagicMock(return_value=collection)
+    return memory
+
+
+def _episode_store(episode_id: str = "ep-shared") -> AsyncMock:
+    episodes = AsyncMock()
+    episode = MagicMock()
+    episode.id = episode_id
+    episode.memory_ids = ["test-mem-1"]
+    episodes.create = AsyncMock(return_value=episode)
+    return episodes
 
 
 @pytest.fixture(autouse=True)
@@ -376,6 +409,144 @@ class TestHandleRememberDesireSatisfaction:
         assert "Putting this into words" not in result
 
 
+class TestHandleRememberIntrospectionScaffold:
+    @pytest.mark.asyncio
+    async def test_introspection_uses_open_edge_scaffold(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+    ) -> None:
+        result = await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "A monologue that leaves something open",
+                "emotion": "calm",
+                "category": "introspection",
+            },
+        )
+
+        assert "Did this monologue close, or is something still unfinished?" in result
+        assert "Still open:" in result
+        assert 'update_self(field="new_question"' in result
+        assert "Does this connect to something older?" not in result
+
+    @pytest.mark.asyncio
+    async def test_shared_introspection_keeps_shared_prefix(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+    ) -> None:
+        result = await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "A shared monologue",
+                "emotion": "calm",
+                "category": "introspection",
+                "shared_with": "TestUser",
+            },
+        )
+
+        assert "You recorded a shared experience." in result
+        assert "Did this monologue close, or is something still unfinished?" in result
+
+
+class TestHandleRememberAnticipation:
+    @pytest.mark.asyncio
+    async def test_future_anticipated_at_is_normalized_and_saved(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        result = await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "Looking toward the appointment",
+                "anticipated_at": "2026-07-10T15:30:00",
+            },
+        )
+
+        kwargs = mock_memory.save_with_auto_link.call_args.kwargs
+        assert kwargs["anticipated_at"] == "2026-07-10T15:30:00+00:00"
+        assert "Note: anticipated_at" not in result
+
+    @pytest.mark.asyncio
+    async def test_date_only_anticipated_at_uses_midnight_app_timezone(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "Looking toward the date",
+                "anticipated_at": "2026-07-10",
+            },
+        )
+
+        kwargs = mock_memory.save_with_auto_link.call_args.kwargs
+        assert kwargs["anticipated_at"] == "2026-07-10T00:00:00+00:00"
+
+    @pytest.mark.asyncio
+    async def test_unreadable_anticipated_at_saves_regular_memory_with_note(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+    ) -> None:
+        result = await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "This should still be held",
+                "anticipated_at": "not-a-time",
+            },
+        )
+
+        kwargs = mock_memory.save_with_auto_link.call_args.kwargs
+        assert kwargs["anticipated_at"] == ""
+        assert (
+            "Note: anticipated_at could not be read as a time — held as a regular memory."
+            in result
+        )
+
+    @pytest.mark.asyncio
+    async def test_past_anticipated_at_saves_regular_memory_with_note(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        result = await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "This already happened",
+                "anticipated_at": "2026-07-01T23:00:00+00:00",
+            },
+        )
+
+        kwargs = mock_memory.save_with_auto_link.call_args.kwargs
+        assert kwargs["anticipated_at"] == ""
+        assert (
+            "Note: anticipated_at is already in the past — held as a regular memory."
+            in result
+        )
+
+
 class TestHandleRememberWorkspaceSync:
     """Test workspace sync paths (lines 206-216)."""
 
@@ -477,7 +648,12 @@ class TestHandleRememberWorkspaceSync:
         await _handle_remember(
             remember_config,
             mem_store,
-            {"content": "secret", "emotion": "neutral", "private": True},
+            {
+                "content": "secret",
+                "emotion": "neutral",
+                "private": True,
+                "anticipated_at": "2999-01-01T00:00:00+00:00",
+            },
         )
         mock_sync.sync_memory.assert_not_called()
 
@@ -833,6 +1009,143 @@ class TestHandleRememberSharedWith:
             )
         assert "Saved (" in result
         assert "Shared episode creation failed" in caplog.text
+
+
+class TestHandleRememberSharedWithInteractions:
+    @pytest.mark.asyncio
+    async def test_shared_with_adds_interactions_after_alias_resolution(
+        self,
+        remember_config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_runtime as runtime
+
+        fixed_now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+        monkeypatch.setattr(runtime, "_episodes_getter", lambda: _episode_store())
+
+        store = RelationshipStore(
+            remember_config.data_dir / "relationships" / "models.json"
+        )
+        store.update("alice", {"name": "Alice", "aliases": ["A"]})
+        store.update("bob", {"name": "Bob"})
+        saved = Memory(
+            id="test-mem-1",
+            content="A shared return",
+            timestamp=fixed_now.isoformat(),
+            emotional_trace=EmotionalTrace(
+                primary=Emotion.HAPPY,
+                intensity=0.6,
+                valence=0.6,
+            ),
+        )
+        memory = _memory_saving(saved)
+
+        result = await _handle_remember(
+            remember_config,
+            memory,
+            {
+                "content": "A shared return",
+                "emotion": "happy",
+                "shared_with": ["A", "bob", "A"],
+            },
+        )
+
+        reloaded = RelationshipStore(
+            remember_config.data_dir / "relationships" / "models.json"
+        )
+        assert "Shared episode created" in result
+        assert saved.involved_person_ids == ["alice", "bob"]
+        assert reloaded.get("alice").total_interactions == 1
+        assert reloaded.get("bob").total_interactions == 1
+        assert reloaded.get("alice").communication_style["happy"] == 1.0
+        assert reloaded.get("bob").recent_mood_trajectory[-1]["mood"] == "happy"
+
+    @pytest.mark.asyncio
+    async def test_add_interaction_survives_episode_creation_failure(
+        self,
+        remember_config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import ego_mcp._server_runtime as runtime
+
+        episodes = AsyncMock()
+        episodes.create = AsyncMock(side_effect=RuntimeError("episode failed"))
+        monkeypatch.setattr(runtime, "_episodes_getter", lambda: episodes)
+        fixed_now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+        saved = Memory(
+            id="test-mem-1",
+            content="A shared return",
+            timestamp=fixed_now.isoformat(),
+            emotional_trace=EmotionalTrace(primary=Emotion.CALM),
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = await _handle_remember(
+                remember_config,
+                _memory_saving(saved),
+                {
+                    "content": "A shared return",
+                    "emotion": "calm",
+                    "shared_with": "Dana",
+                },
+            )
+
+        reloaded = RelationshipStore(
+            remember_config.data_dir / "relationships" / "models.json"
+        )
+        assert "Saved (" in result
+        assert "Shared episode creation failed" in caplog.text
+        assert reloaded.get("Dana").total_interactions == 1
+        assert reloaded.get("Dana").communication_style["calm"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_reunion_frame_is_one_line_but_notes_each_person(
+        self,
+        remember_config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_runtime as runtime
+
+        fixed_now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+        monkeypatch.setattr(runtime, "_episodes_getter", lambda: _episode_store())
+        store = RelationshipStore(
+            remember_config.data_dir / "relationships" / "models.json"
+        )
+        store.update("alice", {"name": "Alice"})
+        store.update("bob", {"name": "Bob"})
+        store.add_interaction("alice", "2026-06-01T12:00:00+00:00", "calm")
+        store.add_interaction("bob", "2026-06-01T12:00:00+00:00", "calm")
+        saved = Memory(
+            id="test-mem-1",
+            content="A shared return",
+            timestamp=fixed_now.isoformat(),
+            emotional_trace=EmotionalTrace(primary=Emotion.GRATEFUL),
+        )
+
+        result = await _handle_remember(
+            remember_config,
+            _memory_saving(saved),
+            {
+                "content": "A shared return",
+                "emotion": "grateful",
+                "shared_with": ["alice", "bob"],
+            },
+        )
+
+        reloaded = RelationshipStore(
+            remember_config.data_dir / "relationships" / "models.json"
+        )
+        assert result.count("A shared moment after a while") == 1
+        assert (
+            "A shared moment after a while — about about a month since the last."
+            in result
+        )
+        assert reloaded.raw("alice")["reunion_note"]["wake_up_shown"] is False
+        assert reloaded.raw("bob")["reunion_note"]["wake_up_shown"] is False
 
 
 class TestHandleRememberResurfaced:

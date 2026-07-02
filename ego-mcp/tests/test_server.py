@@ -29,6 +29,7 @@ from ego_mcp.desire_catalog import default_desire_catalog, desire_catalog_settin
 from ego_mcp.embedding import EgoEmbeddingFunction, EmbeddingProvider
 from ego_mcp.memory import MemoryStore
 from ego_mcp.notion import NotionStore
+from ego_mcp.relationship import RelationshipStore
 from ego_mcp.types import (
     Category,
     Emotion,
@@ -390,8 +391,10 @@ class TestImplicitSatisfactionFromServer:
         store = server_mod._relationship_store(config)
         rel = store.get("Master")
 
-        assert "interactions=0" in first
-        assert "interactions=0" in second
+        assert "still new to each other" in first
+        assert "still new to each other" in second
+        assert "interactions=" not in first
+        assert "interactions=" not in second
         assert rel.total_interactions == 0
 
     @pytest.mark.asyncio
@@ -785,6 +788,9 @@ class TestImplicitSatisfactionFromServer:
             def catalog(self) -> None:
                 return None
 
+            def emergent_directions(self) -> dict[str, str]:
+                return {}
+
             def compute_levels_with_modulation(
                 self,
                 *,
@@ -1016,6 +1022,9 @@ class TestWakeUpServerHandler:
             def expire_emergent_desires(self) -> list[str]:
                 return []
 
+            def emergent_directions(self) -> dict[str, str]:
+                return {}
+
         async def fake_relationship_snapshot(
             _config: object, _memory: object, _person: str
         ) -> str:
@@ -1079,6 +1088,9 @@ class TestWakeUpServerHandler:
             def expire_emergent_desires(self) -> list[str]:
                 return []
 
+            def emergent_directions(self) -> dict[str, str]:
+                return {}
+
         async def fake_relationship_snapshot(
             _config: object, _memory: object, _person: str
         ) -> str:
@@ -1125,6 +1137,9 @@ class TestWakeUpServerHandler:
 
             def expire_emergent_desires(self) -> list[str]:
                 return []
+
+            def emergent_directions(self) -> dict[str, str]:
+                return {}
 
         async def fake_relationship_snapshot(
             _config: object, _memory: object, _person: str
@@ -1349,7 +1364,123 @@ class TestForgetToolServerHandlers:
         assert "mem_forget_1" in text
         assert "emotion: curious" in text
         assert "importance: 4" in text
+        assert "This memory is gone. Was there anything worth preserving" in text
+        assert "If this was part of a merge" in text
+        assert "precious_forgotten" not in get_tool_metadata()
         assert fake_sync.calls == ["mem_forget_1"]
+
+    @pytest.mark.asyncio
+    async def test_handle_forget_precious_shared_memory_returns_reflection(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        deleted_memory = Memory(
+            id="mem_shared",
+            content="A quiet shared evening that should keep its texture.",
+            timestamp="2026-02-20T12:34:56+00:00",
+            emotional_trace=EmotionalTrace(primary=Emotion.MOVED, intensity=0.6),
+            importance=5,
+            access_count=1,
+            involved_person_ids=["person_known", "person_missing"],
+        )
+        relationships = RelationshipStore(tmp_path / "relationships" / "models.json")
+        relationships.update("person_known", {"name": "Ada"})
+
+        class FakeMemoryStore:
+            data_dir = tmp_path
+
+            async def delete(self, memory_id: str) -> Memory | None:
+                assert memory_id == "mem_shared"
+                return deleted_memory
+
+        text = await server_mod._handle_forget(
+            cast(Any, FakeMemoryStore()),
+            {"memory_id": "mem_shared"},
+        )
+
+        assert (
+            "This one was shared with Ada and person_missing.\n"
+            "What made you let it go?\n"
+            "If the letting-go itself means something, remember can hold that."
+        ) in text
+        metadata = get_tool_metadata()
+        assert metadata["precious_forgotten"] == "mem_shared"
+        assert metadata["preciousness_signature"] == "A"
+
+    @pytest.mark.asyncio
+    async def test_handle_forget_precious_recalled_memory_returns_reflection(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        deleted_memory = Memory(
+            id="mem_recalled",
+            content="A small recurring memory.",
+            timestamp="2026-02-20T12:34:56+00:00",
+            emotional_trace=EmotionalTrace(primary=Emotion.NEUTRAL, intensity=0.5),
+            importance=2,
+            access_count=3,
+        )
+
+        class FakeMemoryStore:
+            data_dir = tmp_path
+
+            async def delete(self, memory_id: str) -> Memory | None:
+                assert memory_id == "mem_recalled"
+                return deleted_memory
+
+        text = await server_mod._handle_forget(
+            cast(Any, FakeMemoryStore()),
+            {"memory_id": "mem_recalled"},
+        )
+
+        assert (
+            "Something kept drawing you back to this — 3 times, "
+            "though it never seemed important.\n"
+            "Do you know what that was?\n"
+            "If the letting-go itself means something, remember can hold that."
+        ) in text
+        metadata = get_tool_metadata()
+        assert metadata["precious_forgotten"] == "mem_recalled"
+        assert metadata["preciousness_signature"] == "B"
+
+    @pytest.mark.asyncio
+    async def test_handle_forget_precious_shared_and_recalled_memory_reflects_both(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        deleted_memory = Memory(
+            id="mem_both",
+            content="A shared memory that returned again and again.",
+            timestamp="2026-02-20T12:34:56+00:00",
+            emotional_trace=EmotionalTrace(primary=Emotion.MOVED, intensity=0.6),
+            importance=2,
+            access_count=3,
+            involved_person_ids=["person_known"],
+        )
+        relationships = RelationshipStore(tmp_path / "relationships" / "models.json")
+        relationships.update("person_known", {"name": "Ada"})
+
+        class FakeMemoryStore:
+            data_dir = tmp_path
+
+            async def delete(self, memory_id: str) -> Memory | None:
+                assert memory_id == "mem_both"
+                return deleted_memory
+
+        text = await server_mod._handle_forget(
+            cast(Any, FakeMemoryStore()),
+            {"memory_id": "mem_both"},
+        )
+
+        assert (
+            "This one was shared with Ada — and something kept drawing you back "
+            "to it, 3 times.\n"
+            "What made you let it go? Do you know what kept pulling?\n"
+            "If the letting-go itself means something, remember can hold that."
+        ) in text
+        metadata = get_tool_metadata()
+        assert metadata["precious_forgotten"] == "mem_both"
+        assert metadata["preciousness_signature"] == "AB"
 
     @pytest.mark.asyncio
     async def test_handle_forget_missing_memory_returns_not_found(

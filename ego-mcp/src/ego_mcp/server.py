@@ -61,6 +61,7 @@ _recall_scaffold = _handlers._recall_scaffold
 _parse_iso_datetime = _handlers._parse_iso_datetime
 _memories_within_days = _handlers._memories_within_days
 _secondary_weighted_counts = _handlers._secondary_weighted_counts
+_tail_quote_for_introspection = _handlers._tail_quote_for_introspection
 _valence_arousal_to_impression = _handlers._valence_arousal_to_impression
 _format_recent_emotion_layer = _handlers._format_recent_emotion_layer
 _format_week_emotion_layer = _handlers._format_week_emotion_layer
@@ -258,7 +259,7 @@ def _sanitize_tool_args_for_logging(
         if isinstance(content, str):
             safe_args["content_length"] = len(content)
         safe_args["content"] = "[REDACTED_PRIVATE_MEMORY]"
-        for key in ("secondary", "body_state", "tags"):
+        for key in ("secondary", "body_state", "tags", "anticipated_at"):
             if key in safe_args:
                 safe_args[key] = "[REDACTED_PRIVATE_FIELD]"
     return safe_args

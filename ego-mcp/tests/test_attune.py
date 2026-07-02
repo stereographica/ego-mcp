@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ego_mcp import timezone_utils
+from ego_mcp._server_runtime import get_tool_metadata, reset_tool_metadata
 from ego_mcp._server_surface_attune import (
     _handle_attune,
     _has_older_memory_echo,
@@ -17,6 +20,7 @@ from ego_mcp._server_surface_attune import (
 )
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
+from ego_mcp.relationship import RelationshipStore
 from ego_mcp.types import Category, Emotion, EmotionalTrace, Memory
 
 
@@ -103,6 +107,90 @@ class TestHandleAttune:
         assert "Recent (past 3 days):" in result
 
     @pytest.mark.asyncio
+    async def test_approaching_anticipation_shown_after_texture_when_rng_allows(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        monkeypatch.setattr("ego_mcp._server_surface_attune.random.random", lambda: 0.49)
+        memory.list_anticipations = MagicMock(
+            return_value=[
+                Memory(
+                    id="approaching",
+                    content="the later threshold",
+                    anticipated_at=(now + timedelta(days=10)).isoformat(),
+                    importance=5,
+                )
+            ]
+        )
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert 'Approaching: "the later threshold" (in about 10 days).' in result
+        assert result.index("Recent (past 3 days):") < result.index("Approaching:")
+        assert result.index("Approaching:") < result.index("Desire currents:")
+        assert get_tool_metadata().get("anticipation_presented") == "approaching"
+
+    @pytest.mark.asyncio
+    async def test_approaching_anticipation_thinned_when_rng_blocks(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        monkeypatch.setattr("ego_mcp._server_surface_attune.random.random", lambda: 0.99)
+        memory.list_anticipations = MagicMock(
+            return_value=[
+                Memory(
+                    id="approaching",
+                    content="the later threshold",
+                    anticipated_at=(now + timedelta(days=10)).isoformat(),
+                    importance=5,
+                )
+            ]
+        )
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert "Approaching:" not in result
+
+    @pytest.mark.asyncio
+    async def test_arrived_anticipation_marks_surfaced_and_records_metadata(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        memory.list_anticipations = MagicMock(
+            return_value=[
+                Memory(
+                    id="arrived",
+                    content="the time arrived",
+                    anticipated_at=(now - timedelta(minutes=1)).isoformat(),
+                )
+            ]
+        )
+        memory.mark_anticipation_surfaced = MagicMock()
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert 'That time came: "the time arrived". How was it, actually?' in result
+        memory.mark_anticipation_surfaced.assert_called_once_with("arrived")
+        assert get_tool_metadata().get("anticipation_arrived") == "arrived"
+
+    @pytest.mark.asyncio
     async def test_returns_body_sense_section(
         self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
     ) -> None:
@@ -125,20 +213,20 @@ class TestHandleAttune:
         assert "What am I actually feeling right now" in result
 
     @pytest.mark.asyncio
-    async def test_emergent_pull_shown_when_emergent_desire_active(
+    async def test_active_emergent_desire_only_appears_in_desire_currents(
         self,
         config: EgoConfig,
         memory: AsyncMock,
         engine: DesireEngine,
     ) -> None:
-        """Lines 160-162: emergent_desire_sentence returns a sentence."""
         engine._state["be_with_someone"] = {"is_emergent": True}
         result = await _handle_attune(config, memory, {}, engine)
-        assert "Emergent pull:" in result
-        assert "You want to be with someone." in result
+        assert "Emergent pull:" not in result
+        assert "The wish for company sits quietly underneath." in result
+        assert "You want to be with someone." not in result
 
     @pytest.mark.asyncio
-    async def test_recent_memories_can_trigger_emergent_pull_without_notions(
+    async def test_recent_memories_can_trigger_emergent_desire_without_pull_section(
         self,
         config: EgoConfig,
         memory: AsyncMock,
@@ -162,8 +250,150 @@ class TestHandleAttune:
 
         result = await _handle_attune(config, memory, {}, engine)
 
-        assert "Emergent pull:" in result
-        assert "You want to be with someone." in result
+        assert "Emergent pull:" not in result
+        assert "Something in this reaches toward company." in result
+        assert "You want to be with someone." not in result
+
+    @pytest.mark.asyncio
+    async def test_curious_tonus_boosts_curiosity(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_surface_attune as attune_mod
+
+        now = datetime.now(timezone.utc)
+        memory.list_recent = AsyncMock(
+            return_value=[
+                Memory(
+                    id=f"curious-{i}",
+                    content="following a question",
+                    timestamp=(now - timedelta(hours=i + 1)).isoformat(),
+                    emotional_trace=EmotionalTrace(
+                        primary=Emotion.CURIOUS,
+                        valence=0.4,
+                    ),
+                )
+                for i in range(3)
+            ]
+        )
+        monkeypatch.setattr(
+            attune_mod,
+            "_get_body_state_override",
+            lambda: {"time_phase": "unknown"},
+        )
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"curiosity": 0.4},
+        )
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            attune_mod,
+            "update_tool_metadata",
+            lambda **kwargs: captured.update(kwargs),
+        )
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["curiosity_tonus_boost"] == "0.05"
+        assert captured["desire_levels"] == {"curiosity": 0.45}
+
+    @pytest.mark.asyncio
+    async def test_curious_tonus_boost_clips_at_one(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_surface_attune as attune_mod
+
+        now = datetime.now(timezone.utc)
+        memory.list_recent = AsyncMock(
+            return_value=[
+                Memory(
+                    id=f"curious-clip-{i}",
+                    content="following a question",
+                    timestamp=(now - timedelta(hours=i + 1)).isoformat(),
+                    emotional_trace=EmotionalTrace(
+                        primary=Emotion.CURIOUS,
+                        valence=0.4,
+                    ),
+                )
+                for i in range(3)
+            ]
+        )
+        monkeypatch.setattr(
+            attune_mod,
+            "_get_body_state_override",
+            lambda: {"time_phase": "unknown"},
+        )
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"curiosity": 0.98},
+        )
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            attune_mod,
+            "update_tool_metadata",
+            lambda **kwargs: captured.update(kwargs),
+        )
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["curiosity_tonus_boost"] == "0.05"
+        assert captured["desire_levels"] == {"curiosity": 1.0}
+
+    @pytest.mark.asyncio
+    async def test_curious_tonus_skips_when_curiosity_level_missing(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_surface_attune as attune_mod
+
+        now = datetime.now(timezone.utc)
+        memory.list_recent = AsyncMock(
+            return_value=[
+                Memory(
+                    id=f"curious-missing-{i}",
+                    content="following a question",
+                    timestamp=(now - timedelta(hours=i + 1)).isoformat(),
+                    emotional_trace=EmotionalTrace(
+                        primary=Emotion.CURIOUS,
+                        valence=0.4,
+                    ),
+                )
+                for i in range(3)
+            ]
+        )
+        monkeypatch.setattr(
+            attune_mod,
+            "_get_body_state_override",
+            lambda: {"time_phase": "unknown"},
+        )
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"expression": 0.4},
+        )
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            attune_mod,
+            "update_tool_metadata",
+            lambda **kwargs: captured.update(kwargs),
+        )
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["curiosity_tonus_boost"] is None
+        assert captured["desire_levels"] == {"expression": 0.4}
 
     @pytest.mark.asyncio
     async def test_current_interests_section_when_memories_present(
@@ -247,6 +477,98 @@ class TestHandleAttune:
         )
         result = await _handle_attune(config, mem_store, {}, engine)
         assert "This keeps coming back" not in result
+
+
+class TestAttuneAbsence:
+    @pytest.mark.asyncio
+    async def test_quiet_absence_line_after_body_sense_without_counting_interaction(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update("TestUser", {"name": "TestUser"})
+        store.add_interaction("TestUser", "2026-06-18T12:00:00+00:00", "calm")
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert "Body sense:" in result
+        assert (
+            "It's been quieter than usual with TestUser — about about two weeks."
+            in result
+        )
+        assert result.index("Body sense:") < result.index(
+            "It's been quieter than usual"
+        )
+        reloaded = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        assert reloaded.get("TestUser").total_interactions == 1
+        assert get_tool_metadata().get("absence_band") == "quiet"
+        assert get_tool_metadata().get("absence_person") == "TestUser"
+        assert "absence_social_thirst_boost" not in get_tool_metadata()
+
+    @pytest.mark.asyncio
+    async def test_long_absence_boosts_social_thirst_and_clips(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_surface_attune as attune_mod
+
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update("TestUser", {"name": "TestUser"})
+        store.add_interaction("TestUser", "2026-06-01T12:00:00+00:00", "calm")
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"social_thirst": 0.97},
+        )
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            attune_mod,
+            "update_tool_metadata",
+            lambda **kwargs: captured.update(kwargs),
+        )
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert (
+            "It's been quieter than usual with TestUser — about about a month."
+            in result
+        )
+        assert captured["absence_band"] == "long"
+        assert captured["absence_social_thirst_boost"] == "0.08"
+        assert captured["desire_levels"] == {"social_thirst": 1.0}
+
+    @pytest.mark.asyncio
+    async def test_usual_absence_band_stays_silent(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update("TestUser", {"name": "TestUser"})
+        store.add_interaction("TestUser", "2026-06-25T12:00:00+00:00", "calm")
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert "It's been quieter than usual" not in result
+        reloaded = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        assert reloaded.get("TestUser").total_interactions == 1
+        assert get_tool_metadata().get("absence_band") == "usual"
 
 
 class TestHasOlderMemoryEcho:
@@ -464,8 +786,9 @@ class TestAttunePersonOption:
             result = asyncio.run(attune_mod._handle_attune(config, mem_store, {"person": "Alice"}, engine))
             # Should contain Alice's relationship snapshot
             assert "Regarding Alice:" in result
-            assert "trust 0.7" in result
-            assert "42 interactions" in result
+            line = next(line for line in result.splitlines() if line.startswith("Regarding Alice:"))
+            assert line == "Regarding Alice: deep trust; a growing history."
+            assert re.search(r"\d", line) is None
 
     def test_attune_resolves_alias(self, tmp_path: Path) -> None:
         """alias 指定で canonical name に解決される."""

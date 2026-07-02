@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from ego_mcp.relationship import _UPDATABLE_FIELDS, RelationshipStore
+from ego_mcp.relationship import (
+    _UPDATABLE_FIELDS,
+    INTERACTION_LOG_MAX,
+    RelationshipStore,
+)
 
 
 class TestRelationshipStore:
@@ -46,6 +52,66 @@ class TestRelationshipStore:
         assert updated.last_interaction == ts
         assert updated.communication_style["focused"] == 1.0
         assert updated.recent_mood_trajectory[-1]["mood"] == "focused"
+
+    def test_add_interaction_increments_total_independent_of_log_length(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        path = tmp_path / "relationships.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "Master": {
+                        "person_id": "Master",
+                        "name": "Master",
+                        "total_interactions": 10,
+                        "interaction_log": [
+                            {
+                                "timestamp": "2026-02-19T10:00:00+00:00",
+                                "tone": "warm",
+                            }
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        store = RelationshipStore(path)
+
+        updated = store.add_interaction(
+            "Master",
+            "2026-02-20T10:00:00+00:00",
+            "focused",
+        )
+
+        assert updated.total_interactions == 11
+        assert len(store.raw("Master")["interaction_log"]) == 2
+
+    def test_add_interaction_caps_log_and_preserves_first_interaction(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = RelationshipStore(tmp_path / "relationships.json")
+        first_ts = "2026-01-01T00:00:00+00:00"
+        store.add_interaction("Master", first_ts, "unknown-tone")
+
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for index in range(1, INTERACTION_LOG_MAX + 6):
+            store.add_interaction(
+                "Master",
+                (start + timedelta(days=index)).isoformat(),
+                "unknown-tone",
+            )
+
+        rel = store.get("Master")
+        raw = store.raw("Master")
+        assert rel.total_interactions == INTERACTION_LOG_MAX + 6
+        assert rel.first_interaction == first_ts
+        assert len(raw["interaction_log"]) == INTERACTION_LOG_MAX
+        assert raw["interaction_log"][0]["timestamp"] != first_ts
+        assert rel.communication_style["unknown-tone"] == float(
+            INTERACTION_LOG_MAX + 6
+        )
 
     def test_add_shared_episode(self, tmp_path: Path) -> None:
         store = RelationshipStore(tmp_path / "relationships.json")

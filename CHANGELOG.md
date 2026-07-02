@@ -2,6 +2,33 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [1.6.0] - 2026-07-02
+
+### Added
+- ego-mcp: かけがえのなさの暗黙保護(`preciousness.py`)を追加 — 感情ピークの共有記憶(intensity ≥ 0.6)と反復想起される低重要度記憶(access ≥ 3, importance ≤ 2)を merge 候補から除外し、検索ランキングにのみ decay 床 0.25 を適用(表示の鮮明さは生 decay のまま)。precious な記憶の forget には手放した理由を尋ねる反射スキャフォールドを返し、`precious_forgotten` / `preciousness_signature` をテレメトリに出力
+- ego-mcp: `remember` に `anticipated_at`(ISO 8601)を追加 — 未来の時点を指す記憶は到達まで decay 1.0(ランキング・表示とも)で保持され、wake_up / attune が arrived(`That time came:`)または接近中の予期を最大 1 件提示する。日付のみ / naive はアプリタイムゾーンへ正規化し、パース不能・過去は通常記憶として保存して Note を返す
+- ego-mcp: `anticipation.py` を新設 — importance × 7 日の τ による接近顕在度、帯域(arrived / imminent / approaching / distant)、approaching の確率 0.5 提示。`list_anticipations` / `mark_anticipation_surfaced` を MemoryStore に追加(local ChromaDB に `$ne` フィルタ対応を追加)
+- ego-mcp: `remember(category="introspection")` に内省専用スキャフォールドを追加 — 独白の末尾に `Still open:` を残す慣行を案内し、wake_up が未完の縁を持ち越せるようにした
+- ego-mcp: `update_self(field="new_question")` の構造化入口を追加(ID 発行・importance clamp・登録応答)。`supersedes`(lineage 継承 + 旧問いの冪等 resolve)と `with`(person 紐づけ)を受け付け、`unresolved_questions` 生リスト経路は互換シムで question_log へ変換し、ロード時に孤児の問いを救出する
+- ego-mcp: wake_up に `Open edges` 節を追加 — 最も顕著な active な問いを 1 件だけ提示。introspect には問い登録の案内行を常時表示
+- ego-mcp: 問いのライフサイクル — question_log に `person_id` / `companions` / `lineage` / `last_fed_at` を追加(すべて optional・追記的、migration 不要)
+- ego-mcp: `ripening.py` を新設 — consolidate が休眠寄りの問い(importance ≥ 2、salience 0.1〜0.3)に中間距離(0.35〜0.65)の companion 記憶と張力ペア(valence 対立)を給餌する。応答には `A few resting questions gathered company.` の 1 行のみ
+- ego-mcp: 熟成した問いの再浮上 — 堆積 3 件で wake_up の Open edges / introspect に companion snippet・張力・共有相手つきで提示(提示後に堆積をクリアし、どの面でも一度だけ)。削除済み記憶の堆積は静かにスキップ
+- ego-mcp: 共有された問いの表示 — consider_them の `Held together with {name}:`(最大 2 件)、introspect の `(importance: N, with {name})`、再会 frame への未解決の共有問い 1 件の付加
+- ego-mcp: attune に確率 0.25 の気配行 `Something is ripening where you're not looking.` を追加(表示時のみテレメトリ記録)
+- ego-mcp: `remember(shared_with=...)` が `add_interaction` を暗黙配線 — 対話間隔 EMA から不在帯域(2 倍で quiet / 4 倍で long)を導出し、attune に不在行 + long 時 social_thirst +0.08、consider_them に不在 frame 2 行、wake_up に再会 note(一度だけ)を提示
+- ego-mcp: `absence.py` / `relationship_wording.py` を新設 — 期間・頻度・trust(5 帯)・歴史・shared episodes を数字を含まない言葉に変換(第 4 条: 数値は内部、外は言葉)
+- ego-mcp: 創発欲求に方向性(rising / steady / settling)を追加 — 寿命比(< 25% / ≥ 60%)と充足履歴から導出し、Desire currents の文面に反映
+- ego-mcp: CURIOUS 主調 + 正の valence を curiosity トーヌス(attune で +0.05 boost)として扱うよう変更(grasp_something の生成トリガーからは除外)
+
+### Changed
+- ego-mcp: wake_up の独白引用を先頭 220 字截断から末尾主義(`Still open:` マーカー優先)へ変更
+- ego-mcp: `Emergent pull:` 節を attune / wake_up から削除し、創発欲求の提示チャネルを Desire currents に一本化。embers は fragment 参照に変更(出力形式は不変)
+- ego-mcp: 感情→創発テンプレートの二重定義マップを単一関数に統合。問い帯域の閾値を名前付き定数(`QUESTION_ACTIVE_MIN_SALIENCE` / `QUESTION_DORMANT_MAX_SALIENCE`)に集約(挙動不変)
+- ego-mcp: `add_interaction` の `total_interactions` を len 同期から増分方式に変更し、`interaction_log` を直近 200 件に cap
+- ego-mcp: relationship snapshot と consider_them summary、attune の Regarding 行から数値露出を全廃 — `trust= / interactions= / shared_episodes= / last_interaction=` 形式を廃止し、セミコロン節結合の言葉形式へ移行(テレメトリの数値フィールドは不変)
+- バージョンアップ: ego-mcp `1.3.0` → `1.6.0`
+
 ## [1.3.0] - 2026-06-03
 
 ### Added

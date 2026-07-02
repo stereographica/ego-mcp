@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Sequence
 
 from ego_mcp import timezone_utils
 from ego_mcp._memory_serialization import links_to_json
+from ego_mcp.preciousness import is_protected
 
 if TYPE_CHECKING:
     from ego_mcp.memory import MemoryStore
@@ -223,7 +224,8 @@ class ConsolidationEngine:
         emotional, thematic, and cross-category similarity.
         """
         effective_window = window if window is not None else window_hours
-        cutoff = timezone_utils.now() - timedelta(hours=max(1, effective_window))
+        now = timezone_utils.now()
+        cutoff = now - timedelta(hours=max(1, effective_window))
         all_memories = await store.list_recent(
             n=max(store.collection_count(), max_replay_events * 2)
         )
@@ -319,6 +321,8 @@ class ConsolidationEngine:
                 if result.memory.id == memory.id:
                     continue
                 if result.distance >= merge_threshold:
+                    continue
+                if is_protected(memory, now) or is_protected(result.memory, now):
                     continue
 
                 if memory.id <= result.memory.id:

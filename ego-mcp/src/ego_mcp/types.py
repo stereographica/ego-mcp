@@ -115,6 +115,8 @@ class Memory:
     access_count: int = 0
     last_accessed: str = ""
     involved_person_ids: list[str] = field(default_factory=list)
+    anticipated_at: str = ""
+    anticipation_surfaced: bool = False
 
     @staticmethod
     def now_iso() -> str:

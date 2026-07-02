@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ego_mcp import timezone_utils
 from ego_mcp._server_context import (
     _cosine_similarity,
     _derive_desire_modulation,
     _find_related_forgotten_questions,
     _infer_topics_from_memories,
     _relationship_snapshot,
+    _summarize_conversation_tendency,
 )
 from ego_mcp.config import EgoConfig
+from ego_mcp.relationship import RelationshipStore
 from ego_mcp.types import Category, Emotion, EmotionalTrace, Memory
 
 
@@ -40,6 +44,18 @@ def _make_memory(
             arousal=0.5,
             intensity=intensity,
         ),
+        tags=["test"],
+        importance=3,
+    )
+
+
+def _make_conversation_at(content: str, timestamp: datetime) -> Memory:
+    return Memory(
+        id=f"m-{content}",
+        content=content,
+        timestamp=timestamp.isoformat(),
+        category=Category.CONVERSATION,
+        emotional_trace=EmotionalTrace(primary=Emotion.CALM),
         tags=["test"],
         importance=3,
     )
@@ -220,4 +236,153 @@ class TestRelationshipSnapshot:
         mem.list_recent = AsyncMock(return_value=[])
         result = await _relationship_snapshot(config, mem, "TestUser")
         assert "TestUser" in result
-        assert "trust=" in result
+        assert "steady ground between you" in result
+        assert "trust=" not in result
+
+    @pytest.mark.asyncio
+    async def test_snapshot_words_relationship_without_digits(
+        self,
+        config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update(
+            "TestUser",
+            {
+                "trust_level": 0.52,
+                "first_interaction": "2026-06-01T12:00:00+00:00",
+                "last_interaction": "2026-06-11T12:00:00+00:00",
+                "total_interactions": 12,
+                "shared_episode_ids": ["ep-alpha", "ep-beta", "ep-gamma"],
+            },
+        )
+        mem = AsyncMock()
+        mem.list_recent = AsyncMock(
+            return_value=[
+                _make_conversation_at(
+                    "TestUser asked about code",
+                    now - timedelta(days=1),
+                )
+            ]
+        )
+
+        result = await _relationship_snapshot(config, mem, "TestUser")
+
+        assert result == (
+            "TestUser: steady ground between you; "
+            "a growing history, a few shared chapters; "
+            "usually calm between you; "
+            "last shared moment about three weeks ago; "
+            "they've come up once or twice this week."
+        )
+        assert re.search(r"\d", result) is None
+        assert "trust=" not in result
+        assert "interactions=" not in result
+        assert "shared_episodes=" not in result
+        assert "last_interaction=" not in result
+        assert "recent_frequency=" not in result
+        assert "mentions in last 7d" not in result
+        assert "conversations in last 7d" not in result
+
+    @pytest.mark.asyncio
+    async def test_snapshot_omits_empty_episode_and_last_interaction_clauses(
+        self,
+        config: EgoConfig,
+    ) -> None:
+        mem = AsyncMock()
+        mem.list_recent = AsyncMock(return_value=[])
+
+        result = await _relationship_snapshot(config, mem, "Stranger")
+
+        assert result.startswith(
+            "Stranger: steady ground between you; still new to each other"
+        )
+        assert "shared chapters" not in result
+        assert "last shared moment" not in result
+
+
+class TestSummarizeConversationTendencyFrequencyWords:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("count", "expected"),
+        [
+            (0, "quiet on that front lately"),
+            (1, "they've come up once or twice this week"),
+            (2, "they've come up once or twice this week"),
+            (3, "they've been a steady presence this week"),
+            (6, "they've been a steady presence this week"),
+            (7, "they've been woven through the week"),
+        ],
+    )
+    async def test_person_mention_frequency_words(
+        self,
+        count: int,
+        expected: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        memories = [
+            _make_conversation_at(
+                "TestUser older note",
+                now - timedelta(days=8),
+            )
+        ]
+        memories.extend(
+            _make_conversation_at(
+                f"TestUser recent note {idx}",
+                now - timedelta(days=1),
+            )
+            for idx in range(count)
+        )
+        mem = AsyncMock()
+        mem.list_recent = AsyncMock(return_value=memories)
+
+        frequency, _, _, _ = await _summarize_conversation_tendency(
+            mem,
+            "TestUser",
+        )
+
+        assert frequency == expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("count", "expected"),
+        [
+            (0, "a quiet week for conversation"),
+            (1, "a few conversations this week"),
+            (2, "a few conversations this week"),
+            (3, "a steady week of conversation"),
+            (6, "a steady week of conversation"),
+            (7, "a talkative week"),
+        ],
+    )
+    async def test_general_conversation_frequency_words(
+        self,
+        count: int,
+        expected: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        memories = [
+            _make_conversation_at("older chat", now - timedelta(days=8))
+        ]
+        memories.extend(
+            _make_conversation_at(
+                f"recent chat {idx}",
+                now - timedelta(days=1),
+            )
+            for idx in range(count)
+        )
+        mem = AsyncMock()
+        mem.list_recent = AsyncMock(return_value=memories)
+
+        frequency, _, _, _ = await _summarize_conversation_tendency(
+            mem,
+            "TestUser",
+        )
+
+        assert frequency == expected

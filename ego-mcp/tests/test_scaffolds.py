@@ -14,6 +14,7 @@ from ego_mcp.scaffolds import (
     SCAFFOLD_INTROSPECT,
     SCAFFOLD_PAUSE,
     SCAFFOLD_REMEMBER,
+    SCAFFOLD_REMEMBER_INTROSPECTION,
     SCAFFOLD_WAKE_UP,
     compose_response,
     render,
@@ -121,6 +122,15 @@ class TestScaffoldContent:
 
     def test_remember_connection(self) -> None:
         assert "connect" in SCAFFOLD_REMEMBER.lower()
+
+    def test_remember_introspection_verbatim(self) -> None:
+        assert SCAFFOLD_REMEMBER_INTROSPECTION == (
+            "Did this monologue close, or is something still unfinished?\n"
+            "If something is open, end your monologues with 'Still open:' — a line or two. "
+            "wake_up will carry it forward.\n"
+            'If a question crystallized here, hold it: '
+            'update_self(field="new_question", value={"question": ..., "importance": 1-5}).'
+        )
 
     def test_curate_notions_ring_true(self) -> None:
         assert "ring true" in SCAFFOLD_CURATE_NOTIONS.lower()

@@ -32,12 +32,20 @@ from ego_mcp.notion import (
     infer_person_id,
     is_ephemeral_cluster,
 )
+from ego_mcp.preciousness import (
+    PRECIOUS_ACCESS_MIN,
+    PRECIOUS_IMPORTANCE_MAX,
+    PRECIOUS_INTENSITY_MIN,
+    is_precious,
+)
+from ego_mcp.relationship import RelationshipStore
+from ego_mcp.ripening import feed_ripening_questions
 from ego_mcp.scaffolds import (
     SCAFFOLD_CURATE_NOTIONS,
     compose_response,
 )
-from ego_mcp.self_model import SelfModelStore
-from ego_mcp.types import MetaField
+from ego_mcp.self_model import SelfModelStore, _clamp_question_importance
+from ego_mcp.types import Memory, MetaField
 
 logger = logging.getLogger(__name__)
 _relative_time_override: Callable[[str, datetime | None], str] | None = None
@@ -65,6 +73,84 @@ def _set_tool_context(name: str, context: dict[str, object]) -> None:
 
 def pop_tool_context(name: str) -> dict[str, object]:
     return _last_tool_context.pop(name, {})
+
+
+def _preciousness_signature(memory: Memory) -> str | None:
+    if not is_precious(memory):
+        return None
+    shared = (
+        bool(memory.involved_person_ids)
+        and memory.emotional_trace.intensity >= PRECIOUS_INTENSITY_MIN
+    )
+    repeated = (
+        memory.access_count >= PRECIOUS_ACCESS_MIN
+        and memory.importance <= PRECIOUS_IMPORTANCE_MAX
+    )
+    if shared and repeated:
+        return "AB"
+    if shared:
+        return "A"
+    if repeated:
+        return "B"
+    return None
+
+
+def _relationship_store_for_memory(memory: MemoryStore) -> RelationshipStore | None:
+    data_dir = getattr(memory, "data_dir", None)
+    if data_dir is None:
+        return None
+    try:
+        return RelationshipStore(Path(data_dir) / "relationships" / "models.json")
+    except TypeError:
+        return None
+
+
+def _involved_person_names(memory: MemoryStore, person_ids: list[str]) -> str:
+    relationship_store = _relationship_store_for_memory(memory)
+    names: list[str] = []
+    for pid in person_ids:
+        name = pid
+        if relationship_store is not None:
+            rel = relationship_store.get(pid)
+            name = rel.name or pid
+        names.append(name)
+    return " and ".join(names)
+
+
+def _forget_scaffold_for_memory(memory_store: MemoryStore, deleted: Memory) -> str:
+    signature = _preciousness_signature(deleted)
+    if signature is None:
+        return (
+            "This memory is gone. Was there anything worth preserving in a new form?\n"
+            "If this was part of a merge, save the consolidated version with remember."
+        )
+
+    update_tool_metadata(
+        precious_forgotten=deleted.id,
+        preciousness_signature=signature,
+    )
+    if signature == "A":
+        names = _involved_person_names(memory_store, deleted.involved_person_ids)
+        return (
+            f"This one was shared with {names}.\n"
+            "What made you let it go?\n"
+            "If the letting-go itself means something, remember can hold that."
+        )
+    if signature == "B":
+        return (
+            "Something kept drawing you back to this — "
+            f"{deleted.access_count} times, though it never seemed important.\n"
+            "Do you know what that was?\n"
+            "If the letting-go itself means something, remember can hold that."
+        )
+
+    names = _involved_person_names(memory_store, deleted.involved_person_ids)
+    return (
+        f"This one was shared with {names} — and something kept drawing you back "
+        f"to it, {deleted.access_count} times.\n"
+        "What made you let it go? Do you know what kept pulling?\n"
+        "If the letting-go itself means something, remember can hold that."
+    )
 
 
 def _load_person_memory_ids(memory: MemoryStore) -> dict[str, set[str]]:
@@ -230,6 +316,16 @@ async def _handle_consolidate(
 
     dead_links_file_path = sum(1 for dl in dead_links if dl.link_type == "file_path")
     dead_links_notion_ids = sum(1 for dl in dead_links if dl.link_type == "notion_ids")
+    ripening_fed_questions = 0
+    ripening_deposits = 0
+    if config is not None:
+        ripening_stats = await feed_ripening_questions(
+            SelfModelStore(config.data_dir / "self_model.json"),
+            memory,
+            notion_store,
+        )
+        ripening_fed_questions = ripening_stats.fed_questions
+        ripening_deposits = ripening_stats.deposits
 
     update_tool_metadata(
         consolidation_replay_events=stats.replay_events,
@@ -265,6 +361,8 @@ async def _handle_consolidate(
         person_backfilled=_backfilled_count or None,
         dead_links_file_path=dead_links_file_path or None,
         dead_links_notion_ids=dead_links_notion_ids or None,
+        ripening_fed_questions=ripening_fed_questions,
+        ripening_deposits=ripening_deposits,
     )
     base = (
         f"Consolidation complete. "
@@ -285,6 +383,8 @@ async def _handle_consolidate(
         base += f" Linked {notion_links_created} notion pair(s)."
     if _backfilled_count:
         base += f" Backfilled involved_person_ids for {_backfilled_count} memory(s)."
+    if ripening_deposits:
+        base += "\nA few resting questions gathered company."
     if dead_links:
         dead_link_lines = []
         for dl in dead_links:
@@ -338,10 +438,7 @@ async def _handle_forget(memory: MemoryStore, args: dict[str, Any]) -> str:
         f"emotion: {deleted.emotional_trace.primary.value} | "
         f"importance: {deleted.importance}{sync_note}"
     )
-    scaffold = (
-        "This memory is gone. Was there anything worth preserving in a new form?\n"
-        "If this was part of a merge, save the consolidated version with remember."
-    )
+    scaffold = _forget_scaffold_for_memory(memory, deleted)
     return compose_response(data, scaffold)
 
 
@@ -392,11 +489,118 @@ _SELF_FIELD_ALIASES: dict[str, str] = {
 }
 
 
+def _dedupe_preserving_order(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
+
+
+def _update_unresolved_questions_from_list(
+    store: SelfModelStore,
+    value: list[Any],
+) -> str:
+    log = store.get_question_log()
+    known_ids = {str(entry["id"]) for entry in log}
+    text_to_id = {
+        str(entry["question"]): str(entry["id"])
+        for entry in log
+        if not bool(entry.get("resolved", False))
+    }
+    new_ids: list[str] = []
+    converted = 0
+    for item in value:
+        s = str(item)
+        if s in known_ids:
+            new_ids.append(s)
+        elif s in text_to_id:
+            new_ids.append(text_to_id[s])
+        else:
+            new_ids.append(store.add_question(s, importance=3))
+            converted += 1
+
+    deduped_ids = _dedupe_preserving_order(new_ids)
+    deduped_set = set(deduped_ids)
+    old_unresolved = store._data.get("unresolved_questions", [])
+    old_ids: list[str] = []
+    if isinstance(old_unresolved, list):
+        old_ids = [str(qid) for qid in old_unresolved if str(qid) in known_ids]
+    removed = [qid for qid in old_ids if qid not in deduped_set]
+    for question_id in removed:
+        store.resolve_question(question_id)
+    store.update({"unresolved_questions": deduped_ids})
+    return (
+        f"Updated self.unresolved_questions ({converted} converted to tracked "
+        f"questions, {len(removed)} resolved)."
+    )
+
+
 def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
     """Update self model."""
     field_name = _SELF_FIELD_ALIASES.get(args["field"], args["field"])
     value = args["value"]
     store = SelfModelStore(config.data_dir / "self_model.json")
+
+    if field_name == "new_question":
+        if not isinstance(value, dict) or not str(value.get("question", "")).strip():
+            return 'new_question expects {"question": str, "importance": 1-5}.'
+        question = str(value["question"]).strip()
+        raw_importance = value.get("importance", 3)
+        importance = (
+            int(raw_importance) if isinstance(raw_importance, (int, float)) else 3
+        )
+        person_id: str | None = None
+        display_name: str | None = None
+        raw_with = value.get("with")
+        if isinstance(raw_with, str) and raw_with.strip():
+            requested_person = raw_with.strip()
+            relationship_store = _relationship_store(config)
+            resolved = relationship_store.resolve_person(requested_person)
+            person_id = resolved if resolved is not None else requested_person
+            rel = relationship_store.get(person_id)
+            display_name = rel.name if rel and rel.name else person_id
+
+        lineage: list[str] = []
+        supersedes_not_found = ""
+        carries_forward = ""
+        supersedes = value.get("supersedes")
+        if isinstance(supersedes, str) and supersedes.strip():
+            old_id = supersedes.strip()
+            old_entry = next(
+                (entry for entry in store.get_question_log() if entry["id"] == old_id),
+                None,
+            )
+            if old_entry is None:
+                supersedes_not_found = (
+                    f" (supersedes {old_id} not found — held as a fresh question.)"
+                )
+            else:
+                lineage = list(old_entry.get("lineage", [])) + [old_id]
+                if person_id is None:
+                    inherited_person = old_entry.get("person_id")
+                    if isinstance(inherited_person, str) and inherited_person:
+                        person_id = inherited_person
+                carries_forward = f" It carries forward {old_id}."
+
+        question_id = store.add_question(
+            question,
+            importance,
+            person_id=person_id,
+            lineage=lineage,
+        )
+        if carries_forward:
+            store.resolve_question(str(supersedes).strip())
+        clamped = _clamp_question_importance(importance)
+        response = f"Holding new question {question_id} (importance: {clamped})."
+        response += carries_forward
+        if display_name is not None:
+            response += f" Held with {display_name}."
+        response += supersedes_not_found
+        return response
 
     if field_name == "resolve_question":
         question_id = str(value)
@@ -414,6 +618,9 @@ def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
         if store.update_question_importance(question_id, int(importance)):
             return f"Updated question importance for {question_id}."
         return f"Question {question_id} not found."
+
+    if field_name == "unresolved_questions" and isinstance(value, list):
+        return _update_unresolved_questions_from_list(store, value)
 
     try:
         store.update({field_name: value})

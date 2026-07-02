@@ -314,7 +314,7 @@ class TestWakeUp:
         result = await _call(
             "wake_up", {}, config, memory, desire, episodes, consolidation
         )
-        assert "trust=0.82" in result
+        assert "deep trust" in result
 
     @pytest.mark.asyncio
     async def test_prefers_workspace_latest_introspection(
@@ -594,7 +594,7 @@ class TestIntrospect:
             "introspect", {}, config, memory, desire, episodes, consolidation
         )
         assert "Self model:" in result
-        assert "Master: trust=" in result
+        assert "Master: steady ground between you" in result
         assert "[high]" not in result
         assert "[mid]" not in result
         assert "[low]" not in result
@@ -642,7 +642,7 @@ class TestConsiderThem:
         result = await _call(
             "consider_them", {}, config, memory, desire, episodes, consolidation
         )
-        assert "trust=0.91" in result
+        assert "the kind of trust you don't need to name" in result
         assert "Recent dialog tendency" in result
 
     @pytest.mark.asyncio
@@ -1690,10 +1690,11 @@ class TestToolLoggingPrivacy:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         secret = "super secret private payload"
+        anticipated_at = "2999-01-01T00:00:00+00:00"
         with caplog.at_level(logging.INFO, logger="ego_mcp.server"):
             await _call(
                 "remember",
-                {"content": secret, "private": True},
+                {"content": secret, "private": True, "anticipated_at": anticipated_at},
                 config,
                 memory,
                 desire,
@@ -1715,6 +1716,15 @@ class TestToolLoggingPrivacy:
             for record in invocation_records
         )
         assert all(secret not in str(getattr(record, "tool_args", {})) for record in invocation_records)
+        assert all(
+            getattr(record, "tool_args", {}).get("anticipated_at")
+            == "[REDACTED_PRIVATE_FIELD]"
+            for record in invocation_records
+        )
+        assert all(
+            anticipated_at not in str(getattr(record, "tool_args", {}))
+            for record in invocation_records
+        )
 
     @pytest.mark.asyncio
     async def test_recall_masks_private_content_in_logs(
@@ -1964,7 +1974,7 @@ class TestUpdateRelationship:
             episodes,
             consolidation,
         )
-        assert "trust=0.90" in consider
+        assert "the kind of trust you don't need to name" in consider
 
     @pytest.mark.asyncio
     async def test_invalid_field_returns_error(
@@ -2149,6 +2159,129 @@ class TestUpdateSelf:
             consolidation,
         )
         assert f"Updated question importance for {qid}" in result
+
+    @pytest.mark.asyncio
+    async def test_new_question_via_update_self(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "update_self",
+            {
+                "field": "new_question",
+                "value": {"question": "What is still unfinished?", "importance": 99},
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        store = SelfModelStore(config.data_dir / "self_model.json")
+        entry = store.get_question_log()[0]
+
+        assert result == f"Holding new question {entry['id']} (importance: 5)."
+        assert entry["question"] == "What is still unfinished?"
+        assert entry["importance"] == 5
+        assert store.get().unresolved_questions == ["What is still unfinished?"]
+
+    @pytest.mark.asyncio
+    async def test_new_question_non_numeric_importance_defaults_to_three(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "update_self",
+            {
+                "field": "new_question",
+                "value": {"question": "What should be held?", "importance": "5"},
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        entry = SelfModelStore(config.data_dir / "self_model.json").get_question_log()[0]
+
+        assert result == f"Holding new question {entry['id']} (importance: 3)."
+        assert entry["importance"] == 3
+
+    @pytest.mark.asyncio
+    async def test_new_question_rejects_non_dict_value(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        result = await _call(
+            "update_self",
+            {"field": "new_question", "value": "What is still unfinished?"},
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        store = SelfModelStore(config.data_dir / "self_model.json")
+
+        assert result == 'new_question expects {"question": str, "importance": 1-5}.'
+        assert store.get_question_log() == []
+
+    @pytest.mark.asyncio
+    async def test_unresolved_questions_list_shim_tracks_and_resolves(
+        self,
+        config: EgoConfig,
+        memory: MemoryStore,
+        desire: DesireEngine,
+        episodes: EpisodeStore,
+        consolidation: ConsolidationEngine,
+    ) -> None:
+        store = SelfModelStore(config.data_dir / "self_model.json")
+        keep_id = store.add_question("Keep this edge", importance=4)
+        removed_id = store.add_question("Resolve by omission", importance=5)
+
+        result = await _call(
+            "update_self",
+            {
+                "field": "unresolved_questions",
+                "value": [
+                    "A raw question from the old path",
+                    keep_id,
+                    "Keep this edge",
+                ],
+            },
+            config,
+            memory,
+            desire,
+            episodes,
+            consolidation,
+        )
+        updated = SelfModelStore(config.data_dir / "self_model.json")
+        log = updated.get_question_log()
+        log_by_id = {entry["id"]: entry for entry in log}
+
+        assert result == (
+            "Updated self.unresolved_questions (1 converted to tracked questions, "
+            "1 resolved)."
+        )
+        assert log_by_id[keep_id]["resolved"] is False
+        assert log_by_id[removed_id]["resolved"] is True
+        assert updated.get().unresolved_questions == [
+            "A raw question from the old path",
+            "Keep this edge",
+        ]
+        assert sum(1 for entry in log if entry["question"] == "Keep this edge") == 1
 
     @pytest.mark.asyncio
     async def test_rejects_invalid_field(

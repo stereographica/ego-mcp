@@ -9,10 +9,16 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ego_mcp import timezone_utils
+from ego_mcp.absence import approx_duration_words
 from ego_mcp.config import EgoConfig
 from ego_mcp.memory import MemoryStore
 from ego_mcp.relationship import RelationshipStore
-from ego_mcp.self_model import SelfModelStore
+from ego_mcp.relationship_wording import episode_words, history_words, trust_words
+from ego_mcp.self_model import (
+    QUESTION_ACTIVE_MIN_SALIENCE,
+    QUESTION_DORMANT_MAX_SALIENCE,
+    SelfModelStore,
+)
 from ego_mcp.types import Memory
 
 logger = logging.getLogger(__name__)
@@ -38,12 +44,12 @@ def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
 def _fading_or_dormant_questions(
     memory: MemoryStore, store: SelfModelStore | None = None
 ) -> list[dict[str, Any]]:
-    """Return unresolved questions that are no longer fully active (salience <= 0.3)."""
+    """Return unresolved questions that are no longer fully active."""
     model_store = store or _self_model_store_for_memory(memory)
     return [
         q
         for q in model_store.get_unresolved_questions_with_salience()
-        if float(q.get("salience", 0.0)) <= 0.3
+        if float(q.get("salience", 0.0)) <= QUESTION_ACTIVE_MIN_SALIENCE
     ]
 
 
@@ -55,7 +61,9 @@ def _fading_important_questions(
     return [
         q
         for q in model_store.get_unresolved_questions_with_salience()
-        if 0.1 < float(q.get("salience", 0.0)) <= 0.3
+        if QUESTION_DORMANT_MAX_SALIENCE
+        < float(q.get("salience", 0.0))
+        <= QUESTION_ACTIVE_MIN_SALIENCE
         and int(q.get("importance", 3)) >= 4
     ]
 
@@ -89,7 +97,11 @@ def _find_related_forgotten_questions(
         similarity = _cosine_similarity(content_embedding, embedding)
         if similarity > threshold:
             salience = float(question.get("salience", 0.0))
-            band = "dormant" if salience <= 0.1 else "fading"
+            band = (
+                "dormant"
+                if salience <= QUESTION_DORMANT_MAX_SALIENCE
+                else "fading"
+            )
             related.append({**question, "trigger_similarity": similarity, "band": band})
 
     related.sort(key=lambda q: float(q.get("trigger_similarity", 0.0)), reverse=True)
@@ -98,6 +110,37 @@ def _find_related_forgotten_questions(
 
 def _relationship_store(config: EgoConfig) -> RelationshipStore:
     return RelationshipStore(config.data_dir / "relationships" / "models.json")
+
+
+def _frequency_words(last_7d: int, *, matched_person: bool) -> str:
+    if matched_person:
+        if last_7d == 0:
+            return "quiet on that front lately"
+        if last_7d <= 2:
+            return "they've come up once or twice this week"
+        if last_7d <= 6:
+            return "they've been a steady presence this week"
+        return "they've been woven through the week"
+    if last_7d == 0:
+        return "a quiet week for conversation"
+    if last_7d <= 2:
+        return "a few conversations this week"
+    if last_7d <= 6:
+        return "a steady week of conversation"
+    return "a talkative week"
+
+
+def _last_interaction_words(timestamp: str, now: datetime) -> str:
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return ""
+    parsed = timezone_utils.localize(parsed)
+    elapsed_days = max(
+        0.0,
+        (now - parsed).total_seconds() / 86400.0,
+    )
+    return f"{approx_duration_words(elapsed_days)} ago"
 
 
 async def _summarize_conversation_tendency(
@@ -129,11 +172,7 @@ async def _summarize_conversation_tendency(
             continue
 
     dominant_tone = max(tones.items(), key=lambda x: x[1])[0]
-    frequency = (
-        f"{last_7d} mentions in last 7d"
-        if filtered
-        else f"{last_7d} conversations in last 7d"
-    )
+    frequency = _frequency_words(last_7d, matched_person=bool(filtered))
     preferred_topics, sensitive_topics = _infer_topics_from_memories(pool)
     return frequency, dominant_tone, preferred_topics, sensitive_topics
 
@@ -173,19 +212,23 @@ async def _relationship_snapshot(
     """Build a compact relationship summary line for surface tools."""
     store = _relationship_store(config)
     rel = store.get(person)
+    now = timezone_utils.now()
     frequency, dominant_tone, _, _ = await _summarize_conversation_tendency(
         memory, person
     )
-    parts = [
-        f"{person}: trust={rel.trust_level:.2f}",
-        f"interactions={rel.total_interactions}",
-        f"shared_episodes={len(rel.shared_episode_ids)}",
-        f"dominant_tone={dominant_tone}",
+    clauses = [
+        trust_words(rel.trust_level),
+        history_words(rel.first_interaction, rel.total_interactions, now),
     ]
+    if rel.shared_episode_ids:
+        clauses[-1] += f", {episode_words(len(rel.shared_episode_ids))}"
+    clauses.append(f"usually {dominant_tone} between you")
     if rel.last_interaction:
-        parts.append(f"last_interaction={rel.last_interaction[:10]}")
-    parts.append(f"recent_frequency={frequency}")
-    return ", ".join(parts)
+        last_interaction = _last_interaction_words(rel.last_interaction, now)
+        if last_interaction:
+            clauses.append(f"last shared moment {last_interaction}")
+    clauses.append(frequency)
+    return f"{person}: " + "; ".join(clauses) + "."
 
 
 async def _derive_desire_modulation(

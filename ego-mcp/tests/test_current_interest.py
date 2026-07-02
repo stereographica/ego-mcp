@@ -53,7 +53,6 @@ class TestEmptyInputs:
         result = derive_current_interests(
             recent_memories=[],
             background_memories=[],
-            emergent_desires=[],
             recent_notions=[],
         )
         assert result == []
@@ -63,7 +62,6 @@ class TestEmptyInputs:
         result = derive_current_interests(
             recent_memories=[],
             background_memories=[],
-            emergent_desires=[],
             recent_notions=[notion],
         )
         assert len(result) >= 1
@@ -76,7 +74,6 @@ class TestTagBasedTopics:
         result = derive_current_interests(
             recent_memories=[mem],
             background_memories=[mem],
-            emergent_desires=[],
             recent_notions=[],
         )
         assert len(result) >= 1
@@ -92,7 +89,6 @@ class TestTagBasedTopics:
         result = derive_current_interests(
             recent_memories=mems,
             background_memories=mems,
-            emergent_desires=[],
             recent_notions=[],
         )
         assert len(result) >= 1
@@ -106,7 +102,6 @@ class TestNotionWeighting:
         result = derive_current_interests(
             recent_memories=[mem],
             background_memories=[mem],
-            emergent_desires=[],
             recent_notions=[notion],
         )
         assert len(result) >= 2
@@ -127,7 +122,6 @@ class TestGenericCategories:
         result = derive_current_interests(
             recent_memories=[recent_daily, recent_tech],
             background_memories=bg,
-            emergent_desires=[],
             recent_notions=[],
         )
         topics = [r["topic"] for r in result]
@@ -161,7 +155,6 @@ class TestMaxInterests:
         result = derive_current_interests(
             recent_memories=mems,
             background_memories=mems,
-            emergent_desires=[],
             recent_notions=[],
             max_interests=2,
         )
@@ -178,7 +171,6 @@ class TestEmotionColor:
         result = derive_current_interests(
             recent_memories=[mem],
             background_memories=[mem],
-            emergent_desires=[],
             recent_notions=[],
         )
         assert len(result) >= 1
@@ -193,7 +185,6 @@ class TestRecencyDecay:
         result = derive_current_interests(
             recent_memories=[old_mem, new_mem],
             background_memories=[old_mem, new_mem],
-            emergent_desires=[],
             recent_notions=[],
         )
         assert len(result) >= 2
@@ -202,15 +193,13 @@ class TestRecencyDecay:
 
 
 class TestEmergentDesires:
-    def test_emergent_desire_contributes_topic(self) -> None:
+    def test_emergent_desire_is_not_a_topic(self) -> None:
         result = derive_current_interests(
             recent_memories=[],
             background_memories=[],
-            emergent_desires=["be_with_someone"],
             recent_notions=[],
         )
-        assert len(result) >= 1
-        assert result[0]["source"] == "emergent_desire"
+        assert result == []
 
 
 class TestOutputStructure:
@@ -219,7 +208,6 @@ class TestOutputStructure:
         result = derive_current_interests(
             recent_memories=[mem],
             background_memories=[mem],
-            emergent_desires=[],
             recent_notions=[],
         )
         assert len(result) >= 1

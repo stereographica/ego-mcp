@@ -27,6 +27,7 @@ from ego_mcp._server_runtime import (
     update_tool_metadata,
 )
 from ego_mcp._server_surface_person import _collect_resonant_persons
+from ego_mcp.absence import absence_band, approx_duration_words
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_satisfaction import SignalEmbeddingCache, infer_desire_satisfaction
@@ -37,11 +38,14 @@ from ego_mcp.notion import (
     format_neighborhood,
     update_notion_from_memory,
 )
+from ego_mcp.ripening import format_shared_question_line
 from ego_mcp.scaffolds import (
     SCAFFOLD_RECALL_EXPLORE,
     SCAFFOLD_REMEMBER,
+    SCAFFOLD_REMEMBER_INTROSPECTION,
     compose_response,
 )
+from ego_mcp.self_model import SelfModelStore
 
 logger = logging.getLogger(__name__)
 _REMEMBER_DUPLICATE_PREFIX = "Not saved — very similar memory already exists."
@@ -81,6 +85,12 @@ EMOTION_DEFAULTS: dict[str, tuple[float, float, float]] = {
 _relative_time_override: Callable[[str, datetime | None], str] | None = None
 _get_body_state_override: Callable[[], dict[str, Any]] | None = None
 _last_tool_context: dict[str, dict[str, object]] = {}
+_ANTICIPATED_AT_PARSE_NOTE = (
+    "Note: anticipated_at could not be read as a time — held as a regular memory."
+)
+_ANTICIPATED_AT_PAST_NOTE = (
+    "Note: anticipated_at is already in the past — held as a regular memory."
+)
 
 
 def configure_overrides(
@@ -139,6 +149,22 @@ def _normalize_tags(raw_tags: Any) -> list[str]:
     return tags
 
 
+def _normalize_anticipated_at(raw_value: Any) -> tuple[str, str]:
+    if not raw_value:
+        return "", ""
+    if not isinstance(raw_value, str):
+        return "", _ANTICIPATED_AT_PARSE_NOTE
+    try:
+        parsed = datetime.fromisoformat(raw_value)
+    except ValueError:
+        return "", _ANTICIPATED_AT_PARSE_NOTE
+    parsed = timezone_utils.localize(parsed)
+    now = timezone_utils.now()
+    if parsed <= now:
+        return "", _ANTICIPATED_AT_PAST_NOTE
+    return parsed.isoformat(), ""
+
+
 async def _handle_remember(
     config: EgoConfig,
     memory: MemoryStore,
@@ -181,6 +207,9 @@ async def _handle_remember(
     shared_with_raw = args.get("shared_with")
     related_memories_raw = args.get("related_memories")
     satisfies_raw = args.get("satisfies")
+    anticipated_at, anticipation_note = _normalize_anticipated_at(
+        args.get("anticipated_at")
+    )
 
     mem, num_links, linked_results, duplicate_of = await memory.save_with_auto_link(
         content=content,
@@ -194,6 +223,7 @@ async def _handle_remember(
         body_state=body_state,
         tags=tags,
         private=private,
+        anticipated_at=anticipated_at,
     )
     if mem is None and duplicate_of is not None:
         age = _call_relative_time(duplicate_of.memory.timestamp)
@@ -283,6 +313,8 @@ async def _handle_remember(
         shared_with = list(dict.fromkeys(canonicalized))
 
     shared_episode_section = ""
+    reunion_section = ""
+    reunion_question_section = ""
     if shared_with:
         related_ids: list[str] = []
         if isinstance(related_memories_raw, list):
@@ -320,10 +352,40 @@ async def _handle_remember(
                     )
             except (AttributeError, TypeError, KeyError, ValueError) as exc:
                 logger.debug("involved_person_ids persist failed (non-fatal): %s", exc)
+            relationship_store = _relationship_store(config)
+            interaction_now = timezone_utils.now()
+            interaction_now_iso = interaction_now.isoformat()
+            reunion_tone = mem.emotional_trace.primary.value
+            for person in shared_with:
+                band, elapsed_days = absence_band(
+                    relationship_store.raw(person),
+                    interaction_now,
+                )
+                relationship_store.add_interaction(
+                    person,
+                    mem.timestamp,
+                    tone=reunion_tone,
+                )
+                if band in ("quiet", "long"):
+                    relationship_store.set_reunion_note(
+                        person,
+                        gap_days=elapsed_days,
+                        noted_at=interaction_now_iso,
+                    )
+                    if not reunion_section:
+                        elapsed_words = approx_duration_words(elapsed_days)
+                        reunion_section = (
+                            "A shared moment after a while — "
+                            f"about {elapsed_words} since the last."
+                        )
+                    if not reunion_question_section:
+                        reunion_question_section = format_shared_question_line(
+                            SelfModelStore(config.data_dir / "self_model.json"),
+                            person,
+                        )
             try:
                 episode_store = get_episodes()
                 episode = await episode_store.create(related_ids, summary)
-                relationship_store = _relationship_store(config)
                 for person in shared_with:
                     relationship_store.add_shared_episode(person, episode.id)
                 shared_episode_section = (
@@ -377,10 +439,25 @@ async def _handle_remember(
         data_parts.append(forgotten_section.strip())
     if shared_episode_section:
         data_parts.append(shared_episode_section.strip())
+    if reunion_section:
+        data_parts.append(reunion_section)
+    if reunion_question_section:
+        data_parts.append(reunion_question_section)
     if desire_settling_section:
         data_parts.append(desire_settling_section)
+    if anticipation_note:
+        data_parts.append(anticipation_note)
     data = "\n".join(data_parts)
-    if shared_with_provided:
+    if category == "introspection":
+        if shared_with_provided:
+            scaffold = (
+                "You recorded a shared experience. Does this change how you understand "
+                "your relationship with them?\n"
+                f"{SCAFFOLD_REMEMBER_INTROSPECTION}"
+            )
+        else:
+            scaffold = SCAFFOLD_REMEMBER_INTROSPECTION
+    elif shared_with_provided:
         scaffold = (
             "You recorded a shared experience. Does this change how you understand "
             "your relationship with them?\n"

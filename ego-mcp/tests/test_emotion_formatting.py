@@ -14,6 +14,7 @@ from ego_mcp._server_emotion_formatting import (
     _memories_within_days,
     _parse_iso_datetime,
     _secondary_weighted_counts,
+    _tail_quote_for_introspection,
     _truncate_for_log,
     _truncate_for_quote,
     _valence_arousal_to_impression,
@@ -184,6 +185,37 @@ class TestTruncation:
         result, truncated = _truncate_for_log(text)
         assert result.endswith("...")
         assert truncated is True
+
+    def test_tail_quote_prefers_last_still_open_marker(self) -> None:
+        text = (
+            "summary Still open: first unfinished thing. "
+            "more reflection Still open: final unfinished thing."
+        )
+        assert (
+            _tail_quote_for_introspection(text)
+            == "Still open: final unfinished thing."
+        )
+
+    def test_tail_quote_matches_marker_case_insensitively(self) -> None:
+        text = "finished setup still OPEN: case shifted edge"
+        assert _tail_quote_for_introspection(text) == "still OPEN: case shifted edge"
+
+    def test_tail_quote_long_marker_segment_keeps_marker_head(self) -> None:
+        text = "setup Still open: " + ("a" * 260)
+        result = _tail_quote_for_introspection(text)
+        assert result.startswith("Still open:")
+        assert result.endswith("...")
+        assert len(result) == 220
+
+    def test_tail_quote_without_marker_keeps_tail_220(self) -> None:
+        text = "prefix " + ("b" * 240)
+        result = _tail_quote_for_introspection(text)
+        assert result.startswith("...")
+        assert len(result) == 220
+        assert result.endswith("b" * 20)
+
+    def test_tail_quote_without_marker_short_text_unchanged(self) -> None:
+        assert _tail_quote_for_introspection("short monologue") == "short monologue"
 
 
 # ---------------------------------------------------------------------------

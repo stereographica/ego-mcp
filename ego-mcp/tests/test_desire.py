@@ -16,6 +16,7 @@ from ego_mcp.desire import (
     DESIRES,
     DesireEngine,
     _calculate_sigmoid_level,
+    detect_curious_tonus,
     generate_emergent_from_recent_memories,
 )
 from ego_mcp.desire_blend import blend_desires
@@ -515,6 +516,23 @@ class TestEmergentDesires:
         assert engine._state[created[0]]["created"] != ""
         assert engine.compute_levels()[created[0]] >= 0.0
 
+    def test_curious_notion_does_not_create_grasp_something(
+        self, engine: DesireEngine
+    ) -> None:
+        notions = [
+            Notion(
+                label="open question",
+                emotion_tone=Emotion.CURIOUS,
+                valence=0.7,
+                confidence=0.8,
+            )
+        ]
+
+        created = engine.generate_emergent_desires(notions)
+
+        assert created == []
+        assert "grasp_something" not in engine._state
+
     def test_satisfy_accepts_legacy_emergent_sentence_alias(
         self, engine: DesireEngine
     ) -> None:
@@ -543,8 +561,106 @@ class TestEmergentDesires:
                 {"grasp_something": 0.8},
                 catalog=engine.catalog,
             )
-            == "You want to grasp something."
+            == "That unnamed something is still there, quietly."
         )
+
+    def test_emergent_directions_use_age_boundaries(
+        self,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ego_mcp import timezone_utils
+
+        now = datetime.now(timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        engine._state["grasp_something"] = {
+            "last_satisfied": "",
+            "satisfaction_quality": 0.5,
+            "boost": 0.0,
+            "is_emergent": True,
+            "created": (now - timedelta(hours=1)).isoformat(),
+            "satisfaction_hours": 24.0,
+        }
+        engine._state["be_with_someone"] = {
+            "last_satisfied": "",
+            "satisfaction_quality": 0.5,
+            "boost": 0.0,
+            "is_emergent": True,
+            "created": (now - timedelta(hours=18)).isoformat(),
+            "satisfaction_hours": 24.0,
+        }
+        engine._state["feel_safe"] = {
+            "last_satisfied": "",
+            "satisfaction_quality": 0.5,
+            "boost": 0.0,
+            "is_emergent": True,
+            "created": (now - timedelta(hours=43.2)).isoformat(),
+            "satisfaction_hours": 24.0,
+        }
+
+        directions = engine.emergent_directions()
+
+        assert directions["grasp_something"] == "rising"
+        assert directions["be_with_someone"] == "steady"
+        assert directions["feel_safe"] == "settling"
+
+    def test_emergent_direction_defaults_and_satisfaction(
+        self, engine: DesireEngine
+    ) -> None:
+        engine._state["grasp_something"] = {
+            "last_satisfied": "",
+            "is_emergent": True,
+            "created": "",
+        }
+        engine._state["be_with_someone"] = {
+            "last_satisfied": "",
+            "is_emergent": True,
+            "created": "not-a-date",
+        }
+        engine._state["feel_safe"] = {
+            "last_satisfied": datetime.now(timezone.utc).isoformat(),
+            "is_emergent": True,
+            "created": datetime.now(timezone.utc).isoformat(),
+        }
+
+        directions = engine.emergent_directions()
+
+        assert directions["grasp_something"] == "steady"
+        assert directions["be_with_someone"] == "steady"
+        assert directions["feel_safe"] == "settling"
+
+    def test_emergent_direction_uses_current_catalog_expiry(
+        self, tmp_path: Path
+    ) -> None:
+        catalog = default_desire_catalog()
+        payload = catalog.model_dump(mode="json", exclude_none=True)
+        payload["emergent"]["expiry_hours"] = 40.0
+        settings_dir = tmp_path / "settings"
+        settings_dir.mkdir()
+        settings_path = settings_dir / "desires.json"
+        settings_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        engine = DesireEngine.from_data_dir(tmp_path)
+        engine._state["grasp_something"] = {
+            "last_satisfied": "",
+            "satisfaction_quality": 0.5,
+            "boost": 0.0,
+            "is_emergent": True,
+            "created": (
+                datetime.now(timezone.utc) - timedelta(hours=20)
+            ).isoformat(),
+            "satisfaction_hours": 24.0,
+        }
+
+        assert engine.emergent_directions()["grasp_something"] == "steady"
+
+        payload["emergent"]["expiry_hours"] = 30.0
+        settings_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        assert engine.emergent_directions()["grasp_something"] == "settling"
 
     def test_expire_emergent_desires_removes_stale_entries(
         self, engine: DesireEngine
@@ -738,6 +854,64 @@ class TestGenerateEmergentFromRecentMemories:
         result = generate_emergent_from_recent_memories(engine, mems)
         assert result is not None
         assert result == "grasp_something"
+
+    def test_curious_dominant_emotion_does_not_trigger_desire(
+        self, tmp_path: Path
+    ) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        mems = [
+            _memory_with_emotion(Emotion.CURIOUS, 0.7, hours_ago=1),
+            _memory_with_emotion(Emotion.CURIOUS, 0.5, hours_ago=2),
+            _memory_with_emotion(Emotion.CURIOUS, 0.6, hours_ago=3),
+        ]
+
+        result = generate_emergent_from_recent_memories(engine, mems)
+
+        assert result is None
+        assert "grasp_something" not in engine._state
+        assert detect_curious_tonus(mems) is True
+
+    def test_curious_dominant_zero_valence_has_no_tonus_or_generation(
+        self, tmp_path: Path
+    ) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        mems = [
+            _memory_with_emotion(Emotion.CURIOUS, 0.0, hours_ago=1),
+            _memory_with_emotion(Emotion.CURIOUS, 0.0, hours_ago=2),
+            _memory_with_emotion(Emotion.CURIOUS, 0.0, hours_ago=3),
+        ]
+
+        result = generate_emergent_from_recent_memories(engine, mems)
+
+        assert result is None
+        assert detect_curious_tonus(mems) is False
+
+    def test_excited_curious_tie_keeps_counter_insertion_order(
+        self, tmp_path: Path
+    ) -> None:
+        engine = DesireEngine.from_data_dir(tmp_path)
+        excited_first = [
+            _memory_with_emotion(Emotion.EXCITED, 0.7, hours_ago=1),
+            _memory_with_emotion(Emotion.CURIOUS, 0.7, hours_ago=2),
+        ]
+        curious_first = [
+            _memory_with_emotion(Emotion.CURIOUS, 0.7, hours_ago=1),
+            _memory_with_emotion(Emotion.EXCITED, 0.7, hours_ago=2),
+        ]
+
+        assert (
+            generate_emergent_from_recent_memories(
+                engine, excited_first, min_memories=2
+            )
+            == "grasp_something"
+        )
+        engine._state.pop("grasp_something", None)
+        assert (
+            generate_emergent_from_recent_memories(
+                engine, curious_first, min_memories=2
+            )
+            is None
+        )
 
     def test_old_memories_outside_window_excluded(self, tmp_path: Path) -> None:
         engine = DesireEngine.from_data_dir(tmp_path)

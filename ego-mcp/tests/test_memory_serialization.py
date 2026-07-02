@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from ego_mcp._memory_serialization import memory_from_chromadb
-from ego_mcp.types import Category, Emotion
+from ego_mcp._memory_serialization import memory_from_chromadb, memory_to_chromadb
+from ego_mcp.types import Category, Emotion, Memory
 
 
 class TestMemoryFromChromadbInvalidEnums:
@@ -104,3 +104,32 @@ class TestMemoryFromChromadbBodyState:
         )
         assert mem.emotional_trace.body_state is not None
         assert mem.emotional_trace.body_state.time_phase == "morning"
+
+
+class TestMemoryAnticipationMetadata:
+    def test_anticipation_metadata_roundtrips(self) -> None:
+        memory = Memory(
+            id="m9",
+            content="future note",
+            timestamp="2026-07-02T00:00:00+00:00",
+            anticipated_at="2026-07-10T00:00:00+00:00",
+            anticipation_surfaced=True,
+        )
+
+        metadata = memory_to_chromadb(memory)
+        loaded = memory_from_chromadb("m9", "future note", metadata)
+
+        assert metadata["anticipated_at"] == "2026-07-10T00:00:00+00:00"
+        assert metadata["anticipation_surfaced"] is True
+        assert loaded.anticipated_at == "2026-07-10T00:00:00+00:00"
+        assert loaded.anticipation_surfaced is True
+
+    def test_missing_anticipation_metadata_defaults(self) -> None:
+        loaded = memory_from_chromadb(
+            "m10",
+            "plain note",
+            {"timestamp": "2026-07-02T00:00:00+00:00"},
+        )
+
+        assert loaded.anticipated_at == ""
+        assert loaded.anticipation_surfaced is False

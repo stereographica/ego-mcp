@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import random
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
-from ego_mcp import _memory_queries
+from ego_mcp import _memory_queries, timezone_utils
+from ego_mcp._memory_scoring import (
+    calculate_final_score,
+    calculate_importance_boost,
+    calculate_time_decay,
+)
 from ego_mcp._memory_serialization import links_to_json
-from ego_mcp.types import LinkType, Memory, MemoryLink
+from ego_mcp.preciousness import PRECIOUS_DECAY_FLOOR
+from ego_mcp.types import EmotionalTrace, LinkType, Memory, MemoryLink
 
 
 class _FakeCollection:
@@ -57,19 +64,22 @@ def _metadata(
     last_accessed: str = "",
     importance: int = 3,
     emotion: str = "neutral",
+    intensity: float = 0.5,
     valence: float = 0.0,
     arousal: float = 0.5,
+    involved_person_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     payload = {
         "timestamp": timestamp,
         "category": category,
         "emotion": emotion,
-        "intensity": 0.5,
+        "intensity": intensity,
         "valence": valence,
         "arousal": arousal,
         "importance": importance,
         "access_count": access_count,
         "last_accessed": last_accessed,
+        "involved_person_ids": ",".join(involved_person_ids or []),
     }
     if linked_ids is not None:
         payload["linked_ids"] = links_to_json(linked_ids)
@@ -249,6 +259,123 @@ class TestListRecent:
 
 
 class TestResurfacingAndRecall:
+    def test_scored_result_applies_precious_floor_to_score_only(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        timestamp = fixed_now - timedelta(days=365)
+        memory = Memory(
+            timestamp=timestamp.isoformat(),
+            emotional_trace=EmotionalTrace(intensity=0.6),
+            importance=5,
+            involved_person_ids=["person_a"],
+        )
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        result = _memory_queries._scored_result(memory, distance=0.20)
+
+        raw_decay = calculate_time_decay(timestamp.isoformat(), now=fixed_now)
+        expected_score = calculate_final_score(
+            0.20,
+            PRECIOUS_DECAY_FLOOR,
+            0.0,
+            calculate_importance_boost(5),
+        )
+        assert raw_decay < PRECIOUS_DECAY_FLOOR
+        assert result.decay == pytest.approx(raw_decay)
+        assert result.score == pytest.approx(expected_score)
+
+    def test_scored_result_keeps_young_precious_decay_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        timestamp = fixed_now - timedelta(days=1)
+        memory = Memory(
+            timestamp=timestamp.isoformat(),
+            emotional_trace=EmotionalTrace(intensity=0.6),
+            importance=5,
+            involved_person_ids=["person_a"],
+        )
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        result = _memory_queries._scored_result(memory, distance=0.20)
+
+        raw_decay = calculate_time_decay(timestamp.isoformat(), now=fixed_now)
+        expected_score = calculate_final_score(
+            0.20,
+            raw_decay,
+            0.0,
+            calculate_importance_boost(5),
+        )
+        assert raw_decay > PRECIOUS_DECAY_FLOOR
+        assert result.decay == pytest.approx(raw_decay)
+        assert result.score == pytest.approx(expected_score)
+
+    def test_scored_result_leaves_non_precious_score_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        timestamp = fixed_now - timedelta(days=365)
+        memory = Memory(timestamp=timestamp.isoformat(), importance=3)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        result = _memory_queries._scored_result(memory, distance=0.20)
+
+        raw_decay = calculate_time_decay(timestamp.isoformat(), now=fixed_now)
+        expected_score = calculate_final_score(
+            0.20,
+            raw_decay,
+            0.0,
+            calculate_importance_boost(3),
+        )
+        assert raw_decay < PRECIOUS_DECAY_FLOOR
+        assert result.decay == pytest.approx(raw_decay)
+        assert result.score == pytest.approx(expected_score)
+
+    def test_scored_result_unarrived_anticipation_uses_full_decay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        timestamp = fixed_now - timedelta(days=365)
+        memory = Memory(timestamp=timestamp.isoformat(), importance=3)
+        setattr(memory, "anticipated_at", (fixed_now + timedelta(days=1)).isoformat())
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        result = _memory_queries._scored_result(memory, distance=0.20)
+
+        expected_score = calculate_final_score(
+            0.20,
+            1.0,
+            0.0,
+            calculate_importance_boost(3),
+        )
+        assert result.decay == pytest.approx(1.0)
+        assert result.score == pytest.approx(expected_score)
+
+    def test_scored_result_arrived_anticipation_returns_to_timestamp_decay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        timestamp = fixed_now - timedelta(days=365)
+        memory = Memory(
+            timestamp=timestamp.isoformat(),
+            importance=3,
+            anticipated_at=(fixed_now - timedelta(hours=1)).isoformat(),
+        )
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        result = _memory_queries._scored_result(memory, distance=0.20)
+
+        raw_decay = calculate_time_decay(timestamp.isoformat(), now=fixed_now)
+        expected_score = calculate_final_score(
+            0.20,
+            raw_decay,
+            0.0,
+            calculate_importance_boost(3),
+        )
+        assert result.decay == pytest.approx(raw_decay)
+        assert result.score == pytest.approx(expected_score)
+
     @pytest.mark.asyncio
     async def test_find_resurfacing_memories_updates_access_metadata(self) -> None:
         rows = [
@@ -595,3 +722,32 @@ class TestResurfacingAndRecall:
 
         assert len(candidates) == 5
         assert "mem_low" in [result.memory.id for result in candidates]
+
+    @pytest.mark.asyncio
+    async def test_sample_dormant_memories_keeps_old_precious_candidate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+        rows = [
+            (
+                "mem_old_precious",
+                "old shared detail",
+                _metadata(
+                    "2024-01-01T00:00:00+00:00",
+                    involved_person_ids=["person_a"],
+                    intensity=0.8,
+                ),
+                0.10,
+            )
+        ]
+        store = _AdvancedStore(rows)
+
+        candidates = await _memory_queries._sample_dormant_memories(
+            cast(Any, store),
+            "old shared detail",
+            max_candidates=5,
+        )
+
+        assert [result.memory.id for result in candidates] == ["mem_old_precious"]
+        assert candidates[0].decay < 0.3

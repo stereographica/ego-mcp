@@ -6,6 +6,7 @@ import logging
 import random
 from typing import TYPE_CHECKING, Any
 
+from ego_mcp import timezone_utils
 from ego_mcp._memory_scoring import (
     calculate_emotion_boost,
     calculate_final_score,
@@ -13,6 +14,11 @@ from ego_mcp._memory_scoring import (
     calculate_time_decay,
 )
 from ego_mcp._memory_serialization import links_to_json, memory_from_chromadb
+from ego_mcp.preciousness import (
+    PRECIOUS_DECAY_FLOOR,
+    is_precious,
+    is_unarrived_anticipation,
+)
 from ego_mcp.proust import PROUST_PERSON_PROBABILITY
 from ego_mcp.relationship import RelationshipStore
 from ego_mcp.types import Memory, MemorySearchResult, RecalledPerson
@@ -91,14 +97,23 @@ def _max_link_confidence(memory: Memory) -> float:
 
 
 def _scored_result(memory: Memory, distance: float) -> MemorySearchResult:
+    now = timezone_utils.now()
     decay = calculate_time_decay(
         memory.timestamp,
+        now=now,
         link_confidence_max=_max_link_confidence(memory),
         access_count=memory.access_count,
     )
+    ranking_decay = decay
+    if is_unarrived_anticipation(memory, now):
+        decay = ranking_decay = 1.0
+    elif is_precious(memory):
+        ranking_decay = max(decay, PRECIOUS_DECAY_FLOOR)
     emotion_boost = calculate_emotion_boost(memory.emotional_trace.primary.value)
     importance_boost = calculate_importance_boost(memory.importance)
-    score = calculate_final_score(distance, decay, emotion_boost, importance_boost)
+    score = calculate_final_score(
+        distance, ranking_decay, emotion_boost, importance_boost
+    )
     return MemorySearchResult(
         memory=memory,
         distance=distance,
@@ -552,6 +567,50 @@ async def list_recent(
 
     memories.sort(key=lambda memory: memory.timestamp, reverse=True)
     return memories[:n]
+
+
+def list_anticipations(
+    store: MemoryStore,
+    include_surfaced: bool = False,
+) -> list[Memory]:
+    """List memories with anticipated_at metadata."""
+    collection = store._ensure_connected()
+    total = int(collection.count())
+    if total == 0:
+        return []
+
+    try:
+        results = collection.get(
+            where={"anticipated_at": {"$ne": ""}},
+            include=["documents", "metadatas"],
+        )
+    except (KeyError, TypeError, ValueError):
+        results = collection.get(
+            limit=total,
+            include=["documents", "metadatas"],
+        )
+
+    memories: list[Memory] = []
+    ids = results.get("ids", [])
+    docs = results.get("documents", [])
+    metas = results.get("metadatas", [])
+    for mid, doc, meta in zip(ids, docs, metas):
+        memory = memory_from_chromadb(mid, doc, meta)
+        if not memory.anticipated_at:
+            continue
+        if not include_surfaced and memory.anticipation_surfaced:
+            continue
+        memories.append(memory)
+    return memories
+
+
+def mark_anticipation_surfaced(store: MemoryStore, memory_id: str) -> None:
+    """Persist that an anticipated memory has already surfaced after arrival."""
+    collection = store._ensure_connected()
+    collection.update(
+        ids=[memory_id],
+        metadatas=[{"anticipation_surfaced": True}],
+    )
 
 
 async def get_by_id(store: MemoryStore, memory_id: str) -> Memory | None:

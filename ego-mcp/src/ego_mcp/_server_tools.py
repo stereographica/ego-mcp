@@ -76,6 +76,10 @@ SURFACE_TOOLS: list[Tool] = [
                 "intensity": {"type": "number", "default": 0.5},
                 "importance": {"type": "integer", "default": 3},
                 "category": {"type": "string", "default": "daily"},
+                "anticipated_at": {
+                    "type": "string",
+                    "description": "ISO 8601 time of an event this memory looks forward to.",
+                },
                 "valence": {"type": "number", "default": 0.0},
                 "arousal": {"type": "number", "default": 0.5},
                 "body_state": {"type": "object"},

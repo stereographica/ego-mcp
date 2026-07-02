@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import random
 from datetime import datetime, timedelta
+from inspect import isawaitable
 from typing import Any, Awaitable, Callable
 
 from ego_mcp import timezone_utils
-from ego_mcp._server_emotion_formatting import _format_recent_emotion_layer
+from ego_mcp._server_emotion_formatting import (
+    _format_recent_emotion_layer,
+    _truncate_for_quote,
+)
 from ego_mcp._server_runtime import (
     get_impulse_manager,
     get_notion_store,
@@ -17,16 +22,33 @@ from ego_mcp._server_surface_person import (
     _format_active_persons,
     _get_active_person_ids,
 )
+from ego_mcp.absence import (
+    ABSENCE_SOCIAL_THIRST_BOOST,
+    absence_band,
+    approx_duration_words,
+)
+from ego_mcp.anticipation import (
+    format_approaching_anticipation,
+    format_arrived_anticipation,
+    pick_anticipation,
+    pick_arrived_anticipation,
+)
 from ego_mcp.config import EgoConfig
 from ego_mcp.current_interest import derive_current_interests
-from ego_mcp.desire import DesireEngine, generate_emergent_from_recent_memories
+from ego_mcp.desire import (
+    CURIOSITY_TONUS_BOOST,
+    DesireEngine,
+    detect_curious_tonus,
+    generate_emergent_from_recent_memories,
+)
 from ego_mcp.desire_blend import blend_desires
-from ego_mcp.emergent_desires import emergent_desire_sentence
 from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
+from ego_mcp.relationship_wording import history_words, trust_words
+from ego_mcp.ripening import should_show_ripening_presence
 from ego_mcp.scaffolds import SCAFFOLD_ATTUNE, compose_response, render
 from ego_mcp.self_model import SelfModelStore
-from ego_mcp.types import Notion
+from ego_mcp.types import Memory, Notion
 
 _derive_desire_modulation_override: (
     Callable[..., Awaitable[tuple[dict[str, float], dict[str, float], dict[str, float]]]]
@@ -68,13 +90,55 @@ def _list_notions_safe() -> list[Notion]:
     ]
 
 
-def _active_emergent_desires(desire: DesireEngine) -> list[str]:
-    """Return IDs of currently active emergent desires."""
-    return [
-        name
-        for name, state in desire._state.items()
-        if isinstance(state, dict) and state.get("is_emergent", False)
-    ]
+async def _list_anticipations_safe(memory: MemoryStore) -> list[Memory]:
+    method = getattr(memory, "list_anticipations", None)
+    if not callable(method):
+        return []
+    try:
+        result = method()
+        if isawaitable(result):
+            result = await result
+    except Exception:
+        return []
+    return result if isinstance(result, list) else []
+
+
+async def _mark_anticipation_surfaced_safe(
+    memory: MemoryStore,
+    memory_id: str,
+) -> None:
+    method = getattr(memory, "mark_anticipation_surfaced", None)
+    if not callable(method):
+        return
+    try:
+        result = method(memory_id)
+        if isawaitable(result):
+            await result
+    except Exception:
+        return
+
+
+async def _anticipation_surface_line(
+    memory: MemoryStore,
+    now: datetime,
+) -> str:
+    anticipations = await _list_anticipations_safe(memory)
+    if not anticipations:
+        return ""
+
+    arrived = pick_arrived_anticipation(anticipations, now)
+    if arrived is not None:
+        await _mark_anticipation_surfaced_safe(memory, arrived.id)
+        if not arrived.is_private:
+            update_tool_metadata(anticipation_arrived=arrived.id)
+        return format_arrived_anticipation(arrived, _truncate_for_quote)
+
+    approaching = pick_anticipation(anticipations, now, random)
+    if approaching is None:
+        return ""
+    if not approaching.is_private:
+        update_tool_metadata(anticipation_presented=approaching.id)
+    return format_approaching_anticipation(approaching, now, _truncate_for_quote)
 
 
 async def _handle_attune(
@@ -110,6 +174,10 @@ async def _handle_attune(
 
     self_store = SelfModelStore(config.data_dir / "self_model.json")
     fading_questions = _fading_important_questions(memory, store=self_store)
+    ripening_presence_shown = should_show_ripening_presence(
+        self_store.get_unresolved_questions_with_salience(),
+        random,
+    )
 
     if _derive_desire_modulation_override is not None:
         context_boosts, emotional_modulation, prediction_error = (
@@ -156,21 +224,47 @@ async def _handle_attune(
         if "curiosity" in levels:
             levels["curiosity"] = round(min(1.0, levels["curiosity"] + 0.05), 3)
 
+    curiosity_tonus_applied = False
+    if detect_curious_tonus(recent_all) and "curiosity" in levels:
+        levels["curiosity"] = round(
+            min(1.0, levels["curiosity"] + CURIOSITY_TONUS_BOOST), 3
+        )
+        curiosity_tonus_applied = True
+
+    absence_line = ""
+    absence_band_value: str | None = None
+    absence_social_thirst_boost: str | None = None
+    try:
+        band, elapsed_days = absence_band(_ws.raw(person), now)
+        absence_band_value = band
+        if band in ("quiet", "long"):
+            rel = _ws.get(person)
+            name = rel.name if rel and rel.name else person
+            elapsed_words = approx_duration_words(elapsed_days)
+            absence_line = (
+                f"It's been quieter than usual with {name} — "
+                f"about {elapsed_words}."
+            )
+            if band == "long" and "social_thirst" in levels:
+                levels["social_thirst"] = round(
+                    min(
+                        1.0,
+                        levels["social_thirst"] + ABSENCE_SOCIAL_THIRST_BOOST,
+                    ),
+                    3,
+                )
+                absence_social_thirst_boost = f"{ABSENCE_SOCIAL_THIRST_BOOST:.2f}"
+    except Exception:
+        pass
+
     desire_text = blend_desires(
         levels,
         ema_levels=desire.ema_levels,
         catalog=getattr(desire, "catalog", None),
+        emergent_directions=desire.emergent_directions(),
     )
 
-    # 3. Emergent pull
-    emergent_ids = _active_emergent_desires(desire)
-    emergent_lines: list[str] = []
-    for eid in emergent_ids:
-        sentence = emergent_desire_sentence(eid)
-        if sentence:
-            emergent_lines.append(sentence)
-
-    # 4. Current interests
+    # 3. Current interests
     notions = _list_notions_safe()
     recent_notions = [
         n for n in notions
@@ -179,20 +273,21 @@ async def _handle_attune(
     interests = derive_current_interests(
         recent_memories=list(recent_all[:10]),
         background_memories=list(recent_all),
-        emergent_desires=emergent_ids,
         recent_notions=recent_notions,
     )
 
-    # 5. Body sense text
+    # 4. Body sense text
     body_text = f"time: {phase}" if phase != "unknown" else ""
 
     # Compose output
     sections: list[str] = []
     sections.append(emotional_texture)
+    if ripening_presence_shown:
+        sections.append("Something is ripening where you're not looking.")
+    anticipation_line = await _anticipation_surface_line(memory, now)
+    if anticipation_line:
+        sections.append(anticipation_line)
     sections.append(f"Desire currents: {desire_text}")
-
-    if emergent_lines:
-        sections.append("Emergent pull: " + " ".join(emergent_lines))
 
     if interests:
         interest_items = [item["topic"] for item in interests[:3]]
@@ -200,9 +295,12 @@ async def _handle_attune(
 
     if body_text:
         sections.append(f"Body sense: {body_text}")
+    if absence_line:
+        sections.append(absence_line)
 
     # Active persons
     _active_person_ids: list[str] = []
+    active_persons = ""
     try:
         _ws = _relationship_store(config)
         active_persons = _format_active_persons(_ws, max_persons=2)
@@ -219,8 +317,8 @@ async def _handle_attune(
             if rel and rel.name:
                 sections.insert(
                     len(sections) - 1 if active_persons else len(sections),
-                    f"Regarding {rel.name}: trust {rel.trust_level:.1f}, "
-                    f"{rel.total_interactions} interactions.",
+                    f"Regarding {rel.name}: {trust_words(rel.trust_level)}; "
+                    f"{history_words(rel.first_interaction, rel.total_interactions, now)}.",
                 )
         except Exception:
             pass
@@ -230,8 +328,15 @@ async def _handle_attune(
         desire_levels=levels,
         emergent_desire_created=",".join(created_emergent) if created_emergent else None,
         emergent_desire_expired=",".join(expired_emergent) if expired_emergent else None,
+        curiosity_tonus_boost=(
+            f"{CURIOSITY_TONUS_BOOST:.2f}" if curiosity_tonus_applied else None
+        ),
+        absence_band=absence_band_value,
+        absence_person=person if absence_band_value is not None else None,
+        absence_social_thirst_boost=absence_social_thirst_boost,
         attune_person=person,
         active_person_ids=json.dumps(_active_person_ids) if _active_person_ids else None,
+        ripening_presence_shown=True if ripening_presence_shown else None,
     )
 
     data = "\n".join(sections)

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 from datetime import datetime
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -21,6 +23,7 @@ from ego_mcp._server_emotion_formatting import (
     _format_month_emotion_layer,
     _format_recent_emotion_layer,
     _format_week_emotion_layer,
+    _tail_quote_for_introspection,
     _truncate_for_quote,
 )
 from ego_mcp._server_runtime import (
@@ -34,6 +37,13 @@ from ego_mcp._server_surface_person import (
     _format_active_persons,
     _get_active_person_ids,
 )
+from ego_mcp.absence import absence_band, approx_duration_words
+from ego_mcp.anticipation import (
+    format_approaching_anticipation,
+    format_arrived_anticipation,
+    pick_anticipation,
+    pick_arrived_anticipation,
+)
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_blend import blend_desires
@@ -46,6 +56,14 @@ from ego_mcp.notion import (
     is_conviction,
 )
 from ego_mcp.proust import find_proust_memory
+from ego_mcp.relationship_wording import episode_words, history_words, trust_words
+from ego_mcp.ripening import (
+    build_ripened_question_block,
+    format_shared_question_line,
+    person_display_name,
+    pick_ripened_question,
+    shared_open_questions_for_person,
+)
 from ego_mcp.scaffolds import (
     SCAFFOLD_CONSIDER_THEM,
     SCAFFOLD_INTROSPECT,
@@ -55,8 +73,8 @@ from ego_mcp.scaffolds import (
     compose_response,
     render_with_data,
 )
-from ego_mcp.self_model import SelfModelStore
-from ego_mcp.types import Notion
+from ego_mcp.self_model import QUESTION_ACTIVE_MIN_SALIENCE, SelfModelStore
+from ego_mcp.types import Memory, Notion
 
 _relationship_snapshot_override: (
     Callable[[EgoConfig, MemoryStore, str], Awaitable[str]] | None
@@ -112,6 +130,55 @@ def _call_get_body_state() -> dict[str, Any]:
     if _get_body_state_override is not None:
         return _get_body_state_override()
     return get_body_state()
+
+
+def _last_interaction_words(timestamp: str, now: datetime) -> str:
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return ""
+    parsed = timezone_utils.localize(parsed)
+    elapsed_days = max(0.0, (now - parsed).total_seconds() / 86400.0)
+    return f"{approx_duration_words(elapsed_days)} ago"
+
+
+def _parse_reunion_noted_at(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    return timezone_utils.localize(parsed)
+
+
+def _pending_reunion_note(store: Any) -> tuple[str, dict[str, Any]] | None:
+    candidates: list[tuple[datetime, str, dict[str, Any]]] = []
+    raw_data = getattr(store, "_data", {})
+    if not isinstance(raw_data, dict):
+        return None
+    for person_id, raw in raw_data.items():
+        if not isinstance(person_id, str) or not isinstance(raw, dict):
+            continue
+        note = raw.get("reunion_note")
+        if not isinstance(note, dict) or note.get("wake_up_shown") is True:
+            continue
+        noted_at = _parse_reunion_noted_at(note.get("noted_at"))
+        if noted_at is None:
+            continue
+        candidates.append((noted_at, person_id, note))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    _, person_id, note = candidates[0]
+    return person_id, note
+
+
+def _reunion_gap_days(note: dict[str, Any]) -> float:
+    try:
+        return max(0.0, float(note.get("gap_days", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _merge_topic_hints(*topic_groups: list[str]) -> list[str]:
@@ -199,6 +266,20 @@ def _format_associated_from_map(
     return " → " + ", ".join(f'"{item.label}"' for item in associated[:limit])
 
 
+def _format_question_line(
+    item: dict[str, Any],
+    relationship_store: Any | None,
+) -> str:
+    person_id = item.get("person_id")
+    if isinstance(person_id, str) and person_id and relationship_store is not None:
+        name = person_display_name(relationship_store, person_id)
+        return (
+            f"- [{item['id']}] {item['question']} "
+            f"(importance: {item['importance']}, with {name})"
+        )
+    return f"- [{item['id']}] {item['question']} (importance: {item['importance']})"
+
+
 def _catalog_fixed_ids(desire: DesireEngine | None) -> set[str] | None:
     if desire is None:
         return None
@@ -269,13 +350,63 @@ def _filter_desire_scaffold(scaffold: str, desire: DesireEngine | None) -> str:
     return "\n".join(filtered_lines)
 
 
+async def _list_anticipations_safe(memory: MemoryStore) -> list[Memory]:
+    method = getattr(memory, "list_anticipations", None)
+    if not callable(method):
+        return []
+    try:
+        result = method()
+        if isawaitable(result):
+            result = await result
+    except Exception:
+        _logger.debug("Skipped anticipation scan", exc_info=True)
+        return []
+    return result if isinstance(result, list) else []
+
+
+async def _mark_anticipation_surfaced_safe(
+    memory: MemoryStore,
+    memory_id: str,
+) -> None:
+    method = getattr(memory, "mark_anticipation_surfaced", None)
+    if not callable(method):
+        return
+    try:
+        result = method(memory_id)
+        if isawaitable(result):
+            await result
+    except Exception:
+        _logger.debug("Skipped anticipation surfaced update", exc_info=True)
+
+
+async def _anticipation_surface_line(
+    memory: MemoryStore,
+    now: datetime,
+) -> str:
+    anticipations = await _list_anticipations_safe(memory)
+    if not anticipations:
+        return ""
+
+    arrived = pick_arrived_anticipation(anticipations, now)
+    if arrived is not None:
+        await _mark_anticipation_surfaced_safe(memory, arrived.id)
+        if not arrived.is_private:
+            update_tool_metadata(anticipation_arrived=arrived.id)
+        return format_arrived_anticipation(arrived, _truncate_for_quote)
+
+    approaching = pick_anticipation(anticipations, now, random)
+    if approaching is None:
+        return ""
+    if not approaching.is_private:
+        update_tool_metadata(anticipation_presented=approaching.id)
+    return format_approaching_anticipation(approaching, now, _truncate_for_quote)
+
+
 async def _handle_wake_up(
     config: EgoConfig, memory: MemoryStore, desire: DesireEngine
 ) -> str:
     """Session start: emotional texture + embers + Proust + introspection + desires + relationship."""
     from ego_mcp import timezone_utils
-    from ego_mcp._server_context import _fading_important_questions
-    from ego_mcp.emergent_desires import emergent_desire_sentence
 
     now = timezone_utils.now()
     recent_all = await memory.list_recent(n=30)
@@ -296,12 +427,8 @@ async def _handle_wake_up(
     all_notions = _list_notions_safe()
     snapshot_path = config.data_dir / "notion_confidence_snapshot.json"
     weakened_notions = _detect_weakened_notions(all_notions, snapshot_path)
-    try:
-        unresolved_qs = _fading_important_questions(memory)
-    except Exception:
-        unresolved_qs = []
     ember_texts = generate_embers(
-        recent_all[:5], unresolved_qs, active_emergent, weakened_notions
+        recent_all[:5], active_emergent, weakened_notions
     )
     if ember_texts:
         parts.append("Embers:\n" + "\n".join(f"  {e}" for e in ember_texts))
@@ -340,7 +467,7 @@ async def _handle_wake_up(
     if latest_text:
         since = latest_since or "workspace-sync"
         parts.append(
-            f'Last introspection ({since}):\n"{_truncate_for_quote(latest_text)}"'
+            f'Last introspection ({since}):\n"{_tail_quote_for_introspection(latest_text)}"'
         )
     else:
         recent_introspections = await memory.list_recent(
@@ -350,10 +477,45 @@ async def _handle_wake_up(
             m = recent_introspections[0]
             since = m.timestamp[:16] if len(m.timestamp) >= 16 else m.timestamp
             parts.append(
-                f'Last introspection ({since}):\n"{_truncate_for_quote(m.content)}"'
+                f'Last introspection ({since}):\n"{_tail_quote_for_introspection(m.content)}"'
             )
         else:
             parts.append("No introspection yet.")
+
+    self_store = SelfModelStore(config.data_dir / "self_model.json")
+    entries = self_store.get_unresolved_questions_with_salience()
+    ripened_block = ""
+    ripened = pick_ripened_question(entries)
+    if ripened is not None:
+        try:
+            ripened_block = await build_ripened_question_block(
+                self_store,
+                memory,
+                ripened,
+                relationship_store=_relationship_store(config),
+                notion_store=get_notion_store(),
+                now=now,
+            ) or ""
+        except Exception:
+            ripened_block = ""
+    if ripened_block:
+        parts.append(f"Open edges:\n{ripened_block}")
+    else:
+        active = [
+            e
+            for e in self_store.get_unresolved_questions_with_salience()
+            if float(e.get("salience", 0.0)) > QUESTION_ACTIVE_MIN_SALIENCE
+        ]
+        if active:
+            top = max(active, key=lambda e: float(e.get("salience", 0.0)))
+            parts.append(
+                f"Open edges:\n  [{top['id']}] {top['question']} "
+                f"(importance: {top['importance']})"
+            )
+
+    anticipation_line = await _anticipation_surface_line(memory, now)
+    if anticipation_line:
+        parts.append(anticipation_line)
 
     # 5. Desire currents (3-direction)
     levels = desire.compute_levels_with_modulation()
@@ -361,26 +523,37 @@ async def _handle_wake_up(
         levels,
         ema_levels=desire.ema_levels,
         catalog=getattr(desire, "catalog", None),
+        emergent_directions=desire.emergent_directions(),
     )
     parts.append(f"Desire currents: {desire_summary}")
 
-    # 6. Emergent pull
-    for desire_id in active_emergent:
-        sentence = emergent_desire_sentence(desire_id)
-        if sentence:
-            parts.append(f"Emergent pull: {sentence}")
-            break
-
-    # 7. Relationship note
+    # 6. Relationship note
     relationship_line = await _call_relationship_snapshot(
         config, memory, config.companion_name
     )
     parts.append(relationship_line)
+    try:
+        reunion_store = _relationship_store(config)
+        pending_reunion = _pending_reunion_note(reunion_store)
+        if pending_reunion is not None:
+            person_id, note = pending_reunion
+            rel = reunion_store.get(person_id)
+            name = rel.name if rel and rel.name else person_id
+            gap_words = approx_duration_words(_reunion_gap_days(note))
+            parts.append(
+                f"Reunited with {name} recently — "
+                f"the first shared moment in about {gap_words}."
+            )
+            shared_question_line = format_shared_question_line(self_store, person_id)
+            if shared_question_line:
+                parts.append(shared_question_line)
+            reunion_store.mark_reunion_wake_up_shown(person_id)
+    except Exception:
+        pass
 
-    # 8. Active persons
+    # 7. Active persons
     _active_person_ids: list[str] = []
     try:
-        from ego_mcp._server_context import _relationship_store
         _ws = _relationship_store(config)
         active_persons = _format_active_persons(_ws, max_persons=2)
         if active_persons:
@@ -473,15 +646,34 @@ async def _handle_introspect(
 
     # §10.1 unresolved questions
     active_questions, resurfacing_questions = self_store.get_visible_questions()
+    try:
+        question_relationship_store = _relationship_store(config)
+    except Exception:
+        question_relationship_store = None
     question_lines: list[str] = []
     if active_questions:
         question_lines.append("Unresolved questions:")
         for item in active_questions:
-            question_lines.append(
-                f"- [{item['id']}] {item['question']} (importance: {item['importance']})"
-            )
+            question_lines.append(_format_question_line(item, question_relationship_store))
     else:
         question_lines.append("No unresolved questions yet.")
+
+    ripened_block = ""
+    ripened = pick_ripened_question(
+        self_store.get_unresolved_questions_with_salience()
+    )
+    if ripened is not None:
+        try:
+            ripened_block = await build_ripened_question_block(
+                self_store,
+                memory,
+                ripened,
+                relationship_store=question_relationship_store,
+                notion_store=get_notion_store(),
+                now=now,
+            ) or ""
+        except Exception:
+            ripened_block = ""
 
     recent = recent_all[:3]
     resurfacing_triggered_by_recent = False
@@ -497,7 +689,10 @@ async def _handle_introspect(
         coherence_level >= 0.6 or resurfacing_triggered_by_recent
     )
 
-    if show_resurfacing:
+    if ripened_block:
+        question_lines.append("")
+        question_lines.append(ripened_block)
+    elif show_resurfacing:
         question_lines.append("")
         question_lines.append("Resurfacing (you'd almost forgotten):")
         for item in resurfacing_questions:
@@ -513,6 +708,9 @@ async def _handle_introspect(
         question_lines.append(
             'To resolve a question: update_self(field="resolve_question", value="<question_id>")'
         )
+    question_lines.append(
+        'To hold a new question: update_self(field="new_question", value={"question": ..., "importance": 1-5})'
+    )
     open_questions = "\n".join(question_lines)
 
     # §10.1 recent episodes (past 2 weeks)
@@ -586,7 +784,6 @@ async def _handle_introspect(
     # Active persons
     _introspect_active_ids: list[str] = []
     try:
-        from ego_mcp._server_context import _relationship_store
         _ws = _relationship_store(config)
         active_persons = _format_active_persons(_ws, max_persons=2)
         if active_persons:
@@ -645,11 +842,13 @@ async def _handle_consider_them(
         inferred_sensitive_topics,
     )
 
+    now = timezone_utils.now()
     relationship_summary = (
-        f"{person}: trust={rel.trust_level:.2f}, "
-        f"interactions={rel.total_interactions}, "
-        f"shared_episodes={len(rel.shared_episode_ids)}"
+        f"{person}: {trust_words(rel.trust_level)}; "
+        f"{history_words(rel.first_interaction, rel.total_interactions, now)}"
     )
+    if rel.shared_episode_ids:
+        relationship_summary += f", {episode_words(len(rel.shared_episode_ids))}"
     if preferred_topics:
         relationship_summary += (
             f", preferred_topics={','.join(preferred_topics[:2])}"
@@ -659,7 +858,9 @@ async def _handle_consider_them(
             f", sensitive_topics={','.join(sensitive_topics[:2])}"
         )
     if rel.last_interaction:
-        relationship_summary += f", last_interaction={rel.last_interaction[:10]}"
+        last_interaction = _last_interaction_words(rel.last_interaction, now)
+        if last_interaction:
+            relationship_summary += f", last shared moment {last_interaction}"
     if rel.emotional_baseline:
         baseline_tone = max(
             rel.emotional_baseline.items(),
@@ -668,18 +869,37 @@ async def _handle_consider_them(
         relationship_summary += f", baseline_tone={baseline_tone}"
 
     tendency = f"Recent dialog tendency: {frequency}, observed_tone={dominant_tone}"
+    band, elapsed_days = absence_band(store.raw(person), now)
+    absence_frame = ""
+    if band in ("quiet", "long"):
+        name = rel.name if rel and rel.name else person
+        elapsed_words = approx_duration_words(elapsed_days)
+        absence_frame = (
+            f"It's been about {elapsed_words} since you last shared something with {name}.\n"
+            "They may have changed in that time. What would you want to ask first?"
+        )
     recent_moods = rel.recent_mood_trajectory[-3:]
+    data_lines = [relationship_summary, tendency]
     if recent_moods:
         mood_tail = " > ".join(
             str(item.get("mood", "unknown"))
             for item in recent_moods
             if isinstance(item, dict)
         )
-        data = (
-            f"{relationship_summary}\n{tendency}\nRecent mood trajectory: {mood_tail}"
-        )
-    else:
-        data = f"{relationship_summary}\n{tendency}"
+        data_lines.append(f"Recent mood trajectory: {mood_tail}")
+    if absence_frame:
+        data_lines.append(absence_frame)
+    held_questions = shared_open_questions_for_person(
+        SelfModelStore(config.data_dir / "self_model.json"),
+        person,
+        limit=2,
+    )
+    if held_questions:
+        name = rel.name if rel and rel.name else person
+        data_lines.append(f"Held together with {name}:")
+        for question in held_questions:
+            data_lines.append(f"- [{question['id']}] {question['question']}")
+    data = "\n".join(data_lines)
     person_notions = sorted(
         (
             notion for notion in _list_notions_safe() if notion.person_id == person
