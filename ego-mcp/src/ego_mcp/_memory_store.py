@@ -106,6 +106,8 @@ class MemoryStore:
         body_state: dict[str, Any] | None = None,
         tags: list[str] | None = None,
         private: bool = False,
+        anticipated_at: str = "",
+        anticipation_surfaced: bool = False,
     ) -> Memory:
         """Save a single memory."""
         collection = self._ensure_connected()
@@ -157,6 +159,8 @@ class MemoryStore:
             is_private=bool(private),
             access_count=0,
             last_accessed="",
+            anticipated_at=anticipated_at,
+            anticipation_surfaced=bool(anticipation_surfaced),
         )
         collection.add(
             ids=[memory_id],
@@ -181,6 +185,8 @@ class MemoryStore:
         link_threshold: float = 0.3,
         max_links: int = 5,
         dedup_threshold: float = 0.05,
+        anticipated_at: str = "",
+        anticipation_surfaced: bool = False,
     ) -> tuple[Memory | None, int, list[MemorySearchResult], MemorySearchResult | None]:
         """Save memory and auto-link bidirectionally to similar existing memories.
 
@@ -206,6 +212,8 @@ class MemoryStore:
             body_state=body_state,
             tags=tags,
             private=private,
+            anticipated_at=anticipated_at,
+            anticipation_surfaced=anticipation_surfaced,
         )
 
         num_links = 0
@@ -398,6 +406,16 @@ class MemoryStore:
         return await _memory_queries.list_recent(
             self, n=n, category_filter=category_filter
         )
+
+    def list_anticipations(self, include_surfaced: bool = False) -> list[Memory]:
+        """List memories that carry an anticipated_at target."""
+        return _memory_queries.list_anticipations(
+            self, include_surfaced=include_surfaced
+        )
+
+    def mark_anticipation_surfaced(self, memory_id: str) -> None:
+        """Mark an anticipated memory's arrived prompt as already surfaced."""
+        _memory_queries.mark_anticipation_surfaced(self, memory_id)
 
     async def get_by_id(self, memory_id: str) -> Memory | None:
         """Retrieve a specific memory by ID."""

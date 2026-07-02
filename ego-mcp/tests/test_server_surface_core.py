@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -9,7 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import ego_mcp._server_surface_core as core_mod
-from ego_mcp._server_runtime import get_tool_metadata
+from ego_mcp import timezone_utils
+from ego_mcp._server_runtime import get_tool_metadata, reset_tool_metadata
 from ego_mcp._server_surface_core import (
     _filter_desire_scaffold,
     _format_associated_from_map,
@@ -23,7 +25,7 @@ from ego_mcp._server_surface_core import (
 )
 from ego_mcp.config import EgoConfig
 from ego_mcp.self_model import SelfModelStore
-from ego_mcp.types import Emotion, Notion
+from ego_mcp.types import Emotion, Memory, Notion
 
 
 @pytest.fixture
@@ -340,6 +342,136 @@ class TestHandleIntrospect:
 
         assert 'update_self(field="resolve_question", value="<question_id>")' in result
         assert 'update_self(field="new_question", value={"question": ...' in result
+
+
+class _FakeWakeMemory:
+    def __init__(self, anticipations: list[Memory]) -> None:
+        self.anticipations = anticipations
+        self.marked: list[str] = []
+
+    async def list_recent(
+        self,
+        n: int = 30,
+        category_filter: str | None = None,
+    ) -> list[Memory]:
+        del n, category_filter
+        return []
+
+    def list_anticipations(self, include_surfaced: bool = False) -> list[Memory]:
+        if include_surfaced:
+            return list(self.anticipations)
+        return [
+            memory
+            for memory in self.anticipations
+            if not memory.anticipation_surfaced
+        ]
+
+    def mark_anticipation_surfaced(self, memory_id: str) -> None:
+        self.marked.append(memory_id)
+        for memory in self.anticipations:
+            if memory.id == memory_id:
+                memory.anticipation_surfaced = True
+
+
+class _FakeWakeDesire:
+    _state: dict[str, Any] = {}
+
+    @property
+    def ema_levels(self) -> dict[str, float]:
+        return {}
+
+    def expire_emergent_desires(self) -> list[str]:
+        return []
+
+    def compute_levels_with_modulation(self, **_kwargs: Any) -> dict[str, float]:
+        return {}
+
+    def emergent_directions(self) -> dict[str, str]:
+        return {}
+
+
+class TestHandleWakeUpAnticipation:
+    @pytest.mark.asyncio
+    async def test_arrived_surfaces_oldest_once(
+        self,
+        config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        older = Memory(
+            id="old-arrived",
+            content="the older appointment",
+            anticipated_at=(now - timedelta(days=2)).isoformat(),
+        )
+        newer = Memory(
+            id="new-arrived",
+            content="the newer appointment",
+            anticipated_at=(now - timedelta(days=1)).isoformat(),
+        )
+        memory = _FakeWakeMemory([newer, older])
+
+        first = await _handle_wake_up(config, cast(Any, memory), cast(Any, _FakeWakeDesire()))
+        second = await _handle_wake_up(config, cast(Any, memory), cast(Any, _FakeWakeDesire()))
+        third = await _handle_wake_up(config, cast(Any, memory), cast(Any, _FakeWakeDesire()))
+
+        assert 'That time came: "the older appointment". How was it, actually?' in first
+        assert 'That time came: "the newer appointment". How was it, actually?' in second
+        assert "That time came:" not in third
+        assert memory.marked == ["old-arrived", "new-arrived"]
+
+    @pytest.mark.asyncio
+    async def test_imminent_beats_approaching_without_thinning(
+        self,
+        config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        monkeypatch.setattr("ego_mcp._server_surface_core.random.random", lambda: 0.99)
+        approaching = Memory(
+            id="approaching",
+            content="the later thing",
+            anticipated_at=(now + timedelta(days=10)).isoformat(),
+            importance=5,
+        )
+        imminent = Memory(
+            id="imminent",
+            content="the soon thing",
+            anticipated_at=(now + timedelta(hours=36)).isoformat(),
+            importance=1,
+        )
+        memory = _FakeWakeMemory([approaching, imminent])
+
+        result = await _handle_wake_up(config, cast(Any, memory), cast(Any, _FakeWakeDesire()))
+
+        assert 'Approaching: "the soon thing" (in a day or two).' in result
+        assert "the later thing" not in result
+        assert get_tool_metadata().get("anticipation_presented") == "imminent"
+
+    @pytest.mark.asyncio
+    async def test_private_anticipation_displays_without_telemetry(
+        self,
+        config: EgoConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        private = Memory(
+            id="private-imminent",
+            content="private future note",
+            anticipated_at=(now + timedelta(hours=2)).isoformat(),
+            is_private=True,
+        )
+        memory = _FakeWakeMemory([private])
+
+        result = await _handle_wake_up(config, cast(Any, memory), cast(Any, _FakeWakeDesire()))
+
+        assert 'Approaching: "private future note" (within a day).' in result
+        assert "anticipation_presented" not in get_tool_metadata()
 
 
 class TestConsiderThemPersonTelemetry:

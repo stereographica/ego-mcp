@@ -352,6 +352,30 @@ class TestResurfacingAndRecall:
         assert result.decay == pytest.approx(1.0)
         assert result.score == pytest.approx(expected_score)
 
+    def test_scored_result_arrived_anticipation_returns_to_timestamp_decay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        timestamp = fixed_now - timedelta(days=365)
+        memory = Memory(
+            timestamp=timestamp.isoformat(),
+            importance=3,
+            anticipated_at=(fixed_now - timedelta(hours=1)).isoformat(),
+        )
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        result = _memory_queries._scored_result(memory, distance=0.20)
+
+        raw_decay = calculate_time_decay(timestamp.isoformat(), now=fixed_now)
+        expected_score = calculate_final_score(
+            0.20,
+            raw_decay,
+            0.0,
+            calculate_importance_boost(3),
+        )
+        assert result.decay == pytest.approx(raw_decay)
+        assert result.score == pytest.approx(expected_score)
+
     @pytest.mark.asyncio
     async def test_find_resurfacing_memories_updates_access_metadata(self) -> None:
         rows = [

@@ -216,6 +216,30 @@ class TestMemorySave:
         assert loaded is not None
         assert loaded.is_private is True
 
+    @pytest.mark.asyncio
+    async def test_save_anticipation_roundtrip_and_mark_surfaced(
+        self, store: MemoryStore
+    ) -> None:
+        target = "2026-07-10T00:00:00+00:00"
+        mem = await store.save(
+            content="A future appointment",
+            anticipated_at=target,
+        )
+
+        loaded = await store.get_by_id(mem.id)
+        anticipations = store.list_anticipations()
+        assert loaded is not None
+        assert loaded.anticipated_at == target
+        assert loaded.anticipation_surfaced is False
+        assert [memory.id for memory in anticipations] == [mem.id]
+
+        store.mark_anticipation_surfaced(mem.id)
+
+        assert store.list_anticipations() == []
+        surfaced = store.list_anticipations(include_surfaced=True)
+        assert [memory.id for memory in surfaced] == [mem.id]
+        assert surfaced[0].anticipation_surfaced is True
+
 
 class TestMemoryAutoLink:
     @pytest.mark.asyncio

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 from datetime import datetime
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -35,6 +37,12 @@ from ego_mcp._server_surface_person import (
     _format_active_persons,
     _get_active_person_ids,
 )
+from ego_mcp.anticipation import (
+    format_approaching_anticipation,
+    format_arrived_anticipation,
+    pick_anticipation,
+    pick_arrived_anticipation,
+)
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_blend import blend_desires
@@ -57,7 +65,7 @@ from ego_mcp.scaffolds import (
     render_with_data,
 )
 from ego_mcp.self_model import QUESTION_ACTIVE_MIN_SALIENCE, SelfModelStore
-from ego_mcp.types import Notion
+from ego_mcp.types import Memory, Notion
 
 _relationship_snapshot_override: (
     Callable[[EgoConfig, MemoryStore, str], Awaitable[str]] | None
@@ -270,6 +278,58 @@ def _filter_desire_scaffold(scaffold: str, desire: DesireEngine | None) -> str:
     return "\n".join(filtered_lines)
 
 
+async def _list_anticipations_safe(memory: MemoryStore) -> list[Memory]:
+    method = getattr(memory, "list_anticipations", None)
+    if not callable(method):
+        return []
+    try:
+        result = method()
+        if isawaitable(result):
+            result = await result
+    except Exception:
+        _logger.debug("Skipped anticipation scan", exc_info=True)
+        return []
+    return result if isinstance(result, list) else []
+
+
+async def _mark_anticipation_surfaced_safe(
+    memory: MemoryStore,
+    memory_id: str,
+) -> None:
+    method = getattr(memory, "mark_anticipation_surfaced", None)
+    if not callable(method):
+        return
+    try:
+        result = method(memory_id)
+        if isawaitable(result):
+            await result
+    except Exception:
+        _logger.debug("Skipped anticipation surfaced update", exc_info=True)
+
+
+async def _anticipation_surface_line(
+    memory: MemoryStore,
+    now: datetime,
+) -> str:
+    anticipations = await _list_anticipations_safe(memory)
+    if not anticipations:
+        return ""
+
+    arrived = pick_arrived_anticipation(anticipations, now)
+    if arrived is not None:
+        await _mark_anticipation_surfaced_safe(memory, arrived.id)
+        if not arrived.is_private:
+            update_tool_metadata(anticipation_arrived=arrived.id)
+        return format_arrived_anticipation(arrived, _truncate_for_quote)
+
+    approaching = pick_anticipation(anticipations, now, random)
+    if approaching is None:
+        return ""
+    if not approaching.is_private:
+        update_tool_metadata(anticipation_presented=approaching.id)
+    return format_approaching_anticipation(approaching, now, _truncate_for_quote)
+
+
 async def _handle_wake_up(
     config: EgoConfig, memory: MemoryStore, desire: DesireEngine
 ) -> str:
@@ -362,6 +422,10 @@ async def _handle_wake_up(
         parts.append(
             f"Open edges:\n  [{top['id']}] {top['question']} (importance: {top['importance']})"
         )
+
+    anticipation_line = await _anticipation_surface_line(memory, now)
+    if anticipation_line:
+        parts.append(anticipation_line)
 
     # 5. Desire currents (3-direction)
     levels = desire.compute_levels_with_modulation()

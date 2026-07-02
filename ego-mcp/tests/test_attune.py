@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ego_mcp import timezone_utils
+from ego_mcp._server_runtime import get_tool_metadata, reset_tool_metadata
 from ego_mcp._server_surface_attune import (
     _handle_attune,
     _has_older_memory_echo,
@@ -101,6 +103,90 @@ class TestHandleAttune:
     ) -> None:
         result = await _handle_attune(config, memory, {}, engine)
         assert "Recent (past 3 days):" in result
+
+    @pytest.mark.asyncio
+    async def test_approaching_anticipation_shown_after_texture_when_rng_allows(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        monkeypatch.setattr("ego_mcp._server_surface_attune.random.random", lambda: 0.49)
+        memory.list_anticipations = MagicMock(
+            return_value=[
+                Memory(
+                    id="approaching",
+                    content="the later threshold",
+                    anticipated_at=(now + timedelta(days=10)).isoformat(),
+                    importance=5,
+                )
+            ]
+        )
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert 'Approaching: "the later threshold" (in about 10 days).' in result
+        assert result.index("Recent (past 3 days):") < result.index("Approaching:")
+        assert result.index("Approaching:") < result.index("Desire currents:")
+        assert get_tool_metadata().get("anticipation_presented") == "approaching"
+
+    @pytest.mark.asyncio
+    async def test_approaching_anticipation_thinned_when_rng_blocks(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        monkeypatch.setattr("ego_mcp._server_surface_attune.random.random", lambda: 0.99)
+        memory.list_anticipations = MagicMock(
+            return_value=[
+                Memory(
+                    id="approaching",
+                    content="the later threshold",
+                    anticipated_at=(now + timedelta(days=10)).isoformat(),
+                    importance=5,
+                )
+            ]
+        )
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert "Approaching:" not in result
+
+    @pytest.mark.asyncio
+    async def test_arrived_anticipation_marks_surfaced_and_records_metadata(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        memory.list_anticipations = MagicMock(
+            return_value=[
+                Memory(
+                    id="arrived",
+                    content="the time arrived",
+                    anticipated_at=(now - timedelta(minutes=1)).isoformat(),
+                )
+            ]
+        )
+        memory.mark_anticipation_surfaced = MagicMock()
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert 'That time came: "the time arrived". How was it, actually?' in result
+        memory.mark_anticipation_surfaced.assert_called_once_with("arrived")
+        assert get_tool_metadata().get("anticipation_arrived") == "arrived"
 
     @pytest.mark.asyncio
     async def test_returns_body_sense_section(

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ego_mcp import timezone_utils
 from ego_mcp._server_surface_memory import (
     EMOTION_DEFAULTS,
     _call_get_body_state,
@@ -19,6 +21,7 @@ from ego_mcp._server_surface_memory import (
     _normalize_tags,
     configure_overrides,
 )
+from ego_mcp._server_tools import SURFACE_TOOLS
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
 from ego_mcp.types import (
@@ -40,6 +43,16 @@ def test_emotion_defaults_cover_all_enum_members() -> None:
 def test_emotion_defaults_include_contentment_and_melancholy_values() -> None:
     assert EMOTION_DEFAULTS["contentment"] == pytest.approx((0.5, 0.5, 0.2))
     assert EMOTION_DEFAULTS["melancholy"] == pytest.approx((0.5, -0.4, 0.2))
+
+
+def test_remember_schema_includes_anticipated_at_verbatim() -> None:
+    remember_tool = next(tool for tool in SURFACE_TOOLS if tool.name == "remember")
+    anticipated_at = remember_tool.inputSchema["properties"]["anticipated_at"]
+
+    assert anticipated_at == {
+        "type": "string",
+        "description": "ISO 8601 time of an event this memory looks forward to.",
+    }
 
 
 # --- Helpers and override tests ---
@@ -419,6 +432,101 @@ class TestHandleRememberIntrospectionScaffold:
         assert "Did this monologue close, or is something still unfinished?" in result
 
 
+class TestHandleRememberAnticipation:
+    @pytest.mark.asyncio
+    async def test_future_anticipated_at_is_normalized_and_saved(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        result = await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "Looking toward the appointment",
+                "anticipated_at": "2026-07-10T15:30:00",
+            },
+        )
+
+        kwargs = mock_memory.save_with_auto_link.call_args.kwargs
+        assert kwargs["anticipated_at"] == "2026-07-10T15:30:00+00:00"
+        assert "Note: anticipated_at" not in result
+
+    @pytest.mark.asyncio
+    async def test_date_only_anticipated_at_uses_midnight_app_timezone(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "Looking toward the date",
+                "anticipated_at": "2026-07-10",
+            },
+        )
+
+        kwargs = mock_memory.save_with_auto_link.call_args.kwargs
+        assert kwargs["anticipated_at"] == "2026-07-10T00:00:00+00:00"
+
+    @pytest.mark.asyncio
+    async def test_unreadable_anticipated_at_saves_regular_memory_with_note(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+    ) -> None:
+        result = await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "This should still be held",
+                "anticipated_at": "not-a-time",
+            },
+        )
+
+        kwargs = mock_memory.save_with_auto_link.call_args.kwargs
+        assert kwargs["anticipated_at"] == ""
+        assert (
+            "Note: anticipated_at could not be read as a time — held as a regular memory."
+            in result
+        )
+
+    @pytest.mark.asyncio
+    async def test_past_anticipated_at_saves_regular_memory_with_note(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fixed_now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: fixed_now)
+
+        result = await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "This already happened",
+                "anticipated_at": "2026-07-01T23:00:00+00:00",
+            },
+        )
+
+        kwargs = mock_memory.save_with_auto_link.call_args.kwargs
+        assert kwargs["anticipated_at"] == ""
+        assert (
+            "Note: anticipated_at is already in the past — held as a regular memory."
+            in result
+        )
+
+
 class TestHandleRememberWorkspaceSync:
     """Test workspace sync paths (lines 206-216)."""
 
@@ -520,7 +628,12 @@ class TestHandleRememberWorkspaceSync:
         await _handle_remember(
             remember_config,
             mem_store,
-            {"content": "secret", "emotion": "neutral", "private": True},
+            {
+                "content": "secret",
+                "emotion": "neutral",
+                "private": True,
+                "anticipated_at": "2999-01-01T00:00:00+00:00",
+            },
         )
         mock_sync.sync_memory.assert_not_called()
 

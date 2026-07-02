@@ -82,6 +82,12 @@ EMOTION_DEFAULTS: dict[str, tuple[float, float, float]] = {
 _relative_time_override: Callable[[str, datetime | None], str] | None = None
 _get_body_state_override: Callable[[], dict[str, Any]] | None = None
 _last_tool_context: dict[str, dict[str, object]] = {}
+_ANTICIPATED_AT_PARSE_NOTE = (
+    "Note: anticipated_at could not be read as a time — held as a regular memory."
+)
+_ANTICIPATED_AT_PAST_NOTE = (
+    "Note: anticipated_at is already in the past — held as a regular memory."
+)
 
 
 def configure_overrides(
@@ -140,6 +146,22 @@ def _normalize_tags(raw_tags: Any) -> list[str]:
     return tags
 
 
+def _normalize_anticipated_at(raw_value: Any) -> tuple[str, str]:
+    if not raw_value:
+        return "", ""
+    if not isinstance(raw_value, str):
+        return "", _ANTICIPATED_AT_PARSE_NOTE
+    try:
+        parsed = datetime.fromisoformat(raw_value)
+    except ValueError:
+        return "", _ANTICIPATED_AT_PARSE_NOTE
+    parsed = timezone_utils.localize(parsed)
+    now = timezone_utils.now()
+    if parsed <= now:
+        return "", _ANTICIPATED_AT_PAST_NOTE
+    return parsed.isoformat(), ""
+
+
 async def _handle_remember(
     config: EgoConfig,
     memory: MemoryStore,
@@ -182,6 +204,9 @@ async def _handle_remember(
     shared_with_raw = args.get("shared_with")
     related_memories_raw = args.get("related_memories")
     satisfies_raw = args.get("satisfies")
+    anticipated_at, anticipation_note = _normalize_anticipated_at(
+        args.get("anticipated_at")
+    )
 
     mem, num_links, linked_results, duplicate_of = await memory.save_with_auto_link(
         content=content,
@@ -195,6 +220,7 @@ async def _handle_remember(
         body_state=body_state,
         tags=tags,
         private=private,
+        anticipated_at=anticipated_at,
     )
     if mem is None and duplicate_of is not None:
         age = _call_relative_time(duplicate_of.memory.timestamp)
@@ -380,6 +406,8 @@ async def _handle_remember(
         data_parts.append(shared_episode_section.strip())
     if desire_settling_section:
         data_parts.append(desire_settling_section)
+    if anticipation_note:
+        data_parts.append(anticipation_note)
     data = "\n".join(data_parts)
     if category == "introspection":
         if shared_with_provided:

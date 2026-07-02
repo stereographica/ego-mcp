@@ -25,7 +25,19 @@ def _match_where(metadata: dict[str, Any], where: dict[str, Any] | None) -> bool
             return False
         return all(_match_where(metadata, c) for c in clauses if isinstance(c, dict))
     for k, v in where.items():
-        if metadata.get(k) != v:
+        current = metadata.get(k)
+        if isinstance(v, dict):
+            for op, expected in v.items():
+                if op == "$ne":
+                    if current == expected:
+                        return False
+                elif op == "$eq":
+                    if current != expected:
+                        return False
+                else:
+                    return False
+            continue
+        if current != v:
             return False
     return True
 

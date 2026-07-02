@@ -569,6 +569,50 @@ async def list_recent(
     return memories[:n]
 
 
+def list_anticipations(
+    store: MemoryStore,
+    include_surfaced: bool = False,
+) -> list[Memory]:
+    """List memories with anticipated_at metadata."""
+    collection = store._ensure_connected()
+    total = int(collection.count())
+    if total == 0:
+        return []
+
+    try:
+        results = collection.get(
+            where={"anticipated_at": {"$ne": ""}},
+            include=["documents", "metadatas"],
+        )
+    except (KeyError, TypeError, ValueError):
+        results = collection.get(
+            limit=total,
+            include=["documents", "metadatas"],
+        )
+
+    memories: list[Memory] = []
+    ids = results.get("ids", [])
+    docs = results.get("documents", [])
+    metas = results.get("metadatas", [])
+    for mid, doc, meta in zip(ids, docs, metas):
+        memory = memory_from_chromadb(mid, doc, meta)
+        if not memory.anticipated_at:
+            continue
+        if not include_surfaced and memory.anticipation_surfaced:
+            continue
+        memories.append(memory)
+    return memories
+
+
+def mark_anticipation_surfaced(store: MemoryStore, memory_id: str) -> None:
+    """Persist that an anticipated memory has already surfaced after arrival."""
+    collection = store._ensure_connected()
+    collection.update(
+        ids=[memory_id],
+        metadatas=[{"anticipation_surfaced": True}],
+    )
+
+
 async def get_by_id(store: MemoryStore, memory_id: str) -> Memory | None:
     """Retrieve a specific memory by ID."""
     collection = store._ensure_connected()

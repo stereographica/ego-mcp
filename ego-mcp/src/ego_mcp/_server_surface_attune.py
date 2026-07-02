@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import random
 from datetime import datetime, timedelta
+from inspect import isawaitable
 from typing import Any, Awaitable, Callable
 
 from ego_mcp import timezone_utils
-from ego_mcp._server_emotion_formatting import _format_recent_emotion_layer
+from ego_mcp._server_emotion_formatting import (
+    _format_recent_emotion_layer,
+    _truncate_for_quote,
+)
 from ego_mcp._server_runtime import (
     get_impulse_manager,
     get_notion_store,
@@ -16,6 +21,12 @@ from ego_mcp._server_runtime import (
 from ego_mcp._server_surface_person import (
     _format_active_persons,
     _get_active_person_ids,
+)
+from ego_mcp.anticipation import (
+    format_approaching_anticipation,
+    format_arrived_anticipation,
+    pick_anticipation,
+    pick_arrived_anticipation,
 )
 from ego_mcp.config import EgoConfig
 from ego_mcp.current_interest import derive_current_interests
@@ -30,7 +41,7 @@ from ego_mcp.interoception import get_body_state
 from ego_mcp.memory import MemoryStore
 from ego_mcp.scaffolds import SCAFFOLD_ATTUNE, compose_response, render
 from ego_mcp.self_model import SelfModelStore
-from ego_mcp.types import Notion
+from ego_mcp.types import Memory, Notion
 
 _derive_desire_modulation_override: (
     Callable[..., Awaitable[tuple[dict[str, float], dict[str, float], dict[str, float]]]]
@@ -70,6 +81,57 @@ def _list_notions_safe() -> list[Notion]:
         for notion in store.list_all()
         if isinstance(notion, Notion) and notion.id
     ]
+
+
+async def _list_anticipations_safe(memory: MemoryStore) -> list[Memory]:
+    method = getattr(memory, "list_anticipations", None)
+    if not callable(method):
+        return []
+    try:
+        result = method()
+        if isawaitable(result):
+            result = await result
+    except Exception:
+        return []
+    return result if isinstance(result, list) else []
+
+
+async def _mark_anticipation_surfaced_safe(
+    memory: MemoryStore,
+    memory_id: str,
+) -> None:
+    method = getattr(memory, "mark_anticipation_surfaced", None)
+    if not callable(method):
+        return
+    try:
+        result = method(memory_id)
+        if isawaitable(result):
+            await result
+    except Exception:
+        return
+
+
+async def _anticipation_surface_line(
+    memory: MemoryStore,
+    now: datetime,
+) -> str:
+    anticipations = await _list_anticipations_safe(memory)
+    if not anticipations:
+        return ""
+
+    arrived = pick_arrived_anticipation(anticipations, now)
+    if arrived is not None:
+        await _mark_anticipation_surfaced_safe(memory, arrived.id)
+        if not arrived.is_private:
+            update_tool_metadata(anticipation_arrived=arrived.id)
+        return format_arrived_anticipation(arrived, _truncate_for_quote)
+
+    approaching = pick_anticipation(anticipations, now, random)
+    if approaching is None:
+        return ""
+    if not approaching.is_private:
+        update_tool_metadata(anticipation_presented=approaching.id)
+    return format_approaching_anticipation(approaching, now, _truncate_for_quote)
 
 
 async def _handle_attune(
@@ -183,6 +245,9 @@ async def _handle_attune(
     # Compose output
     sections: list[str] = []
     sections.append(emotional_texture)
+    anticipation_line = await _anticipation_surface_line(memory, now)
+    if anticipation_line:
+        sections.append(anticipation_line)
     sections.append(f"Desire currents: {desire_text}")
 
     if interests:

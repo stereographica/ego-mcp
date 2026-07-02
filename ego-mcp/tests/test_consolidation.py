@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -228,6 +228,54 @@ class TestConsolidationEngine:
             near_duplicate.content: [
                 self._result(near_duplicate, 0.0),
                 self._result(precious, 0.05),
+                self._result(ordinary, 0.04),
+            ],
+            ordinary.content: [
+                self._result(ordinary, 0.0),
+                self._result(near_duplicate, 0.04),
+            ],
+        }
+
+        async def fake_search(query: str, **_kwargs: object) -> list[MemorySearchResult]:
+            return list(mapping.get(query, []))
+
+        engine = ConsolidationEngine()
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(store, "search", fake_search)
+        try:
+            stats = await engine.run(store, window_hours=24, merge_threshold=0.10)
+        finally:
+            monkeypatch.undo()
+
+        assert len(stats.merge_candidates) == 1
+        assert {
+            stats.merge_candidates[0].memory_a_id,
+            stats.merge_candidates[0].memory_b_id,
+        } == {near_duplicate.id, ordinary.id}
+
+    @pytest.mark.asyncio
+    async def test_unarrived_anticipation_is_excluded_from_merge_candidates(
+        self, store: MemoryStore
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        anticipated = await store.save(
+            content="future repeated morning coffee",
+            anticipated_at=(now + timedelta(days=3)).isoformat(),
+        )
+        near_duplicate = await store.save(content="future repeated morning tea")
+        ordinary = await store.save(content="ordinary repeated morning tea")
+        store._ensure_connected().update(
+            ids=[anticipated.id],
+            metadatas=[memory_to_chromadb(anticipated)],
+        )
+        mapping = {
+            anticipated.content: [
+                self._result(anticipated, 0.0),
+                self._result(near_duplicate, 0.05),
+            ],
+            near_duplicate.content: [
+                self._result(near_duplicate, 0.0),
+                self._result(anticipated, 0.05),
                 self._result(ordinary, 0.04),
             ],
             ordinary.content: [

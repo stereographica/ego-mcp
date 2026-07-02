@@ -1690,10 +1690,11 @@ class TestToolLoggingPrivacy:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         secret = "super secret private payload"
+        anticipated_at = "2999-01-01T00:00:00+00:00"
         with caplog.at_level(logging.INFO, logger="ego_mcp.server"):
             await _call(
                 "remember",
-                {"content": secret, "private": True},
+                {"content": secret, "private": True, "anticipated_at": anticipated_at},
                 config,
                 memory,
                 desire,
@@ -1715,6 +1716,15 @@ class TestToolLoggingPrivacy:
             for record in invocation_records
         )
         assert all(secret not in str(getattr(record, "tool_args", {})) for record in invocation_records)
+        assert all(
+            getattr(record, "tool_args", {}).get("anticipated_at")
+            == "[REDACTED_PRIVATE_FIELD]"
+            for record in invocation_records
+        )
+        assert all(
+            anticipated_at not in str(getattr(record, "tool_args", {}))
+            for record in invocation_records
+        )
 
     @pytest.mark.asyncio
     async def test_recall_masks_private_content_in_logs(

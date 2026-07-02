@@ -259,7 +259,7 @@ def _sanitize_tool_args_for_logging(
         if isinstance(content, str):
             safe_args["content_length"] = len(content)
         safe_args["content"] = "[REDACTED_PRIVATE_MEMORY]"
-        for key in ("secondary", "body_state", "tags"):
+        for key in ("secondary", "body_state", "tags", "anticipated_at"):
             if key in safe_args:
                 safe_args[key] = "[REDACTED_PRIVATE_FIELD]"
     return safe_args
