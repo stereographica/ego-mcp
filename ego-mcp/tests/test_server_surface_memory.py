@@ -376,6 +376,49 @@ class TestHandleRememberDesireSatisfaction:
         assert "Putting this into words" not in result
 
 
+class TestHandleRememberIntrospectionScaffold:
+    @pytest.mark.asyncio
+    async def test_introspection_uses_open_edge_scaffold(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+    ) -> None:
+        result = await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "A monologue that leaves something open",
+                "emotion": "calm",
+                "category": "introspection",
+            },
+        )
+
+        assert "Did this monologue close, or is something still unfinished?" in result
+        assert "Still open:" in result
+        assert 'update_self(field="new_question"' in result
+        assert "Does this connect to something older?" not in result
+
+    @pytest.mark.asyncio
+    async def test_shared_introspection_keeps_shared_prefix(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+    ) -> None:
+        result = await _handle_remember(
+            remember_config,
+            mock_memory,
+            {
+                "content": "A shared monologue",
+                "emotion": "calm",
+                "category": "introspection",
+                "shared_with": "TestUser",
+            },
+        )
+
+        assert "You recorded a shared experience." in result
+        assert "Did this monologue close, or is something still unfinished?" in result
+
+
 class TestHandleRememberWorkspaceSync:
     """Test workspace sync paths (lines 206-216)."""
 

@@ -40,6 +40,7 @@ from ego_mcp.notion import (
 from ego_mcp.scaffolds import (
     SCAFFOLD_RECALL_EXPLORE,
     SCAFFOLD_REMEMBER,
+    SCAFFOLD_REMEMBER_INTROSPECTION,
     compose_response,
 )
 
@@ -380,7 +381,16 @@ async def _handle_remember(
     if desire_settling_section:
         data_parts.append(desire_settling_section)
     data = "\n".join(data_parts)
-    if shared_with_provided:
+    if category == "introspection":
+        if shared_with_provided:
+            scaffold = (
+                "You recorded a shared experience. Does this change how you understand "
+                "your relationship with them?\n"
+                f"{SCAFFOLD_REMEMBER_INTROSPECTION}"
+            )
+        else:
+            scaffold = SCAFFOLD_REMEMBER_INTROSPECTION
+    elif shared_with_provided:
         scaffold = (
             "You recorded a shared experience. Does this change how you understand "
             "your relationship with them?\n"

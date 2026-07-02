@@ -21,6 +21,7 @@ from ego_mcp._server_emotion_formatting import (
     _format_month_emotion_layer,
     _format_recent_emotion_layer,
     _format_week_emotion_layer,
+    _tail_quote_for_introspection,
     _truncate_for_quote,
 )
 from ego_mcp._server_runtime import (
@@ -55,7 +56,7 @@ from ego_mcp.scaffolds import (
     compose_response,
     render_with_data,
 )
-from ego_mcp.self_model import SelfModelStore
+from ego_mcp.self_model import QUESTION_ACTIVE_MIN_SALIENCE, SelfModelStore
 from ego_mcp.types import Notion
 
 _relationship_snapshot_override: (
@@ -274,7 +275,6 @@ async def _handle_wake_up(
 ) -> str:
     """Session start: emotional texture + embers + Proust + introspection + desires + relationship."""
     from ego_mcp import timezone_utils
-    from ego_mcp._server_context import _fading_important_questions
 
     now = timezone_utils.now()
     recent_all = await memory.list_recent(n=30)
@@ -295,12 +295,8 @@ async def _handle_wake_up(
     all_notions = _list_notions_safe()
     snapshot_path = config.data_dir / "notion_confidence_snapshot.json"
     weakened_notions = _detect_weakened_notions(all_notions, snapshot_path)
-    try:
-        unresolved_qs = _fading_important_questions(memory)
-    except Exception:
-        unresolved_qs = []
     ember_texts = generate_embers(
-        recent_all[:5], unresolved_qs, active_emergent, weakened_notions
+        recent_all[:5], active_emergent, weakened_notions
     )
     if ember_texts:
         parts.append("Embers:\n" + "\n".join(f"  {e}" for e in ember_texts))
@@ -339,7 +335,7 @@ async def _handle_wake_up(
     if latest_text:
         since = latest_since or "workspace-sync"
         parts.append(
-            f'Last introspection ({since}):\n"{_truncate_for_quote(latest_text)}"'
+            f'Last introspection ({since}):\n"{_tail_quote_for_introspection(latest_text)}"'
         )
     else:
         recent_introspections = await memory.list_recent(
@@ -349,10 +345,23 @@ async def _handle_wake_up(
             m = recent_introspections[0]
             since = m.timestamp[:16] if len(m.timestamp) >= 16 else m.timestamp
             parts.append(
-                f'Last introspection ({since}):\n"{_truncate_for_quote(m.content)}"'
+                f'Last introspection ({since}):\n"{_tail_quote_for_introspection(m.content)}"'
             )
         else:
             parts.append("No introspection yet.")
+
+    self_store = SelfModelStore(config.data_dir / "self_model.json")
+    entries = self_store.get_unresolved_questions_with_salience()
+    active = [
+        e
+        for e in entries
+        if float(e.get("salience", 0.0)) > QUESTION_ACTIVE_MIN_SALIENCE
+    ]
+    if active:
+        top = max(active, key=lambda e: float(e.get("salience", 0.0)))
+        parts.append(
+            f"Open edges:\n  [{top['id']}] {top['question']} (importance: {top['importance']})"
+        )
 
     # 5. Desire currents (3-direction)
     levels = desire.compute_levels_with_modulation()
@@ -506,6 +515,9 @@ async def _handle_introspect(
         question_lines.append(
             'To resolve a question: update_self(field="resolve_question", value="<question_id>")'
         )
+    question_lines.append(
+        'To hold a new question: update_self(field="new_question", value={"question": ..., "importance": 1-5})'
+    )
     open_questions = "\n".join(question_lines)
 
     # §10.1 recent episodes (past 2 weeks)

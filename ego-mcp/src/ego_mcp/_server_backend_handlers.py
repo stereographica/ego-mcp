@@ -43,7 +43,7 @@ from ego_mcp.scaffolds import (
     SCAFFOLD_CURATE_NOTIONS,
     compose_response,
 )
-from ego_mcp.self_model import SelfModelStore
+from ego_mcp.self_model import SelfModelStore, _clamp_question_importance
 from ego_mcp.types import Memory, MetaField
 
 logger = logging.getLogger(__name__)
@@ -474,11 +474,73 @@ _SELF_FIELD_ALIASES: dict[str, str] = {
 }
 
 
+def _dedupe_preserving_order(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
+
+
+def _update_unresolved_questions_from_list(
+    store: SelfModelStore,
+    value: list[Any],
+) -> str:
+    log = store.get_question_log()
+    known_ids = {str(entry["id"]) for entry in log}
+    text_to_id = {
+        str(entry["question"]): str(entry["id"])
+        for entry in log
+        if not bool(entry.get("resolved", False))
+    }
+    new_ids: list[str] = []
+    converted = 0
+    for item in value:
+        s = str(item)
+        if s in known_ids:
+            new_ids.append(s)
+        elif s in text_to_id:
+            new_ids.append(text_to_id[s])
+        else:
+            new_ids.append(store.add_question(s, importance=3))
+            converted += 1
+
+    deduped_ids = _dedupe_preserving_order(new_ids)
+    deduped_set = set(deduped_ids)
+    old_unresolved = store._data.get("unresolved_questions", [])
+    old_ids: list[str] = []
+    if isinstance(old_unresolved, list):
+        old_ids = [str(qid) for qid in old_unresolved if str(qid) in known_ids]
+    removed = [qid for qid in old_ids if qid not in deduped_set]
+    for question_id in removed:
+        store.resolve_question(question_id)
+    store.update({"unresolved_questions": deduped_ids})
+    return (
+        f"Updated self.unresolved_questions ({converted} converted to tracked "
+        f"questions, {len(removed)} resolved)."
+    )
+
+
 def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
     """Update self model."""
     field_name = _SELF_FIELD_ALIASES.get(args["field"], args["field"])
     value = args["value"]
     store = SelfModelStore(config.data_dir / "self_model.json")
+
+    if field_name == "new_question":
+        if not isinstance(value, dict) or not str(value.get("question", "")).strip():
+            return 'new_question expects {"question": str, "importance": 1-5}.'
+        question = str(value["question"]).strip()
+        raw_importance = value.get("importance", 3)
+        importance = (
+            int(raw_importance) if isinstance(raw_importance, (int, float)) else 3
+        )
+        question_id = store.add_question(question, importance)
+        clamped = _clamp_question_importance(importance)
+        return f"Holding new question {question_id} (importance: {clamped})."
 
     if field_name == "resolve_question":
         question_id = str(value)
@@ -496,6 +558,9 @@ def _handle_update_self(config: EgoConfig, args: dict[str, Any]) -> str:
         if store.update_question_importance(question_id, int(importance)):
             return f"Updated question importance for {question_id}."
         return f"Question {question_id} not found."
+
+    if field_name == "unresolved_questions" and isinstance(value, list):
+        return _update_unresolved_questions_from_list(store, value)
 
     try:
         store.update({field_name: value})

@@ -29,6 +29,9 @@ _FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     "confidence_calibration": (int, float),
 }
 
+QUESTION_ACTIVE_MIN_SALIENCE = 0.3
+QUESTION_DORMANT_MAX_SALIENCE = 0.1
+
 
 def _clamp_question_importance(value: Any) -> int:
     """Clamp question importance to the supported 1-5 range."""
@@ -103,8 +106,61 @@ class SelfModelStore:
                 self._data = self._default_data()
             else:
                 self._data = {**self._default_data(), **parsed}
+                self._rescue_orphan_unresolved_questions()
         except (json.JSONDecodeError, OSError):
             self._data = self._default_data()
+
+    def _rescue_orphan_unresolved_questions(self) -> None:
+        unresolved = self._data.get("unresolved_questions", [])
+        if not isinstance(unresolved, list):
+            return
+
+        question_log = self._data.get("question_log", [])
+        changed = False
+        if not isinstance(question_log, list):
+            question_log = []
+            self._data["question_log"] = question_log
+            changed = True
+
+        normalized_log = self.get_question_log()
+        known_ids = {str(entry["id"]) for entry in normalized_log}
+        text_to_id = {
+            str(entry["question"]): str(entry["id"])
+            for entry in normalized_log
+            if not bool(entry.get("resolved", False))
+        }
+
+        rescued: list[str] = []
+        for item in unresolved:
+            raw = str(item)
+            if raw in known_ids:
+                question_id = raw
+            elif raw in text_to_id:
+                question_id = text_to_id[raw]
+                changed = True
+            else:
+                question_id = f"q_{uuid.uuid4().hex[:10]}"
+                now_iso = timezone_utils.now().isoformat()
+                question_log.append(
+                    {
+                        "id": question_id,
+                        "question": raw,
+                        "resolved": False,
+                        "importance": 3,
+                        "created_at": now_iso,
+                    }
+                )
+                known_ids.add(question_id)
+                text_to_id[raw] = question_id
+                changed = True
+            rescued.append(question_id)
+
+        if rescued != unresolved:
+            changed = True
+        if changed:
+            self._data["unresolved_questions"] = rescued
+            self._data["last_updated"] = timezone_utils.now().isoformat()
+            self._save()
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,10 +172,22 @@ class SelfModelStore:
     def get(self) -> SelfModel:
         unresolved = self._data.get("unresolved_questions", [])
         unresolved_texts: list[str] = []
-        unresolved_ids = set(unresolved if isinstance(unresolved, list) else [])
-        for item in self.get_question_log():
-            if item.get("id") in unresolved_ids and isinstance(item.get("question"), str):
-                unresolved_texts.append(str(item["question"]))
+        unresolved_ids = (
+            [str(qid) for qid in unresolved] if isinstance(unresolved, list) else []
+        )
+        question_by_id = {
+            str(item["id"]): str(item["question"])
+            for item in self.get_question_log()
+            if isinstance(item.get("question"), str)
+        }
+        seen_unresolved: set[str] = set()
+        for question_id in unresolved_ids:
+            if question_id in seen_unresolved:
+                continue
+            seen_unresolved.add(question_id)
+            question = question_by_id.get(question_id)
+            if question is not None:
+                unresolved_texts.append(question)
 
         return SelfModel(
             preferences=dict(self._data.get("preferences", {})),
@@ -243,12 +311,16 @@ class SelfModelStore:
         """Return active and resurfacing unresolved questions ordered by salience."""
         enriched = self.get_unresolved_questions_with_salience()
         active = [
-            item for item in enriched if float(item.get("salience", 0.0)) > 0.3
+            item
+            for item in enriched
+            if float(item.get("salience", 0.0)) > QUESTION_ACTIVE_MIN_SALIENCE
         ]
         resurfacing = [
             item
             for item in enriched
-            if 0.1 < float(item.get("salience", 0.0)) <= 0.3
+            if QUESTION_DORMANT_MAX_SALIENCE
+            < float(item.get("salience", 0.0))
+            <= QUESTION_ACTIVE_MIN_SALIENCE
         ]
         active.sort(key=lambda item: float(item.get("salience", 0.0)), reverse=True)
         resurfacing.sort(key=lambda item: float(item.get("salience", 0.0)), reverse=True)

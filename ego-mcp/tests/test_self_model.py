@@ -121,6 +121,68 @@ class TestSelfModelStore:
         assert active[0]["importance"] == 3
         assert active[0]["created_at"] == ""
 
+    def test_load_rescues_orphan_unresolved_question_strings(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "self_model.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "question_log": [],
+                    "unresolved_questions": [
+                        "What did the old raw list forget?",
+                        "Where should this be carried?",
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        store = SelfModelStore(path)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        rescued_ids = payload["unresolved_questions"]
+
+        assert len(rescued_ids) == 2
+        assert all(str(qid).startswith("q_") for qid in rescued_ids)
+        assert [entry["question"] for entry in payload["question_log"]] == [
+            "What did the old raw list forget?",
+            "Where should this be carried?",
+        ]
+        assert all(entry["importance"] == 3 for entry in payload["question_log"])
+        assert all(entry["created_at"] for entry in payload["question_log"])
+        assert store.get().unresolved_questions == [
+            "What did the old raw list forget?",
+            "Where should this be carried?",
+        ]
+
+    def test_load_reuses_matching_unresolved_question_text(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "self_model.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "question_log": [
+                        {
+                            "id": "q_existing",
+                            "question": "How do I keep this thread?",
+                            "resolved": False,
+                            "importance": 4,
+                            "created_at": "2026-07-01T12:00:00+00:00",
+                        }
+                    ],
+                    "unresolved_questions": ["How do I keep this thread?"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        SelfModelStore(path)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+
+        assert payload["unresolved_questions"] == ["q_existing"]
+        assert len(payload["question_log"]) == 1
+
     def test_get_visible_questions_classifies_active_fading_dormant(
         self, tmp_path: Path
     ) -> None:

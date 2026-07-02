@@ -16,7 +16,8 @@ from ego_mcp._server_surface_core import (
 )
 from ego_mcp.config import EgoConfig
 from ego_mcp.desire import DesireEngine
-from ego_mcp.types import Notion
+from ego_mcp.self_model import SelfModelStore
+from ego_mcp.types import Category, Memory, Notion
 
 
 @pytest.fixture
@@ -127,6 +128,85 @@ class TestHandleWakeUp:
     ) -> None:
         result = await _handle_wake_up(config, memory, engine)
         assert "TestUser" in result
+
+    @pytest.mark.asyncio
+    async def test_workspace_monologue_uses_tail_quote(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeSync:
+            def read_latest_monologue(self) -> tuple[str, str]:
+                return (
+                    "Opening summary " + ("x" * 240) + " Still open: carry this edge",
+                    "workspace-note",
+                )
+
+        import ego_mcp._server_surface_core as core_mod
+
+        monkeypatch.setattr(core_mod, "get_workspace_sync", lambda: FakeSync())
+
+        result = await _handle_wake_up(config, memory, engine)
+
+        assert 'Last introspection (workspace-note):\n"Still open: carry this edge"' in result
+        assert "Opening summary" not in result
+
+    @pytest.mark.asyncio
+    async def test_memory_fallback_introspection_uses_tail_quote(
+        self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
+    ) -> None:
+        memory.list_recent.side_effect = [
+            [],
+            [
+                Memory(
+                    id="intro",
+                    content="Opening summary " + ("y" * 240) + " Still open: fallback edge",
+                    timestamp="2026-07-02T10:30:00+00:00",
+                    category=Category.INTROSPECTION,
+                )
+            ],
+        ]
+
+        result = await _handle_wake_up(config, memory, engine)
+
+        assert 'Last introspection (2026-07-02T10:30):\n"Still open: fallback edge"' in result
+        assert "Opening summary" not in result
+
+    @pytest.mark.asyncio
+    async def test_open_edges_shows_top_active_question_only(
+        self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
+    ) -> None:
+        store = SelfModelStore(config.data_dir / "self_model.json")
+        low_id = store.add_question("Lower salience edge", importance=2)
+        top_id = store.add_question("Top salience edge", importance=5)
+
+        result = await _handle_wake_up(config, memory, engine)
+
+        assert (
+            f"Open edges:\n  [{top_id}] Top salience edge (importance: 5)"
+            in result
+        )
+        assert f"[{low_id}] Lower salience edge" not in result
+
+    @pytest.mark.asyncio
+    async def test_inactive_questions_do_not_render_open_edges_or_embers(
+        self, config: EgoConfig, memory: AsyncMock, engine: DesireEngine
+    ) -> None:
+        store = SelfModelStore(config.data_dir / "self_model.json")
+        qid = store.add_question("Fading question should stay out of embers", importance=4)
+        for item in store._data.get("question_log", []):
+            if isinstance(item, dict) and item.get("id") == qid:
+                item["created_at"] = (
+                    datetime.now(timezone.utc) - timedelta(days=60)
+                ).isoformat()
+        store._save()
+
+        result = await _handle_wake_up(config, memory, engine)
+
+        assert "Open edges:" not in result
+        assert "still wondering" not in result.lower()
 
     @pytest.mark.asyncio
     async def test_no_embers_when_no_data(

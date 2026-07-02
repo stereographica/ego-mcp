@@ -22,6 +22,7 @@ from ego_mcp._server_surface_core import (
     _sanitize_impulse_event,
 )
 from ego_mcp.config import EgoConfig
+from ego_mcp.self_model import SelfModelStore
 from ego_mcp.types import Emotion, Notion
 
 
@@ -285,6 +286,60 @@ class TestHandleIntrospect:
         assert "Desire trend:" in result
         assert "curiosity: rising" in result
         assert "expression: settling" in result
+
+    @pytest.mark.asyncio
+    async def test_new_question_hint_shown_without_questions(
+        self, config: EgoConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mem = AsyncMock()
+        mem.list_recent = AsyncMock(return_value=[])
+
+        class FakeDesire:
+            @property
+            def ema_levels(self) -> dict[str, float]:
+                return {}
+
+            def compute_levels_with_modulation(self, **kw: Any) -> dict[str, float]:
+                return {}
+
+        mock_store = MagicMock()
+        mock_store.list_all.return_value = []
+        monkeypatch.setattr(core_mod, "get_notion_store", lambda: mock_store)
+
+        result = await _handle_introspect(config, mem, cast(Any, FakeDesire()))
+
+        assert (
+            'No unresolved questions yet.\nTo hold a new question: update_self(field="new_question", '
+            'value={"question": ..., "importance": 1-5})'
+            in result
+        )
+
+    @pytest.mark.asyncio
+    async def test_new_question_hint_shown_with_resolve_hint(
+        self, config: EgoConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        SelfModelStore(config.data_dir / "self_model.json").add_question(
+            "What remains open?", importance=5
+        )
+        mem = AsyncMock()
+        mem.list_recent = AsyncMock(return_value=[])
+
+        class FakeDesire:
+            @property
+            def ema_levels(self) -> dict[str, float]:
+                return {}
+
+            def compute_levels_with_modulation(self, **kw: Any) -> dict[str, float]:
+                return {}
+
+        mock_store = MagicMock()
+        mock_store.list_all.return_value = []
+        monkeypatch.setattr(core_mod, "get_notion_store", lambda: mock_store)
+
+        result = await _handle_introspect(config, mem, cast(Any, FakeDesire()))
+
+        assert 'update_self(field="resolve_question", value="<question_id>")' in result
+        assert 'update_self(field="new_question", value={"question": ...' in result
 
 
 class TestConsiderThemPersonTelemetry:

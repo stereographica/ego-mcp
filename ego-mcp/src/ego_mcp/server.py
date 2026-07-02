@@ -61,6 +61,7 @@ _recall_scaffold = _handlers._recall_scaffold
 _parse_iso_datetime = _handlers._parse_iso_datetime
 _memories_within_days = _handlers._memories_within_days
 _secondary_weighted_counts = _handlers._secondary_weighted_counts
+_tail_quote_for_introspection = _handlers._tail_quote_for_introspection
 _valence_arousal_to_impression = _handlers._valence_arousal_to_impression
 _format_recent_emotion_layer = _handlers._format_recent_emotion_layer
 _format_week_emotion_layer = _handlers._format_week_emotion_layer

@@ -13,6 +13,7 @@ from ego_mcp.types import Memory, MemorySearchResult
 
 _relative_time_override: Callable[[str, datetime | None], str] | None = None
 _calculate_time_decay_override: Callable[..., float] | None = None
+_STILL_OPEN_MARKER = "still open:"
 
 
 def configure_overrides(
@@ -62,6 +63,19 @@ def _truncate_for_quote(text: str, limit: int = 220) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3].rstrip() + "..."
+
+
+def _tail_quote_for_introspection(text: str, limit: int = 220) -> str:
+    compact = " ".join(text.split()).strip()
+    idx = compact.lower().rfind(_STILL_OPEN_MARKER)
+    if idx >= 0:
+        segment = compact[idx:]
+        if len(segment) <= limit:
+            return segment
+        return segment[: limit - 3].rstrip() + "..."
+    if len(compact) <= limit:
+        return compact
+    return "..." + compact[-(limit - 3):].lstrip()
 
 
 def _truncate_for_log(text: str, limit: int = 1200) -> tuple[str, bool]:

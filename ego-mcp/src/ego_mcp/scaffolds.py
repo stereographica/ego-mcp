@@ -32,6 +32,14 @@ SCAFFOLD_REMEMBER = (
     "If this was shared with someone, create_episode can hold the story together."
 )
 
+SCAFFOLD_REMEMBER_INTROSPECTION = (
+    "Did this monologue close, or is something still unfinished?\n"
+    "If something is open, end your monologues with 'Still open:' — a line or two. "
+    "wake_up will carry it forward.\n"
+    'If a question crystallized here, hold it: '
+    'update_self(field="new_question", value={"question": ..., "importance": 1-5}).'
+)
+
 SCAFFOLD_PAUSE = (
     "Wait — is this really what I want to say?\n"
     "Am I reaching for a template, or is this mine?\n"

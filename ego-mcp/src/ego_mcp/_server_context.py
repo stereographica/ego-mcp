@@ -12,7 +12,11 @@ from ego_mcp import timezone_utils
 from ego_mcp.config import EgoConfig
 from ego_mcp.memory import MemoryStore
 from ego_mcp.relationship import RelationshipStore
-from ego_mcp.self_model import SelfModelStore
+from ego_mcp.self_model import (
+    QUESTION_ACTIVE_MIN_SALIENCE,
+    QUESTION_DORMANT_MAX_SALIENCE,
+    SelfModelStore,
+)
 from ego_mcp.types import Memory
 
 logger = logging.getLogger(__name__)
@@ -38,12 +42,12 @@ def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
 def _fading_or_dormant_questions(
     memory: MemoryStore, store: SelfModelStore | None = None
 ) -> list[dict[str, Any]]:
-    """Return unresolved questions that are no longer fully active (salience <= 0.3)."""
+    """Return unresolved questions that are no longer fully active."""
     model_store = store or _self_model_store_for_memory(memory)
     return [
         q
         for q in model_store.get_unresolved_questions_with_salience()
-        if float(q.get("salience", 0.0)) <= 0.3
+        if float(q.get("salience", 0.0)) <= QUESTION_ACTIVE_MIN_SALIENCE
     ]
 
 
@@ -55,7 +59,9 @@ def _fading_important_questions(
     return [
         q
         for q in model_store.get_unresolved_questions_with_salience()
-        if 0.1 < float(q.get("salience", 0.0)) <= 0.3
+        if QUESTION_DORMANT_MAX_SALIENCE
+        < float(q.get("salience", 0.0))
+        <= QUESTION_ACTIVE_MIN_SALIENCE
         and int(q.get("importance", 3)) >= 4
     ]
 
@@ -89,7 +95,11 @@ def _find_related_forgotten_questions(
         similarity = _cosine_similarity(content_embedding, embedding)
         if similarity > threshold:
             salience = float(question.get("salience", 0.0))
-            band = "dormant" if salience <= 0.1 else "fading"
+            band = (
+                "dormant"
+                if salience <= QUESTION_DORMANT_MAX_SALIENCE
+                else "fading"
+            )
             related.append({**question, "trigger_similarity": similarity, "band": band})
 
     related.sort(key=lambda q: float(q.get("trigger_similarity", 0.0)), reverse=True)
