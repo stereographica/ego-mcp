@@ -619,3 +619,88 @@ class TestMemoryFallbacks:
         store._collection = BrokenCollection()
         found = await store.get_by_id("mem_any")
         assert found is None
+
+
+class TestLexicalIndexIntegration:
+    @pytest.mark.asyncio
+    async def test_save_indexes_content_in_lexical_store(
+        self, store: MemoryStore
+    ) -> None:
+        mem = await store.save(content="The sunset was beautiful over the bay")
+
+        assert store.lexical is not None
+        assert store.lexical.count() == 1
+        assert store.lexical.search("sunset beautiful", limit=5) == [mem.id]
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_content_from_lexical_store(
+        self, store: MemoryStore
+    ) -> None:
+        mem = await store.save(content="A memory that will be forgotten")
+        assert store.lexical is not None
+        assert store.lexical.count() == 1
+
+        await store.delete(mem.id)
+
+        assert store.lexical.count() == 0
+        assert store.lexical.search("forgotten", limit=5) == []
+
+    @pytest.mark.asyncio
+    async def test_connect_bootstraps_lexical_index_from_existing_collection(
+        self, store: MemoryStore
+    ) -> None:
+        await store.save(content="alpha memory content")
+        await store.save(content="beta memory content")
+        assert store.lexical is not None
+
+        # Simulate an existing ChromaDB install that predates the lexical
+        # index (or one that otherwise lost its FTS data): wipe the lexical
+        # index directly, leaving ChromaDB untouched, so counts disagree.
+        store.lexical.rebuild([])
+        assert store.lexical.count() == 0
+
+        # Re-running connect() should detect the mismatch and bootstrap the
+        # lexical index from whatever ChromaDB currently holds.
+        store.connect()
+
+        assert store.lexical.count() == 2
+        assert store.lexical.search("alpha", limit=5)
+        assert store.lexical.search("beta", limit=5)
+
+    @pytest.mark.asyncio
+    async def test_connect_rebuilds_lexical_index_when_drifted_out_of_sync(
+        self, store: MemoryStore
+    ) -> None:
+        mem = await store.save(content="content that will desync")
+        assert store.lexical is not None
+
+        # Simulate drift: remove from the lexical index without touching
+        # ChromaDB, so lexical.count() (0) no longer matches collection
+        # count (1).
+        store.lexical.remove(mem.id)
+        assert store.lexical.count() == 0
+
+        store.connect()
+
+        assert store.lexical.count() == 1
+        assert store.lexical.search("desync", limit=5) == [mem.id]
+
+    @pytest.mark.asyncio
+    async def test_lexical_disabled_via_config_leaves_lexical_none(
+        self, tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setenv("EGO_MCP_DATA_DIR", str(tmp_data_dir))
+        monkeypatch.setenv("EGO_MCP_LEXICAL_SEARCH", "off")
+        disabled_config = EgoConfig.from_env()
+        provider: EmbeddingProvider = FakeEmbeddingProvider()
+        fn = EgoEmbeddingFunction(provider)
+        disabled_store = MemoryStore(disabled_config, fn)
+        disabled_store.connect()
+        try:
+            assert disabled_store.lexical is None
+            mem = await disabled_store.save(content="no lexical index for this one")
+            results = await disabled_store.search("no lexical index")
+            assert any(r.memory.id == mem.id for r in results)
+        finally:
+            disabled_store.close()

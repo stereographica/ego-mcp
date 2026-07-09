@@ -22,6 +22,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "EGO_MCP_COMPANION_NAME",
         "EGO_MCP_WORKSPACE_DIR",
         "EGO_MCP_TIMEZONE",
+        "EGO_MCP_LEXICAL_SEARCH",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -134,3 +135,33 @@ class TestCustomSettings:
 
         with pytest.raises(ValueError, match="Invalid timezone"):
             EgoConfig.from_env()
+
+
+class TestLexicalSearchToggle:
+    """EGO_MCP_LEXICAL_SEARCH parsing."""
+
+    def test_defaults_to_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        config = EgoConfig.from_env()
+
+        assert config.lexical_search_enabled is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "False", "FALSE", "off", "OFF"])
+    def test_disabling_values(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setenv("EGO_MCP_LEXICAL_SEARCH", value)
+        config = EgoConfig.from_env()
+
+        assert config.lexical_search_enabled is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "on", "yes", "anything"])
+    def test_enabling_values(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setenv("EGO_MCP_LEXICAL_SEARCH", value)
+        config = EgoConfig.from_env()
+
+        assert config.lexical_search_enabled is True
