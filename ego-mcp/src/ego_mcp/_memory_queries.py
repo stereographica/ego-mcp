@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 _SPREAD_WEIGHT = 0.3
 _DORMANT_DECAY_THRESHOLD = 0.3
 PROUST_PROBABILITY = 0.25
+_RRF_K = 60
 
 
 def _collect_involuntary_persons(
@@ -280,6 +281,42 @@ async def _apply_spreading_activation(
     return expanded[:n_results]
 
 
+def _passes_post_filters(
+    memory: Memory,
+    *,
+    emotion_filter: str | None,
+    category_filter: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    valence_range: list[float] | None,
+    arousal_range: list[float] | None,
+) -> bool:
+    """Python-side filter shared by semantic and lexical-sourced candidates.
+
+    ``emotion_filter``/``category_filter`` are already applied server-side
+    (ChromaDB ``where``) for semantic candidates, so re-checking them here is
+    a harmless no-op for those; it is what makes lexical-only candidates
+    (fetched by id, bypassing ``where``) respect the same filters.
+    """
+    if emotion_filter and memory.emotional_trace.primary.value != emotion_filter:
+        return False
+    if category_filter and memory.category.value != category_filter:
+        return False
+    if date_from and memory.timestamp < date_from:
+        return False
+    if date_to and memory.timestamp[: len(date_to)] > date_to:
+        return False
+    if valence_range is not None and len(valence_range) == 2:
+        valence = memory.emotional_trace.valence
+        if valence < min(valence_range) or valence > max(valence_range):
+            return False
+    if arousal_range is not None and len(arousal_range) == 2:
+        arousal = memory.emotional_trace.arousal
+        if arousal < min(arousal_range) or arousal > max(arousal_range):
+            return False
+    return True
+
+
 async def search(
     store: MemoryStore,
     query: str,
@@ -291,7 +328,12 @@ async def search(
     valence_range: list[float] | None = None,
     arousal_range: list[float] | None = None,
 ) -> list[MemorySearchResult]:
-    """Search memories by semantic similarity with optional filters."""
+    """Search memories by semantic similarity with optional filters.
+
+    Blends in a BM25 lexical search (via Reciprocal Rank Fusion) whenever
+    ``store.lexical`` is available and yields at least one hit for ``query``;
+    otherwise this is identical to semantic-only search.
+    """
     collection = store._ensure_connected()
 
     where_clauses: list[dict[str, Any]] = []
@@ -322,31 +364,102 @@ async def search(
         else:
             query_kwargs["where"] = {"$and": where_clauses}
 
-    results = collection.query(**query_kwargs)
+    raw = collection.query(**query_kwargs)
 
+    ids = raw.get("ids", [[]])[0]
+    docs = raw.get("documents", [[]])[0]
+    metas = raw.get("metadatas", [[]])[0]
+    distances = raw.get("distances", [[]])[0]
+
+    semantic_memories: dict[str, Memory] = {}
+    semantic_distance: dict[str, float] = {}
+    semantic_rank: dict[str, int] = {}
+    for rank, (mid, doc, meta, dist) in enumerate(zip(ids, docs, metas, distances)):
+        semantic_memories[mid] = memory_from_chromadb(mid, doc, meta)
+        semantic_distance[mid] = float(dist)
+        semantic_rank[mid] = rank
+
+    def _passes(memory: Memory) -> bool:
+        return _passes_post_filters(
+            memory,
+            emotion_filter=emotion_filter,
+            category_filter=category_filter,
+            date_from=date_from,
+            date_to=date_to,
+            valence_range=valence_range,
+            arousal_range=arousal_range,
+        )
+
+    lexical_ids: list[str] = []
+    lexical = getattr(store, "lexical", None)
+    if lexical is not None:
+        try:
+            lexical_ids = lexical.search(query, limit=fetch_n)
+        except Exception as exc:
+            logger.warning(
+                "Lexical search failed, continuing with semantic-only results: %s",
+                exc,
+            )
+            lexical_ids = []
+
+    if not lexical_ids:
+        # No lexical index / unavailable / no hits for this query: identical
+        # to the pre-hybrid semantic-only behavior.
+        semantic_only_results: list[MemorySearchResult] = [
+            _scored_result(semantic_memories[mid], semantic_distance[mid])
+            for mid in ids
+            if _passes(semantic_memories[mid])
+        ]
+        semantic_only_results.sort(key=lambda r: r.score)
+        return semantic_only_results[:n_results]
+
+    lexical_rank = {mid: rank for rank, mid in enumerate(lexical_ids)}
+    lexical_only_ids = [mid for mid in lexical_ids if mid not in semantic_memories]
+
+    lexical_only_memories: dict[str, Memory] = {}
+    if lexical_only_ids:
+        try:
+            fetched = collection.get(
+                ids=lexical_only_ids, include=["documents", "metadatas"]
+            )
+            for f_id, f_doc, f_meta in zip(
+                fetched.get("ids", []),
+                fetched.get("documents", []),
+                fetched.get("metadatas", []),
+            ):
+                lexical_only_memories[f_id] = memory_from_chromadb(f_id, f_doc, f_meta)
+        except Exception as exc:
+            logger.warning("Failed to fetch lexical-only candidates: %s", exc)
+
+    scale = 2.0 / (_RRF_K + 1)
     search_results: list[MemorySearchResult] = []
-    ids = results.get("ids", [[]])[0]
-    docs = results.get("documents", [[]])[0]
-    metas = results.get("metadatas", [[]])[0]
-    distances = results.get("distances", [[]])[0]
-
-    for mid, doc, meta, dist in zip(ids, docs, metas, distances):
-        memory = memory_from_chromadb(mid, doc, meta)
-
-        if date_from and memory.timestamp < date_from:
+    for mid in [*ids, *lexical_only_ids]:
+        memory = semantic_memories.get(mid) or lexical_only_memories.get(mid)
+        if memory is None or not _passes(memory):
             continue
-        if date_to and memory.timestamp[: len(date_to)] > date_to:
-            continue
-        if has_valence_filter and valence_range is not None:
-            valence = memory.emotional_trace.valence
-            if valence < min(valence_range) or valence > max(valence_range):
-                continue
-        if has_arousal_filter and arousal_range is not None:
-            arousal = memory.emotional_trace.arousal
-            if arousal < min(arousal_range) or arousal > max(arousal_range):
-                continue
-
-        search_results.append(_scored_result(memory, float(dist)))
+        rrf = 0.0
+        if mid in semantic_rank:
+            rrf += 1.0 / (_RRF_K + semantic_rank[mid] + 1)
+        if mid in lexical_rank:
+            rrf += 1.0 / (_RRF_K + lexical_rank[mid] + 1)
+        pseudo_distance = 1.0 - rrf / scale
+        if mid in semantic_distance:
+            # RRF's rank-only fusion can only ever *help* a semantic
+            # candidate relative to its true distance (e.g. lexical
+            # corroboration pulling a keyword match above its raw rank).
+            # It must never make a candidate look worse than its actual
+            # semantic distance, or a small fetch_n (e.g. n_results=1 for
+            # save_with_auto_link's dedup check) can let an unrelated
+            # lexical-only hit tie with -- and evict -- a true near-duplicate
+            # whose real distance is far superior to the RRF quantization
+            # floor (see _RRF_K quantization: any single-list rank-0 member
+            # floors at pseudo_distance=0.5 regardless of how close it truly
+            # is semantically).
+            pseudo_distance = min(pseudo_distance, semantic_distance[mid])
+        result = _scored_result(memory, pseudo_distance)
+        if mid in semantic_distance:
+            result.distance = semantic_distance[mid]
+        search_results.append(result)
 
     search_results.sort(key=lambda r: r.score)
     return search_results[:n_results]
@@ -655,4 +768,7 @@ async def delete(store: MemoryStore, memory_id: str) -> Memory | None:
         )
 
     collection.delete(ids=[memory_id])
+    lexical = getattr(store, "lexical", None)
+    if lexical is not None:
+        lexical.remove(memory_id)
     return memory

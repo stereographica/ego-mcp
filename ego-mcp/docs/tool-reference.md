@@ -492,6 +492,7 @@ If you found a new relation, use link_memories.
 ```
 
 > **Recall behavior:**
+> - **Hybrid search**: Semantic (vector) search is blended with BM25 lexical (keyword) search via Reciprocal Rank Fusion, so keyword-exact matches can surface even when they are semantically distant. Falls back to semantic-only automatically when the lexical index is unavailable or the query yields no keyword hits.
 > - **Fuzzy Recall**: Memories degrade based on decay score. High decay (≥0.5) shows full content; medium (0.2-0.5) shows keywords + emotion + approximate time; low (<0.2) shows only emotion impression. No interpretive labels — only the decay score is shown.
 > - **Spreading Activation**: Linked memories (1-hop) are added to the candidate pool, weighted by link confidence. Disabled when emotion/category filters are applied.
 > - **Proust Effect**: ~25% chance of injecting one dormant (decay < 0.3) memory into results. No special label — only decay score indicates age. Dormant selection uses pure semantic distance (no emotion/importance bias).

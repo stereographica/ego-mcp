@@ -2,6 +2,15 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [1.7.0] - 2026-07-09
+
+### Added
+- ego-mcp: BM25 レキシカル検索を追加し、`recall` / `search` をセマンティック + BM25 のハイブリッドにした — SQLite FTS5(trigram トークナイザ)による `LexicalIndex` を新設し、クエリを文字 3-gram(重複排除・上限64・FTS5 構文を無害化するダブルクォートエスケープ)に分解して MATCH することで、分かち書きのない日本語も英語と同様に扱う。両ランキングを Reciprocal Rank Fusion(`k=60`)で融合した pseudo-distance を下流のスコアリング(時間減衰・感情/重要度ブースト・Hopfield・spreading activation)にそのまま渡すため、既存の下流ロジックは無変更で機能する。SQLite の FTS5/trigram が使えない環境では自動的に無効化され、`recall`/`search` はセマンティックのみの従来動作にフォールバックする
+- ego-mcp: `EGO_MCP_LEXICAL_SEARCH` 環境変数を追加(`"0"`/`"false"`/`"off"` で BM25 ハイブリッドを無効化、デフォルトは有効)
+
+### Changed
+- バージョンアップ: ego-mcp `1.6.0` → `1.7.0`
+
 ## [1.6.0] - 2026-07-02
 
 ### Added

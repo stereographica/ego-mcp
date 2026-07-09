@@ -751,3 +751,233 @@ class TestResurfacingAndRecall:
 
         assert [result.memory.id for result in candidates] == ["mem_old_precious"]
         assert candidates[0].decay < 0.3
+
+
+class _FakeLexicalIndex:
+    """Minimal stand-in for ``LexicalIndex.search`` used in hybrid tests."""
+
+    def __init__(self, ranked_ids: list[str]) -> None:
+        self._ranked_ids = ranked_ids
+        self.search_calls: list[tuple[str, int]] = []
+
+    def search(self, query: str, limit: int) -> list[str]:
+        self.search_calls.append((query, limit))
+        return self._ranked_ids[:limit]
+
+
+class _HybridCollection:
+    """Fake collection where ``query`` (semantic) and ``get`` (by id) can see
+    different rows, so lexical-only candidates can be modeled explicitly."""
+
+    def __init__(
+        self,
+        semantic_rows: list[tuple[str, str, dict[str, Any], float]],
+        all_rows: list[tuple[str, str, dict[str, Any], float]],
+    ) -> None:
+        self._semantic_rows = semantic_rows
+        self._all_rows = {row[0]: row for row in all_rows}
+
+    def count(self) -> int:
+        return len(self._all_rows)
+
+    def query(
+        self,
+        *,
+        query_texts: list[str],
+        n_results: int,
+        include: list[str],
+        where: dict[str, Any] | None = None,
+    ) -> dict[str, list[list[Any]]]:
+        del query_texts, where
+        assert include == ["documents", "metadatas", "distances"]
+        selected = self._semantic_rows[:n_results]
+        return {
+            "ids": [[row[0] for row in selected]],
+            "documents": [[row[1] for row in selected]],
+            "metadatas": [[row[2] for row in selected]],
+            "distances": [[row[3] for row in selected]],
+        }
+
+    def get(self, *, ids: list[str], include: list[str]) -> dict[str, list[Any]]:
+        assert include == ["documents", "metadatas"]
+        found = [self._all_rows[i] for i in ids if i in self._all_rows]
+        return {
+            "ids": [row[0] for row in found],
+            "documents": [row[1] for row in found],
+            "metadatas": [row[2] for row in found],
+        }
+
+
+class _HybridStore:
+    def __init__(self, collection: _HybridCollection, lexical: _FakeLexicalIndex) -> None:
+        self._collection = collection
+        self.lexical = lexical
+
+    def _ensure_connected(self) -> _HybridCollection:
+        return self._collection
+
+
+class TestHybridLexicalSearch:
+    @pytest.mark.asyncio
+    async def test_keyword_match_outranks_closer_semantic_neighbor_via_rrf(
+        self,
+    ) -> None:
+        rows = [
+            (
+                "mem_semantic_top",
+                "an unrelated but embedding-close memory",
+                _metadata("2026-02-26T00:00:00+00:00"),
+                0.05,
+            ),
+            (
+                "mem_keyword_match",
+                "the quokka festival keyword phrase",
+                _metadata("2026-02-26T00:00:00+00:00"),
+                0.50,
+            ),
+        ]
+        collection = _HybridCollection(semantic_rows=rows, all_rows=rows)
+        # A real BM25 index would only surface the memory whose content
+        # actually contains "quokka festival" — mem_semantic_top has no
+        # keyword overlap, so it gets no lexical rank at all.
+        lexical = _FakeLexicalIndex(["mem_keyword_match"])
+        store = _HybridStore(collection, lexical)
+
+        results = await _memory_queries.search(
+            cast(Any, store),
+            "quokka festival",
+            n_results=2,
+        )
+
+        assert [result.memory.id for result in results] == [
+            "mem_keyword_match",
+            "mem_semantic_top",
+        ]
+        # Raw semantic distance is preserved on `.distance` even though
+        # ranking used the RRF-derived pseudo-distance.
+        by_id = {result.memory.id: result for result in results}
+        assert by_id["mem_keyword_match"].distance == pytest.approx(0.50)
+        assert by_id["mem_semantic_top"].distance == pytest.approx(0.05)
+        assert lexical.search_calls == [("quokka festival", 2)]
+
+    @pytest.mark.asyncio
+    async def test_lexical_only_candidates_get_same_filters_as_semantic_ones(
+        self,
+    ) -> None:
+        anchor = (
+            "mem_anchor",
+            "anchor memory",
+            _metadata("2026-02-26T00:00:00+00:00", valence=0.0),
+            0.05,
+        )
+        lex_pass = (
+            "mem_lex_pass",
+            "lexical only memory that passes the valence filter",
+            _metadata("2026-02-20T00:00:00+00:00", valence=0.0),
+            0.90,
+        )
+        lex_blocked = (
+            "mem_lex_blocked",
+            "lexical only memory that fails the valence filter",
+            _metadata("2026-02-20T00:00:00+00:00", valence=0.9),
+            0.91,
+        )
+        collection = _HybridCollection(
+            semantic_rows=[anchor],
+            all_rows=[anchor, lex_pass, lex_blocked],
+        )
+        lexical = _FakeLexicalIndex(["mem_lex_blocked", "mem_lex_pass"])
+        store = _HybridStore(collection, lexical)
+
+        results = await _memory_queries.search(
+            cast(Any, store),
+            "lexical only memory",
+            n_results=5,
+            valence_range=[-0.3, 0.3],
+        )
+
+        ids = [result.memory.id for result in results]
+        assert "mem_anchor" in ids
+        assert "mem_lex_pass" in ids
+        assert "mem_lex_blocked" not in ids
+
+    @pytest.mark.asyncio
+    async def test_search_without_lexical_attribute_is_unchanged(self) -> None:
+        rows = [
+            ("mem_a", "alpha memory", _metadata("2026-02-26T00:00:00+00:00"), 0.05),
+            ("mem_b", "beta memory", _metadata("2026-02-25T00:00:00+00:00"), 0.10),
+        ]
+        store = _AdvancedStore(rows)
+        assert getattr(store, "lexical", None) is None
+
+        results = await _memory_queries.search(cast(Any, store), "memory", n_results=2)
+
+        assert [result.memory.id for result in results] == ["mem_a", "mem_b"]
+        assert results[0].distance == pytest.approx(0.05)
+        assert results[1].distance == pytest.approx(0.10)
+
+    @pytest.mark.asyncio
+    async def test_lexical_search_exception_falls_back_to_semantic_only(self) -> None:
+        rows = [
+            ("mem_a", "alpha memory", _metadata("2026-02-26T00:00:00+00:00"), 0.05),
+            ("mem_b", "beta memory", _metadata("2026-02-25T00:00:00+00:00"), 0.10),
+        ]
+        collection = _HybridCollection(semantic_rows=rows, all_rows=rows)
+
+        class _BrokenLexicalIndex:
+            def search(self, query: str, limit: int) -> list[str]:
+                raise RuntimeError("boom")
+
+        store = _HybridStore(collection, cast(Any, _BrokenLexicalIndex()))
+
+        results = await _memory_queries.search(cast(Any, store), "memory", n_results=2)
+
+        assert [result.memory.id for result in results] == ["mem_a", "mem_b"]
+        assert results[0].distance == pytest.approx(0.05)
+        assert results[1].distance == pytest.approx(0.10)
+
+    @pytest.mark.asyncio
+    async def test_true_semantic_duplicate_survives_rrf_tie_with_unrelated_lexical_hit(
+        self,
+    ) -> None:
+        """Regression test for save_with_auto_link's dedup guard (n_results=1).
+
+        save_with_auto_link always calls search(content, n_results=1), so
+        fetch_n==1 for both the semantic and lexical legs. If an unrelated
+        memory is lexical's single best BM25 match while the true
+        near-duplicate (raw distance far below dedup_threshold) has no
+        lexical overlap at all, both candidates are "rank 0 on their one
+        contributing list" and would tie at the RRF quantization floor
+        (pseudo_distance == 0.5) -- silently evicting the true duplicate
+        from the size-1 result in favor of a fresher unrelated memory once
+        decay/emotion/importance break the tie. The true duplicate's own
+        raw distance must always win regardless of that tie.
+        """
+        rows = [
+            (
+                "mem_true_dup",
+                "the exact same content as what we are about to save",
+                _metadata("2020-01-01T00:00:00+00:00"),  # old -> high decay penalty
+                0.01,  # far below dedup_threshold (0.05)
+            ),
+            (
+                "mem_unrelated_keyword_hit",
+                "totally unrelated content that happens to share keywords",
+                _metadata("2026-07-09T00:00:00+00:00"),  # fresh -> low decay penalty
+                1.2,  # nowhere near a duplicate
+            ),
+        ]
+        collection = _HybridCollection(semantic_rows=rows, all_rows=rows)
+        # Real BM25 ranked mem_unrelated_keyword_hit as the (only) top-1 hit;
+        # mem_true_dup has no lexical overlap with the query at all.
+        lexical = _FakeLexicalIndex(["mem_unrelated_keyword_hit"])
+        store = _HybridStore(collection, lexical)
+
+        results = await _memory_queries.search(
+            cast(Any, store),
+            "the exact same content as what we are about to save",
+            n_results=1,
+        )
+
+        assert [result.memory.id for result in results] == ["mem_true_dup"]
+        assert results[0].distance == pytest.approx(0.01)

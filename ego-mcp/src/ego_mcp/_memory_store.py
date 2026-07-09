@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ego_mcp import _memory_queries
+from ego_mcp._lexical_index import LexicalIndex
 from ego_mcp._memory_serialization import links_to_json, memory_to_chromadb
 from ego_mcp.chromadb_compat import load_chromadb
 from ego_mcp.config import EgoConfig
@@ -38,6 +39,9 @@ class MemoryStore:
         self._collection: Any = None
         self._hopfield = ModernHopfieldNetwork(beta=4.0, n_iters=3)
         self._last_recall_metadata: dict[str, object] = {}
+        self._lexical: LexicalIndex | None = None
+        if config.lexical_search_enabled:
+            self._lexical = LexicalIndex(config.data_dir / "fts" / "memories.db")
 
     def connect(self) -> None:
         """Initialize ChromaDB connection."""
@@ -49,9 +53,30 @@ class MemoryStore:
             name="ego_memories",
             embedding_function=self._embedding_fn,
         )
+        if self._lexical is not None:
+            self._lexical.connect()
+            if self._lexical.available and self._lexical.count() != int(
+                self._collection.count()
+            ):
+                # Bootstrap/self-heal: rebuild the lexical index from
+                # whatever ChromaDB currently holds. Covers both a fresh
+                # install (lexical empty, collection populated) and an
+                # index that has drifted out of sync.
+                total = int(self._collection.count())
+                if total > 0:
+                    existing = self._collection.get(
+                        limit=total, include=["documents"]
+                    )
+                    ids = existing.get("ids", [])
+                    docs = existing.get("documents", [])
+                    self._lexical.rebuild(zip(ids, docs))
+                else:
+                    self._lexical.rebuild([])
 
     def close(self) -> None:
         """Best-effort shutdown for ChromaDB client resources."""
+        if self._lexical is not None:
+            self._lexical.close()
         if self._client is None:
             return
         server = getattr(self._client, "_server", None)
@@ -62,6 +87,11 @@ class MemoryStore:
                 pass
         self._client = None
         self._collection = None
+
+    @property
+    def lexical(self) -> LexicalIndex | None:
+        """Return the lexical (BM25) index, or None if disabled/unavailable."""
+        return self._lexical
 
     def _ensure_connected(self) -> Any:
         if self._collection is None:
@@ -167,6 +197,8 @@ class MemoryStore:
             documents=[content],
             metadatas=[memory_to_chromadb(memory)],
         )
+        if self._lexical is not None:
+            self._lexical.add(memory_id, content)
         return memory
 
     async def save_with_auto_link(

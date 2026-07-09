@@ -35,6 +35,8 @@ class EgoConfig:
         EGO_MCP_COMPANION_NAME: Companion name (default: "Master")
         EGO_MCP_WORKSPACE_DIR: OpenClaw workspace root for Markdown sync (optional)
         EGO_MCP_TIMEZONE: IANA timezone ID (default: "UTC")
+        EGO_MCP_LEXICAL_SEARCH: Enable BM25 lexical search blended into recall
+            ("0"/"false"/"off" disables it; anything else enables it; default: enabled)
     """
 
     embedding_provider: str
@@ -44,6 +46,7 @@ class EgoConfig:
     companion_name: str
     workspace_dir: Path | None
     timezone: str
+    lexical_search_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> EgoConfig:
@@ -85,6 +88,9 @@ class EgoConfig:
                 "Use an IANA timezone ID (e.g. 'UTC', 'Asia/Tokyo')."
             ) from exc
 
+        lexical_search_raw = os.environ.get("EGO_MCP_LEXICAL_SEARCH", "").strip().lower()
+        lexical_search_enabled = lexical_search_raw not in ("0", "false", "off")
+
         return cls(
             embedding_provider=provider,
             embedding_model=model,
@@ -93,4 +99,5 @@ class EgoConfig:
             companion_name=companion_name,
             workspace_dir=workspace_dir,
             timezone=timezone,
+            lexical_search_enabled=lexical_search_enabled,
         )
