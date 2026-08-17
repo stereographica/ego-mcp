@@ -243,7 +243,7 @@ If you're sharing a meaningful moment, capture it with remember(shared_with=...)
     },
     "emotion": {
       "type": "string",
-      "default": "neutral"
+      "description": "Primary emotion this memory carries, e.g. curious | grateful | melancholy. No default."
     },
     "secondary": {
       "type": "array",
@@ -300,11 +300,13 @@ If you're sharing a meaningful moment, capture it with remember(shared_with=...)
       "description": "Desire IDs to explicitly satisfy (skip auto-inference)."
     }
   },
-  "required": ["content"]
+  "required": ["content", "emotion"]
 }
 ```
 
-**Available emotions:** `happy`, `sad`, `surprised`, `moved`, `excited`, `nostalgic`, `curious`, `neutral`, `melancholy`, `anxious`, `contentment`, `frustrated`, `calm`, `contemplative`, `thoughtful`, `grateful`, `vulnerable`, `content`, `fulfilled`, `touched`, `concerned`, `hopeful`, `peaceful`, `love`, `warm`, `lonely`, `afraid`, `ashamed`, `bored`
+**Available emotions:** `happy`, `sad`, `surprised`, `moved`, `excited`, `nostalgic`, `curious`, `neutral`, `melancholy`, `anxious`, `contentment`, `frustrated`, `calm`, `contemplative`, `thoughtful`, `grateful`, `vulnerable`, `content`, `fulfilled`, `touched`, `concerned`, `hopeful`, `peaceful`, `love`, `warm`, `lonely`, `afraid`, `ashamed`, `bored`, `angry`
+
+> `emotion` is **required** as of 1.8.0 and has no default. Omitting it — or passing an empty / whitespace-only string — is an error: the call comes back as `isError` with the allowed values and a sample call, rather than being saved as `neutral`. Naming `neutral` explicitly is still fine when that is the feeling.
 
 > `intensity`, `valence`, `arousal` are automatically derived from the emotion label via `EMOTION_DEFAULTS` when not explicitly specified. For example, `emotion="excited"` defaults to `intensity=0.8, valence=0.7, arousal=0.8`. Explicit values always take priority over the automatic mapping.
 

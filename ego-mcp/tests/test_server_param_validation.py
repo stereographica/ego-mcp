@@ -1,4 +1,4 @@
-"""Tests for the pre-dispatch XML-in-arguments validator."""
+"""Tests for tool-argument validation (XML wrappers, missing parameters)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import pytest
 
 from ego_mcp._server_param_validation import (
     ToolParameterFormatError,
+    format_missing_parameter_message,
     validate_tool_arguments,
 )
 
@@ -289,3 +290,29 @@ class TestValidateToolArguments:
             validate_tool_arguments(
                 "remember", {"content": "  <content>hi</content>\n"}
             )
+
+
+class TestFormatMissingParameterMessage:
+    def test_wraps_guidance_between_marker_and_retry_hint(self) -> None:
+        message = format_missing_parameter_message(
+            "remember",
+            "emotion",
+            guidance=("Name the feeling.", "", "Allowed values:", "  calm | happy"),
+        )
+
+        lines = message.splitlines()
+        assert lines[0] == (
+            "[missing_required_parameter] Tool `remember` requires `emotion`."
+        )
+        assert "Allowed values:" in lines
+        assert "  calm | happy" in lines
+        assert lines[-1] == "Please retry this tool call with `emotion` set."
+
+    def test_marker_differs_from_the_xml_format_error(self) -> None:
+        # The two failures need distinct markers: one means "retry with a
+        # value", the other "retry with plain JSON".
+        message = format_missing_parameter_message(
+            "remember", "emotion", guidance=()
+        )
+
+        assert "[parameter_format_error]" not in message

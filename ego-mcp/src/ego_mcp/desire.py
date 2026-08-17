@@ -40,6 +40,10 @@ EMERGENT_SATISFIED_TTL_HOURS = float(DEFAULT_EMERGENT["satisfied_ttl_hours"])
 EMERGENT_RISING_MAX_RATIO = 0.25
 EMERGENT_SETTLING_MIN_RATIO = 0.60
 CURIOSITY_TONUS_BOOST = 0.05
+# The sigmoid is fully saturated (to within float precision) well before
+# |x| reaches this bound, so clamping there changes no reachable level
+# while keeping `math.exp` inside its range.
+_SIGMOID_EXPONENT_LIMIT = 60.0
 
 
 def _emergent_template_for(
@@ -173,6 +177,10 @@ def _calculate_sigmoid_level(
     if adjusted_hours <= 0:
         return 1.0
     x = (elapsed_hours / adjusted_hours) * 6 - 3
+    # A clock that moved backwards, or a state file carrying a future
+    # `last_satisfied`, makes `elapsed_hours` large and negative — enough
+    # for `math.exp(-x)` to raise OverflowError.
+    x = max(-_SIGMOID_EXPONENT_LIMIT, min(_SIGMOID_EXPONENT_LIMIT, x))
     return 1.0 / (1.0 + math.exp(-x))
 
 

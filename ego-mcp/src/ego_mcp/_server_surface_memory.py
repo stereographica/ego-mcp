@@ -20,6 +20,10 @@ from ego_mcp._server_emotion_formatting import (
     _relative_time,
     _truncate_for_quote,
 )
+from ego_mcp._server_param_validation import (
+    MissingRequiredParameterError,
+    format_missing_parameter_message,
+)
 from ego_mcp._server_runtime import (
     get_episodes,
     get_notion_store,
@@ -46,6 +50,7 @@ from ego_mcp.scaffolds import (
     compose_response,
 )
 from ego_mcp.self_model import SelfModelStore
+from ego_mcp.types import Emotion
 
 logger = logging.getLogger(__name__)
 _REMEMBER_DUPLICATE_PREFIX = "Not saved — very similar memory already exists."
@@ -90,6 +95,17 @@ _ANTICIPATED_AT_PARSE_NOTE = (
 )
 _ANTICIPATED_AT_PAST_NOTE = (
     "Note: anticipated_at is already in the past — held as a regular memory."
+)
+# Listed from the `Emotion` enum rather than `EMOTION_DEFAULTS` so the
+# message stays authoritative even if the defaults table drifts.
+_EMOTION_REQUIRED_GUIDANCE = (
+    "`emotion` has no default — name the feeling this memory carries.",
+    "",
+    "Allowed values:",
+    f"  {' | '.join(emotion.value for emotion in Emotion)}",
+    "",
+    "Example of a correct call:",
+    '  {"content": "...", "emotion": "curious"}',
 )
 
 
@@ -177,7 +193,13 @@ async def _handle_remember(
     """Save a memory with auto-linking."""
     _set_tool_context("remember", {})
     content = args["content"]
-    emotion = args.get("emotion", "neutral")
+    emotion = args.get("emotion")
+    if not isinstance(emotion, str) or not emotion.strip():
+        raise MissingRequiredParameterError(
+            format_missing_parameter_message(
+                "remember", "emotion", guidance=_EMOTION_REQUIRED_GUIDANCE
+            )
+        )
     defaults = EMOTION_DEFAULTS.get(emotion, (0.5, 0.0, 0.5))
     secondary = args.get("secondary")
     intensity = (

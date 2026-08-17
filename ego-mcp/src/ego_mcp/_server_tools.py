@@ -71,7 +71,13 @@ SURFACE_TOOLS: list[Tool] = [
             "type": "object",
             "properties": {
                 "content": {"type": "string"},
-                "emotion": {"type": "string", "default": "neutral"},
+                "emotion": {
+                    "type": "string",
+                    "description": (
+                        "Primary emotion this memory carries, "
+                        "e.g. curious | grateful | melancholy. No default."
+                    ),
+                },
                 "secondary": {"type": "array", "items": {"type": "string"}},
                 "intensity": {"type": "number", "default": 0.5},
                 "importance": {"type": "integer", "default": 3},
@@ -118,7 +124,7 @@ SURFACE_TOOLS: list[Tool] = [
                     ),
                 },
             },
-            "required": ["content"],
+            "required": ["content", "emotion"],
         },
     ),
     Tool(

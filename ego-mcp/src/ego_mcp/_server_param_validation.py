@@ -1,18 +1,26 @@
-"""Pre-dispatch validation for tool arguments.
+"""Validation for tool arguments.
 
 LLMs occasionally call MCP tools with parameters wrapped in XML tags
 (e.g. ``{"content": "<content>hello</content>"}``) instead of plain JSON
-values. This module detects that specific failure mode and produces a
-structured error message the model can act on in its next turn.
+values. :func:`validate_tool_arguments` runs before dispatch, detects that
+specific failure mode and produces a structured error message the model
+can act on in its next turn. It is intentionally narrow: it only rejects
+clearly XML-shaped strings. General JSON Schema type checking is out of
+scope — the MCP SDK validates arguments against ``inputSchema`` before
+the handler runs.
 
-The validator is intentionally narrow: it only rejects clearly XML-shaped
-strings. General JSON Schema type checking is out of scope.
+:class:`MissingRequiredParameterError` covers a different case: a handler
+finding a required parameter absent or blank. It backstops the SDK's
+schema check for callers that bypass it (older SDKs pinned by
+``mcp>=1.0.0``, direct handler calls), and unlike the XML case it is
+raised rather than returned, so the call surfaces as an error.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from mcp.types import Tool
@@ -20,6 +28,7 @@ from mcp.types import Tool
 from ego_mcp._server_tools import BACKEND_TOOLS, SURFACE_TOOLS
 
 _ERROR_MARKER = "[parameter_format_error]"
+_MISSING_PARAMETER_MARKER = "[missing_required_parameter]"
 
 
 class ToolParameterFormatError(Exception):
@@ -28,6 +37,38 @@ class ToolParameterFormatError(Exception):
     The string form of the exception is the full LLM-facing message,
     intended to be returned as tool output so the model can self-correct.
     """
+
+
+class MissingRequiredParameterError(Exception):
+    """Raised when a required tool parameter is absent or blank.
+
+    The string form is the full LLM-facing message. This exception is
+    deliberately *not* caught in ``_dispatch``: a missing required
+    parameter is an error, so it propagates and the MCP SDK renders it as
+    an ``isError`` result carrying this message.
+    """
+
+
+def format_missing_parameter_message(
+    tool_name: str,
+    parameter: str,
+    *,
+    guidance: Sequence[str],
+) -> str:
+    """Build the LLM-facing message for a missing required parameter.
+
+    ``guidance`` holds the parameter-specific middle section — what the
+    parameter means, which values are accepted, and a sample call.
+    """
+    return "\n".join(
+        [
+            f"{_MISSING_PARAMETER_MARKER} Tool `{tool_name}` requires `{parameter}`.",
+            "",
+            *guidance,
+            "",
+            f"Please retry this tool call with `{parameter}` set.",
+        ]
+    )
 
 
 def _build_tool_schema_index() -> dict[str, Tool]:

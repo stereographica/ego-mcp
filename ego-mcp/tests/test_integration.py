@@ -744,7 +744,7 @@ class TestRemember:
     ) -> None:
         result = await _call(
             "remember",
-            {"content": "Body state should be auto captured"},
+            {"content": "Body state should be auto captured", "emotion": "neutral"},
             config,
             memory,
             desire,
@@ -821,6 +821,7 @@ class TestRemember:
             "remember",
             {
                 "content": "Tagged memory for notion reinforcement",
+                "emotion": "neutral",
                 "tags": ["pattern", "signal", "signal"],
             },
             config,
@@ -956,6 +957,7 @@ class TestRemember:
             "remember",
             {
                 "content": "I should preserve this introspection.",
+                "emotion": "neutral",
                 "category": "introspection",
                 "importance": 5,
             },
@@ -989,6 +991,7 @@ class TestRemember:
             "remember",
             {
                 "content": "Private introspection should stay internal.",
+                "emotion": "neutral",
                 "category": "introspection",
                 "importance": 5,
                 "private": True,
@@ -1047,6 +1050,7 @@ class TestRemember:
             "remember",
             {
                 "content": "I resolved another compiler warning by tightening a generic bound.",
+                "emotion": "neutral",
                 "category": "technical",
             },
             config,
@@ -1069,7 +1073,10 @@ class TestRemember:
     ) -> None:
         first = await _call(
             "remember",
-            {"content": "duplicate-response-token exact same memory"},
+            {
+                "content": "duplicate-response-token exact same memory",
+                "emotion": "neutral",
+            },
             config,
             memory,
             desire,
@@ -1081,7 +1088,10 @@ class TestRemember:
 
         second = await _call(
             "remember",
-            {"content": "duplicate-response-token exact same memory"},
+            {
+                "content": "duplicate-response-token exact same memory",
+                "emotion": "neutral",
+            },
             config,
             memory,
             desire,
@@ -1130,7 +1140,10 @@ class TestRemember:
 
         result = await _call(
             "remember",
-            {"content": "I should revisit the heartbeat interval configuration."},
+            {
+                "content": "I should revisit the heartbeat interval configuration.",
+                "emotion": "neutral",
+            },
             config,
             memory,
             desire,
@@ -1151,7 +1164,10 @@ class TestRemember:
     ) -> None:
         result = await _call(
             "remember",
-            {"content": "A standalone memory with no matching dormant question."},
+            {
+                "content": "A standalone memory with no matching dormant question.",
+                "emotion": "neutral",
+            },
             config,
             memory,
             desire,
@@ -1171,7 +1187,11 @@ class TestRemember:
     ) -> None:
         result = await _call(
             "remember",
-            {"content": "We solved the release issue together.", "shared_with": "Master"},
+            {
+                "content": "We solved the release issue together.",
+                "emotion": "neutral",
+                "shared_with": "Master",
+            },
             config,
             memory,
             desire,
@@ -1216,6 +1236,7 @@ class TestRemember:
             "remember",
             {
                 "content": "Gamma shared moment 333333 with a distinct narrative.",
+                "emotion": "neutral",
                 "shared_with": "Master",
                 "related_memories": [related_a.id, related_b.id],
             },
@@ -1246,6 +1267,7 @@ class TestRemember:
             "remember",
             {
                 "content": "Master and I shared a short check-in.",
+                "emotion": "neutral",
                 "shared_with": "Master",
                 "related_memories": ["mem_missing"],
             },
@@ -1272,7 +1294,11 @@ class TestRemember:
     ) -> None:
         result = await _call(
             "remember",
-            {"content": "This is private context.", "shared_with": ""},
+            {
+                "content": "This is private context.",
+                "emotion": "neutral",
+                "shared_with": "",
+            },
             config,
             memory,
             desire,
@@ -1313,6 +1339,7 @@ class TestRemember:
             "remember",
             {
                 "content": "Distinct standalone content XYZ-987654321 with clear separation.",
+                "emotion": "neutral",
                 "related_memories": [existing.id],
             },
             config,
@@ -1386,7 +1413,7 @@ class TestRecall:
     ) -> None:
         await _call(
             "remember",
-            {"content": "Sunset was beautiful"},
+            {"content": "Sunset was beautiful", "emotion": "neutral"},
             config,
             memory,
             desire,
@@ -1511,6 +1538,7 @@ class TestRecall:
             "remember",
             {
                 "content": "shared token private memory sample",
+                "emotion": "neutral",
                 "private": True,
                 "category": "introspection",
             },
@@ -1524,6 +1552,7 @@ class TestRecall:
             "remember",
             {
                 "content": "shared token public memory sample",
+                "emotion": "neutral",
                 "private": False,
                 "category": "daily",
             },
@@ -1694,7 +1723,12 @@ class TestToolLoggingPrivacy:
         with caplog.at_level(logging.INFO, logger="ego_mcp.server"):
             await _call(
                 "remember",
-                {"content": secret, "private": True, "anticipated_at": anticipated_at},
+                {
+                    "content": secret,
+                    "emotion": "neutral",
+                    "private": True,
+                    "anticipated_at": anticipated_at,
+                },
                 config,
                 memory,
                 desire,
@@ -1739,7 +1773,7 @@ class TestToolLoggingPrivacy:
         secret = "super secret private recall payload"
         await _call(
             "remember",
-            {"content": secret, "private": True},
+            {"content": secret, "emotion": "neutral", "private": True},
             config,
             memory,
             desire,

@@ -111,3 +111,14 @@ async def test_sdk_returns_tool_error_for_invalid_desire_catalog(tmp_path: Path)
         result = await session.call_tool("wake_up", {})
         assert result.isError is True
         assert "Invalid desire catalog" in _extract_texts(result)[0]
+
+
+@pytest.mark.anyio
+async def test_sdk_rejects_remember_without_emotion(tmp_path: Path) -> None:
+    # The SDK validates arguments against `inputSchema` before dispatch,
+    # so `emotion` being in `required` is what the client actually sees.
+    async with _open_session(tmp_path) as (session, _init):
+        result = await session.call_tool("remember", {"content": "an unnamed feeling"})
+
+        assert result.isError is True
+        assert "emotion" in _extract_texts(result)[0]

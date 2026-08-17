@@ -40,7 +40,7 @@ MCP server providing cognitive capabilities to AI agents.
 | `attune` | Unified emotional awareness: texture + desires + interests + body sense |
 | `introspect` | Get reflection materials: memories, desires, open questions (`focus=network` for notion graph topology) |
 | `consider_them` | Think about someone — Theory of Mind framework |
-| `remember` | Save a memory with emotion and importance (`shared_with` for shared moments, `anticipated_at` for future-directed memories) |
+| `remember` | Save a memory with emotion (required) and importance (`shared_with` for shared moments, `anticipated_at` for future-directed memories) |
 | `recall` | Recall related memories by context (`mode=explore` for graph neighborhood) |
 | `pause` | Authenticity self-check |
 
