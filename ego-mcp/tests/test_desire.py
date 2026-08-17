@@ -70,6 +70,25 @@ class TestSigmoidCalculation:
         # Actually different than naive expectation due to quality adjustment
         assert 0.0 < level < 1.0
 
+    def test_negative_elapsed_saturates_at_zero(self) -> None:
+        """A future `last_satisfied` must settle at 0, not raise."""
+        # elapsed_hours goes negative when the clock moved backwards or the
+        # state file carries a future timestamp. Without the clamp this
+        # raised `OverflowError: math range error` out of math.exp.
+        level = _calculate_sigmoid_level(-1093.9, 6.0, 0.5)
+        assert level == pytest.approx(0.0)
+
+    def test_extreme_elapsed_saturates_at_one(self) -> None:
+        """A very old `last_satisfied` settles at 1, not raise."""
+        level = _calculate_sigmoid_level(1e9, 6.0, 0.5)
+        assert level == pytest.approx(1.0)
+
+    def test_clamp_leaves_reachable_range_untouched(self) -> None:
+        """Inside the normal range the clamp is inert."""
+        # adjusted_hours = 24 * 0.75 = 18; x = (9/18)*6 - 3 = 0
+        level = _calculate_sigmoid_level(9.0, 24.0, 0.5)
+        assert level == pytest.approx(0.5)
+
 
 class TestDesireEngine:
     """Tests for DesireEngine behavior."""
