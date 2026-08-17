@@ -2,6 +2,17 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [1.8.0] - 2026-08-17
+
+### Changed
+- ego-mcp: `remember` の `emotion` を必須パラメータに変更(非互換) — 未指定時に `neutral` を暗黙で補っていた挙動を廃止し、`inputSchema` の `required` に `emotion` を追加(`default: "neutral"` は削除)。MCP SDK のスキーマ検証が未指定の呼び出しを `isError` で弾き、その層をすり抜ける経路(`mcp>=1.0.0` が許す古い SDK、ハンドラ直呼び)でもハンドラが `MissingRequiredParameterError` を投げる。空文字列・空白のみ・非文字列も未指定と同じくエラーとして扱う。エラーメッセージには `Emotion` の全 30 値と正しい呼び出し例を含め、次のターンで自己修正できる形にした。明示的な `emotion="neutral"` は従来と同じ `intensity=0.3, valence=0.0, arousal=0.3` を導出する
+- ego-mcp: `_server_param_validation.py` に `MissingRequiredParameterError` と `format_missing_parameter_message` を追加 — XML 包み検出(`ToolParameterFormatError`、tool output として返す)とはマーカーを分け(`[missing_required_parameter]`)、こちらは catch せず投げて `isError` にする
+- バージョンアップ: ego-mcp `1.7.0` → `1.8.0`
+
+### Fixed
+- ego-mcp: `_calculate_sigmoid_level` が `OverflowError: math range error` でクラッシュする問題を修正 — `last_satisfied` が未来を指す場合(システム時刻の巻き戻し、state ファイルの未来日付)に `elapsed_hours` が大きく負となり `math.exp(-x)` が定義域を越えていた。sigmoid が飽和し切る範囲(`|x| ≤ 60`)へ clamp することで、到達可能な出力値を変えずに定義域を守る
+- ego-mcp: `docs/tool-reference.md` の Available emotions に漏れていた `angry` を追記
+
 ## [1.7.0] - 2026-07-09
 
 ### Added
