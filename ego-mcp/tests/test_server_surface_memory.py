@@ -11,7 +11,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ego_mcp import timezone_utils
+from ego_mcp._server_param_validation import MissingRequiredParameterError
 from ego_mcp._server_surface_memory import (
+    _EMOTION_REQUIRED_GUIDANCE,
     EMOTION_DEFAULTS,
     _call_get_body_state,
     _call_relative_time,
@@ -54,6 +56,23 @@ def test_remember_schema_includes_anticipated_at_verbatim() -> None:
         "type": "string",
         "description": "ISO 8601 time of an event this memory looks forward to.",
     }
+
+
+def test_remember_schema_requires_emotion() -> None:
+    remember_tool = next(tool for tool in SURFACE_TOOLS if tool.name == "remember")
+    schema = remember_tool.inputSchema
+
+    assert "emotion" in schema["required"]
+    # A leftover `default` would let a schema-driven caller fill in "neutral"
+    # again, reinstating exactly the silent fallback this removes.
+    assert "default" not in schema["properties"]["emotion"]
+
+
+def test_emotion_required_guidance_lists_every_emotion() -> None:
+    guidance = "\n".join(_EMOTION_REQUIRED_GUIDANCE)
+
+    for emotion in Emotion:
+        assert emotion.value in guidance
 
 
 # --- Helpers and override tests ---
@@ -452,6 +471,83 @@ class TestHandleRememberIntrospectionScaffold:
         assert "Did this monologue close, or is something still unfinished?" in result
 
 
+class TestHandleRememberEmotionRequired:
+    """`emotion` carries no default — an unnamed feeling is an error."""
+
+    @pytest.mark.asyncio
+    async def test_missing_emotion_raises_before_saving(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+    ) -> None:
+        with pytest.raises(MissingRequiredParameterError) as exc_info:
+            await _handle_remember(
+                remember_config,
+                mock_memory,
+                {"content": "A memory whose feeling went unnamed"},
+            )
+
+        message = str(exc_info.value)
+        assert "[missing_required_parameter]" in message
+        assert "`remember`" in message
+        assert "`emotion`" in message
+        assert "curious" in message  # allowed values reach the caller
+        mock_memory.save_with_auto_link.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("blank", ["", "   ", "\n"])
+    async def test_blank_emotion_raises(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+        blank: str,
+    ) -> None:
+        with pytest.raises(MissingRequiredParameterError):
+            await _handle_remember(
+                remember_config,
+                mock_memory,
+                {"content": "Blank is not a feeling", "emotion": blank},
+            )
+
+        mock_memory.save_with_auto_link.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_non_string_emotion_raises(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+    ) -> None:
+        # The SDK's `"type": "string"` check normally catches this. The
+        # handler still has to hold for callers that bypass that layer.
+        with pytest.raises(MissingRequiredParameterError):
+            await _handle_remember(
+                remember_config,
+                mock_memory,
+                {"content": "A number is not a feeling", "emotion": 3},
+            )
+
+        mock_memory.save_with_auto_link.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_explicit_neutral_keeps_previous_defaults(
+        self,
+        remember_config: EgoConfig,
+        mock_memory: AsyncMock,
+    ) -> None:
+        # Dropping the schema default must not shift what "neutral" derives.
+        await _handle_remember(
+            remember_config,
+            mock_memory,
+            {"content": "Nothing in particular", "emotion": "neutral"},
+        )
+
+        kwargs = mock_memory.save_with_auto_link.call_args.kwargs
+        assert kwargs["emotion"] == "neutral"
+        assert kwargs["intensity"] == pytest.approx(0.3)
+        assert kwargs["valence"] == pytest.approx(0.0)
+        assert kwargs["arousal"] == pytest.approx(0.3)
+
+
 class TestHandleRememberAnticipation:
     @pytest.mark.asyncio
     async def test_future_anticipated_at_is_normalized_and_saved(
@@ -468,6 +564,7 @@ class TestHandleRememberAnticipation:
             mock_memory,
             {
                 "content": "Looking toward the appointment",
+                "emotion": "neutral",
                 "anticipated_at": "2026-07-10T15:30:00",
             },
         )
@@ -491,6 +588,7 @@ class TestHandleRememberAnticipation:
             mock_memory,
             {
                 "content": "Looking toward the date",
+                "emotion": "neutral",
                 "anticipated_at": "2026-07-10",
             },
         )
@@ -509,6 +607,7 @@ class TestHandleRememberAnticipation:
             mock_memory,
             {
                 "content": "This should still be held",
+                "emotion": "neutral",
                 "anticipated_at": "not-a-time",
             },
         )
@@ -535,6 +634,7 @@ class TestHandleRememberAnticipation:
             mock_memory,
             {
                 "content": "This already happened",
+                "emotion": "neutral",
                 "anticipated_at": "2026-07-01T23:00:00+00:00",
             },
         )
@@ -1369,7 +1469,7 @@ class TestRememberPersonTelemetry:
         await _handle_remember(
             remember_config,
             mock_memory,
-            {"content": "Test", "shared_with": ["alice"]},
+            {"content": "Test", "emotion": "neutral", "shared_with": ["alice"]},
         )
 
         meta = get_tool_metadata()
@@ -1394,7 +1494,7 @@ class TestRememberPersonTelemetry:
         await _handle_remember(
             remember_config,
             mock_memory,
-            {"content": "Test"},
+            {"content": "Test", "emotion": "neutral"},
         )
 
         meta = get_tool_metadata()
