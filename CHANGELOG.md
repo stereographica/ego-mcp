@@ -2,6 +2,25 @@
 
 ego-mcp / dashboard のリリース履歴。
 
+## [1.9.0] - 2026-09-17
+
+### Added
+- ego-mcp: 派生レイヤー(`python -m ego_mcp.derived`)を新設 — 蓄積した記憶とグラフの「形」を夜間バッチで測り、`${EGO_MCP_DATA_DIR}/derived/{lens}.json` に ID・数値・日付だけの派生物(記憶本文は含まない)を有効期限つきでアトミックに書く。ChromaDB と JSON ストアは読み取り専用で開き、link / notion / question / relationship には一切書かない。API キー不要(`EGO_MCP_DATA_DIR` / `EGO_MCP_TIMEZONE` のみ)。migration は走らせず、lexical index にも触れない。`--list` / `--dry-run` / `--lens` / `--data-dir`、終了コード 0 / 1(引数)/ 2(スナップショット取得不能)/ 3(一部レンズ失敗)。サーバー側は `DerivedReader` が欠損・期限切れ・破損をすべて「派生物なし」として扱い、応答に何も足さない。提示済みマークは `derived/surfaced.json`(サーバー所有、上限 2000)
+- ego-mcp: レンズ `recurrence` — 一年前・半年前の同日の記憶(importance ≥ 4、または関係者ありかつ intensity ≥ 0.6)を wake_up が `Around this time a year ago:` として 1 日 1 件・確率 0.5 で提示
+- ego-mcp: レンズ `dream` — 埋め込み距離 ≥ 0.55・グラフ 2 ホップ以内に経路なし・同じ notion に同居しない・7 日以上前の 2 記憶で、細い糸(同じ感情 / 同じ時間帯 / 共通の人物 / 共有タグ 1 つ)が 1 本ある組を並置し、wake_up が `A strange dream:` として確率 0.15 で一度だけ提示(Proust と同時には出ない)。糸の種類は出さず、link は persona の判断に委ねる。提示済みの組が後に link されたかを `dream_pairs_linked` として集計
+- ego-mcp: レンズ `holes` — 記憶グラフの「繋がっていない密度」4 種(人物ありで未リンク / 頻繁に想起されるのに孤立 / タグが貫くのに notion がない / 非連結な notion 間に立つ記憶)を `introspect(focus=network)` の末尾 `Unconnected density:` に数値なしで提示
+- ego-mcp: レンズ `drift` — notion の source 記憶を時間で前後に割った重心のコサイン距離が 0.20 以上かつ内部分散比 1.5 以上のとき、introspect の Notion landscape の該当行を `is this still true? Its recent ground has shifted.` の問いに置き換える。45 日以上 reinforce のない conviction には `unrevisited for a while. Still true?`。生成ごとに 1 回、同 notion は 7 日クールダウン
+- ego-mcp: レンズ `chapters` — 週ごとの話題重心・valence・登場人物の 4 週窓間距離から変化点を検出し、introspect に `Chapters (unnamed):` として境界の時期と前後の引用だけを提示(名前は付けない。新しい境界は一度だけ、既知の境界は 1 行に畳む)
+- ego-mcp: レンズ `affect` — 会話相手ごとに共有記憶の valence / arousal を直近 30 日と前 90 日で比べ、consider_them に `The shared moments of the last while lean brighter|darker than the ones before.` / `run livelier|quieter than before.` を 1 行(両方 steady なら出さない)
+- ego-mcp: レンズ `stagnation` — 内省の意味的同一化・テーマ反復率(5 日ローリング)・link の新規性・問いの発生の 4 成分を合成した停滞スコアと帯(flowing / circling / stuck)を attune のテレメトリ(`stagnation_band` / `stagnation_score` ほか)に出す。欲求変調と introspect の橋渡し行は `STAGNATION_MODULATION_ENABLED = False` で出荷し、観測後に有効化する
+- ego-mcp: 共想起(レンズ `coretrieval`)— recall が返した記憶集合(Proust 除く)を `derived/co_retrieval.jsonl` に追記し、バッチが減衰つき共起重み(半減期 30 日、閾値 2.5)で組を数える。consolidate がリンク済みの組の confidence を +0.1 強め(Hebbian)、未リンクの組を `Some memories keep surfacing together, unlinked:` として最大 3 組差し出す(`If not, leaving them apart is fine.` を必ず添える)
+- ego-mcp: 再読の履歴 — recall 時に `Memory.access_log`({at, mood, phase}、上限 12)を access_count と同じ更新で記録し、3 回以上・2 種以上の気分で戻ってきた記憶があれば recall が `You've come back to [mem_xxx] before — anxious, then calm, then grateful.` を 1 行添える(今回分は含めない、連続 recall の同一記憶は抑止)。レンズ `rereading` が分布を集計
+- ego-mcp: `self_model.normalize_question_log(raw)` を公開関数化(`SelfModelStore.get_question_log()` の正規化を切り出し。挙動不変)
+
+### Changed
+- ego-mcp: `introspect(focus=network)` の内部関数を async 化(既存出力は不変)
+- バージョンアップ: ego-mcp `1.8.0` → `1.9.0`
+
 ## [1.8.0] - 2026-08-17
 
 ### Changed

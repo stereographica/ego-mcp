@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import random
-from datetime import datetime
+from datetime import date, datetime
 from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable
 from ego_mcp import timezone_utils
 from ego_mcp._server_context import (
     _derive_desire_modulation,
+    _derived_reader,
     _fading_important_questions,
     _find_related_forgotten_questions,
     _relationship_snapshot,
@@ -45,6 +46,23 @@ from ego_mcp.anticipation import (
     pick_arrived_anticipation,
 )
 from ego_mcp.config import EgoConfig
+from ego_mcp.derived import stagnation as stagnation_lens
+from ego_mcp.derived.affect import (
+    DIRECTION_BRIGHTER,
+    DIRECTION_DARKER,
+    DIRECTION_LIVELIER,
+    DIRECTION_QUIETER,
+)
+from ego_mcp.derived.affect import LENS_NAME as AFFECT_LENS
+from ego_mcp.derived.chapters import LENS_NAME as CHAPTERS_LENS
+from ego_mcp.derived.dream import DREAM_PRESENT_PROBABILITY
+from ego_mcp.derived.dream import LENS_NAME as DREAM_LENS
+from ego_mcp.derived.drift import LENS_NAME as DRIFT_LENS
+from ego_mcp.derived.holes import HOLES_KIND_ORDER
+from ego_mcp.derived.holes import LENS_NAME as HOLES_LENS
+from ego_mcp.derived.recurrence import LENS_NAME as RECURRENCE_LENS
+from ego_mcp.derived.recurrence import RECURRENCE_PRESENT_PROBABILITY
+from ego_mcp.derived.words import count_words, span_words
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_blend import blend_desires
 from ego_mcp.embers import generate_embers
@@ -402,6 +420,408 @@ async def _anticipation_surface_line(
     return format_approaching_anticipation(approaching, now, _truncate_for_quote)
 
 
+# --- derived layer presentation (D0 S8 calling convention) -------------------
+#
+# Every helper below owns its own ``try/except Exception``: a missing, stale or
+# malformed derived file must leave the response exactly as it was.
+
+#: D4 edge cases: with a daily batch the key changes daily, so the same notion
+#: is not re-asked about for this many days after a replacement.
+DRIFT_PRESENT_COOLDOWN_DAYS = 7.0
+#: D4 S2: at most this many landscape lines are replaced per introspect call.
+DRIFT_MAX_REPLACEMENTS = 2
+#: D3 D2: the "Unconnected density" section is at most this many lines.
+HOLES_MAX_LINES = 4
+#: D6 D3 / S3: appended to the introspect scaffold while 6b is enabled.
+STAGNATION_BRIDGE_LINE = (
+    "Some of this might be worth bringing to {companion_name} "
+    "rather than turning over alone."
+)
+
+_SECONDS_PER_DAY = 86400.0
+
+
+async def _memory_by_id(memory: MemoryStore, memory_id: Any) -> Memory | None:
+    """Fetch a memory referenced by a derived item, or ``None`` if it is gone."""
+    if not isinstance(memory_id, str) or not memory_id:
+        return None
+    return await memory.get_by_id(memory_id)
+
+
+def _elapsed_days(marked: datetime, now: datetime) -> float:
+    """Days between two moments, both pulled into the app timezone."""
+    return (
+        timezone_utils.localize(now) - timezone_utils.localize(marked)
+    ).total_seconds() / _SECONDS_PER_DAY
+
+
+async def _recurrence_surface_line(
+    config: EgoConfig,
+    memory: MemoryStore,
+    now: datetime,
+    rng: Any,
+) -> str | None:
+    """D1 S2: one calendar echo per day, right after the anticipation line."""
+    try:
+        reader = _derived_reader(config)
+        today = now.date().isoformat()
+        items = [
+            item
+            for item in reader.items(RECURRENCE_LENS, now=now)
+            if item.get("on_date") == today
+        ]
+        if not items:
+            return None
+        # At most one per day: a second wake_up on the same day stays quiet even
+        # when another candidate is still unsurfaced.
+        if reader.has_surfaced_with_prefix(
+            f"{RECURRENCE_LENS}:", suffix=f":{today}"
+        ):
+            return None
+        if rng.random() >= RECURRENCE_PRESENT_PROBABILITY:
+            return None
+        item = items[0]
+        recalled = await _memory_by_id(memory, item.get("memory_id"))
+        # The mark goes down either way: a deleted target ends the day quietly
+        # rather than falling through to the next candidate.
+        reader.mark_surfaced(str(item["key"]), now=now)
+        if recalled is None:
+            return None
+        span = span_words(str(item.get("period", "year")), int(item.get("span", 1)))
+        update_tool_metadata(
+            derived_presented=item["key"],
+            recurrence_presented=recalled.id,
+            recurrence_period=item.get("period"),
+        )
+        return (
+            f"Around this time {span}: "
+            f'"{_truncate_for_quote(recalled.content, 120)}"'
+        )
+    except Exception:
+        _logger.debug("Skipped recurrence line", exc_info=True)
+        return None
+
+
+async def _dream_surface_block(
+    config: EgoConfig,
+    memory: MemoryStore,
+    now: datetime,
+    rng: Any,
+) -> str | None:
+    """D2 S2: two distant memories held side by side, no thread named."""
+    try:
+        reader = _derived_reader(config)
+        items = reader.items(DREAM_LENS, now=now)
+        # Candidates first, dice second — the same order proust.py uses.
+        if not items or rng.random() >= DREAM_PRESENT_PROBABILITY:
+            return None
+        item = items[0]
+        memory_ids = item.get("memory_ids")
+        if not isinstance(memory_ids, list) or len(memory_ids) < 2:
+            return None
+        first = await _memory_by_id(memory, memory_ids[0])
+        second = await _memory_by_id(memory, memory_ids[1])
+        # Marked even when one side is gone: the dream is spent either way.
+        reader.mark_surfaced(str(item["key"]), now=now)
+        if first is None or second is None:
+            return None
+        threads = item.get("threads")
+        update_tool_metadata(
+            derived_presented=item["key"],
+            dream_presented=item["key"],
+            dream_thread=(
+                ",".join(str(thread) for thread in threads)
+                if isinstance(threads, list)
+                else ""
+            ),
+        )
+        return (
+            "A strange dream:\n"
+            f'  "{_truncate_for_quote(first.content, 80)}"\n'
+            f'  "{_truncate_for_quote(second.content, 80)}"\n'
+            "They were side by side. Nothing says why."
+        )
+    except Exception:
+        _logger.debug("Skipped dream block", exc_info=True)
+        return None
+
+
+async def _holes_line(
+    config: EgoConfig,
+    memory: MemoryStore,
+    notion_store: Any,
+    kind: str,
+    item: dict[str, Any],
+) -> str | None:
+    """D3 D2: one line for one hole, or ``None`` when its target is gone."""
+    if kind == "person_unlinked":
+        person_id = item.get("person_id")
+        if not isinstance(person_id, str) or not person_id:
+            return None
+        name = person_display_name(_relationship_store(config), person_id)
+        return (
+            f"  {name} appears in many memories that never connected to anything."
+        )
+    if kind == "worn_isolated":
+        worn = await _memory_by_id(memory, item.get("memory_id"))
+        if worn is None:
+            return None
+        return (
+            f'  "{_truncate_for_quote(worn.content, 60)}"'
+            " — returned to often, linked to nothing."
+        )
+    if kind == "tag_without_notion":
+        tag = item.get("tag")
+        if not isinstance(tag, str) or not tag:
+            return None
+        return f'  "{tag}" runs through many memories but no notion holds it.'
+    if kind == "straddling":
+        straddler = await _memory_by_id(memory, item.get("memory_id"))
+        if straddler is None:
+            return None
+        notion_ids = item.get("notion_ids")
+        if not isinstance(notion_ids, list) or len(notion_ids) < 2:
+            return None
+        left = notion_store.get_by_id(str(notion_ids[0]))
+        right = notion_store.get_by_id(str(notion_ids[1]))
+        if left is None or right is None:
+            return None
+        return (
+            f'  "{_truncate_for_quote(straddler.content, 60)}"'
+            f' stands between "{left.label}" and "{right.label}".'
+        )
+    return None
+
+
+async def _format_holes_section(
+    config: EgoConfig,
+    memory: MemoryStore,
+    notion_store: Any,
+    now: datetime,
+) -> str:
+    """D3 S2: the "Unconnected density" section, one line per kind."""
+    try:
+        items = _derived_reader(config).items(
+            HOLES_LENS, now=now, exclude_surfaced=False
+        )
+        if not items:
+            return ""
+        lines: list[str] = []
+        shown_kinds: list[str] = []
+        for kind in HOLES_KIND_ORDER:
+            if len(lines) >= HOLES_MAX_LINES:
+                break
+            item = next(
+                (candidate for candidate in items if candidate.get("kind") == kind),
+                None,
+            )
+            if item is None:
+                continue
+            # A deleted target skips the kind; it never falls through to the
+            # second item of the same kind (D3 edge cases).
+            line = await _holes_line(config, memory, notion_store, kind, item)
+            if line is None:
+                continue
+            lines.append(line)
+            shown_kinds.append(kind)
+        if not lines:
+            return ""
+        update_tool_metadata(holes_presented=json.dumps(shown_kinds))
+        return "\nUnconnected density:\n" + "\n".join(lines)
+    except Exception:
+        _logger.debug("Skipped unconnected density section", exc_info=True)
+        return ""
+
+
+def _drift_replacement_lines(
+    config: EgoConfig,
+    notions: list[Notion],
+    now: datetime,
+) -> dict[str, str]:
+    """D4 S2: notion id -> the question line that replaces its landscape line."""
+    try:
+        reader = _derived_reader(config)
+        by_notion: dict[str, dict[str, Any]] = {}
+        for item in reader.items(DRIFT_LENS, now=now):
+            notion_id = item.get("notion_id")
+            if isinstance(notion_id, str) and notion_id and notion_id not in by_notion:
+                by_notion[notion_id] = item
+        if not by_notion:
+            return {}
+
+        chosen: list[tuple[Notion, dict[str, Any]]] = []
+        # drift first, then stale_conviction; landscape order inside each kind.
+        for kind in ("drift", "stale_conviction"):
+            for notion in notions:
+                if len(chosen) >= DRIFT_MAX_REPLACEMENTS:
+                    break
+                drift_item = by_notion.get(notion.id)
+                if drift_item is None or drift_item.get("kind") != kind:
+                    continue
+                last = reader.last_surfaced_at(f"{DRIFT_LENS}:{notion.id}:")
+                if (
+                    last is not None
+                    and _elapsed_days(last, now) < DRIFT_PRESENT_COOLDOWN_DAYS
+                ):
+                    continue
+                chosen.append((notion, drift_item))
+            if len(chosen) >= DRIFT_MAX_REPLACEMENTS:
+                break
+        if not chosen:
+            return {}
+
+        lines: dict[str, str] = {}
+        for notion, item in chosen:
+            tail = (
+                "is this still true? Its recent ground has shifted."
+                if item.get("kind") == "drift"
+                else "unrevisited for a while. Still true?"
+            )
+            lines[notion.id] = (
+                f'- "{notion.label}" confidence: {notion.confidence:.1f} — {tail}'
+            )
+            reader.mark_surfaced(str(item["key"]), now=now)
+        update_tool_metadata(
+            drift_presented=json.dumps([notion.id for notion, _ in chosen]),
+            drift_kinds=json.dumps([str(item.get("kind")) for _, item in chosen]),
+        )
+        return lines
+    except Exception:
+        _logger.debug("Skipped drift replacements", exc_info=True)
+        return {}
+
+
+def _boundary_age_days(boundary_week: Any, now: datetime) -> float | None:
+    """Days since a chapter boundary week, or ``None`` if it cannot be read."""
+    if not isinstance(boundary_week, str) or not boundary_week:
+        return None
+    try:
+        week_start = date.fromisoformat(boundary_week)
+    except ValueError:
+        return None
+    return max(0.0, float((now.date() - week_start).days))
+
+
+async def _chapter_lines(
+    config: EgoConfig,
+    memory: MemoryStore,
+    now: datetime,
+) -> list[str]:
+    """D5 S2: a fresh boundary once, otherwise the one-line count."""
+    try:
+        reader = _derived_reader(config)
+        all_items = reader.items(CHAPTERS_LENS, now=now, exclude_surfaced=False)
+        if not all_items:
+            return []
+        fresh = [
+            item for item in all_items if not reader.is_surfaced(str(item["key"]))
+        ]
+        if fresh:
+            # Items come newest first, so the head is the newest unsurfaced one.
+            item = fresh[0]
+            before = await _memory_by_id(memory, item.get("before_memory_id"))
+            after = await _memory_by_id(memory, item.get("after_memory_id"))
+            reader.mark_surfaced(str(item["key"]), now=now)
+            if before is None or after is None:
+                return []
+            age_days = _boundary_age_days(item.get("boundary_week"), now)
+            if age_days is None:
+                return []
+            update_tool_metadata(
+                derived_presented=item["key"],
+                chapter_presented=item["key"],
+                chapter_count=len(all_items),
+            )
+            return [
+                "Chapters (unnamed):",
+                f"  A turn around {approx_duration_words(age_days)} ago — "
+                f'from "{_truncate_for_quote(before.content, 60)}"'
+                f' toward "{_truncate_for_quote(after.content, 60)}".',
+                "  If it has a name, that's yours to give.",
+            ]
+        latest_age = _boundary_age_days(all_items[0].get("boundary_week"), now)
+        if latest_age is None:
+            return []
+        update_tool_metadata(chapter_count=len(all_items))
+        return [
+            f"Chapters (unnamed): {count_words(len(all_items))} turns so far, "
+            f"the last one {approx_duration_words(latest_age)} ago."
+        ]
+    except Exception:
+        _logger.debug("Skipped chapter lines", exc_info=True)
+        return []
+
+
+def _affect_trajectory_line(
+    config: EgoConfig,
+    person_id: str,
+    now: datetime,
+) -> str | None:
+    """P2 S2: one line for how the shared moments have moved, if they moved."""
+    try:
+        items = _derived_reader(config).items(
+            AFFECT_LENS, now=now, exclude_surfaced=False
+        )
+        item = next(
+            (
+                candidate
+                for candidate in items
+                if candidate.get("person_id") == person_id
+            ),
+            None,
+        )
+        if item is None:
+            return None
+        valence = item.get("valence_direction")
+        arousal = item.get("arousal_direction")
+        if valence in (DIRECTION_BRIGHTER, DIRECTION_DARKER):
+            line = (
+                "The shared moments of the last while lean "
+                f"{valence} than the ones before."
+            )
+        elif arousal in (DIRECTION_LIVELIER, DIRECTION_QUIETER):
+            line = (
+                f"The shared moments of the last while run {arousal} than before."
+            )
+        else:
+            # Both steady: saying "unchanged" every time is the script (P2 D2).
+            return None
+        update_tool_metadata(
+            affect_valence_direction=valence,
+            affect_arousal_direction=arousal,
+            affect_dv=item.get("dv"),
+            affect_da=item.get("da"),
+        )
+        return line
+    except Exception:
+        _logger.debug("Skipped affect trajectory line", exc_info=True)
+        return None
+
+
+def _stagnation_bridge_line(config: EgoConfig, now: datetime) -> str | None:
+    """D6 S3: point the introspect scaffold back at dialogue while 6b is on."""
+    # Read through the module so flipping the flag in derived/stagnation.py is
+    # the single line change D6 D3 describes.
+    if not stagnation_lens.STAGNATION_MODULATION_ENABLED:
+        return None
+    try:
+        items = _derived_reader(config).items(
+            stagnation_lens.LENS_NAME, now=now, exclude_surfaced=False
+        )
+        if not items:
+            return None
+        if items[0].get("band") not in (
+            stagnation_lens.STAGNATION_BAND_CIRCLING,
+            stagnation_lens.STAGNATION_BAND_STUCK,
+        ):
+            return None
+        update_tool_metadata(stagnation_bridge_shown=True)
+        return STAGNATION_BRIDGE_LINE
+    except Exception:
+        _logger.debug("Skipped stagnation bridge line", exc_info=True)
+        return None
+
+
 async def _handle_wake_up(
     config: EgoConfig, memory: MemoryStore, desire: DesireEngine
 ) -> str:
@@ -445,6 +865,7 @@ async def _handle_wake_up(
         parts.append("Weakened notions:\n" + "\n".join(notion_lines))
 
     # 3. Involuntary recall — Proust
+    proust_mem: Memory | None = None
     if recent_all:
         seed = recent_all[0].content
         proust_mem = await find_proust_memory(seed, memory)
@@ -456,6 +877,13 @@ async def _handle_wake_up(
             parts.append(
                 f'Involuntary recall:\n  "{_truncate_for_quote(proust_mem.content, 120)}"'
             )
+
+    # 3b. The dream — never alongside Proust (two involuntary recalls is too
+    # many for one wake_up; D2 D2).
+    if proust_mem is None:
+        dream_block = await _dream_surface_block(config, memory, now, random)
+        if dream_block:
+            parts.append(dream_block)
 
     # 4. Last introspection (shortened)
     sync = get_workspace_sync()
@@ -517,6 +945,11 @@ async def _handle_wake_up(
     if anticipation_line:
         parts.append(anticipation_line)
 
+    # The time channel: the future line and the calendar echo side by side.
+    recurrence_line = await _recurrence_surface_line(config, memory, now, random)
+    if recurrence_line:
+        parts.append(recurrence_line)
+
     # 5. Desire currents (3-direction)
     levels = desire.compute_levels_with_modulation()
     desire_summary = blend_desires(
@@ -570,11 +1003,18 @@ async def _handle_wake_up(
     return render_with_data(data, SCAFFOLD_WAKE_UP, config.companion_name)
 
 
-def _handle_introspect_network() -> str:
-    """Notion graph topology summary."""
+async def _handle_introspect_network(
+    config: EgoConfig, memory: MemoryStore
+) -> str:
+    """Notion graph topology summary, plus where the memory graph has no form."""
     notion_store = get_notion_store()
     analysis = analyze_notion_network(notion_store)
     data = format_network_analysis(analysis, notion_store)
+    holes = await _format_holes_section(
+        config, memory, notion_store, timezone_utils.now()
+    )
+    if holes:
+        data += "\n" + holes
     return compose_response(data, SCAFFOLD_INTROSPECT_NETWORK)
 
 
@@ -587,7 +1027,7 @@ async def _handle_introspect(
     """Introspection materials: week/month layers + notions + questions + episodes + desire trend."""
     focus = (args or {}).get("focus", "default")
     if focus == "network":
-        return _handle_introspect_network()
+        return await _handle_introspect_network(config, memory)
     recent_all = await memory.list_recent(n=30)
     now = timezone_utils.now()
 
@@ -633,7 +1073,15 @@ async def _handle_introspect(
         )[:5]
         if top_notions:
             framework_lines.append("Notion landscape:")
+            drift_lines = _drift_replacement_lines(config, top_notions, now)
             for notion in top_notions:
+                # A notion whose ground moved is asked about instead of
+                # asserted; the associated/meta suffixes are dropped to keep
+                # the question line short (D4 S2).
+                replacement = drift_lines.get(notion.id)
+                if replacement is not None:
+                    framework_lines.append(replacement)
+                    continue
                 meta_parts = ", ".join(
                     f"{k}:{v['type']}" for k, v in notion.meta_fields.items()
                 )
@@ -769,11 +1217,15 @@ async def _handle_introspect(
         config, memory, config.companion_name
     )
 
+    # §D5 chapter boundaries — between the episodes and the self model
+    chapter_lines = await _chapter_lines(config, memory, now)
+
     parts = [
         emotion_section,
         "\n".join(framework_lines) if framework_lines else "",
         open_questions,
         "\n".join(episode_lines) if episode_lines else "",
+        "\n".join(chapter_lines) if chapter_lines else "",
         self_summary,
         "\n".join(desire_trend_lines) if desire_trend_lines else "",
         f"\nDesire currents: {desire_summary}",
@@ -796,11 +1248,11 @@ async def _handle_introspect(
         update_tool_metadata(
             active_person_ids=json.dumps(_introspect_active_ids),
         )
-    return render_with_data(
-        data,
-        _filter_desire_scaffold(SCAFFOLD_INTROSPECT, desire),
-        config.companion_name,
-    )
+    scaffold = _filter_desire_scaffold(SCAFFOLD_INTROSPECT, desire)
+    bridge_line = _stagnation_bridge_line(config, now)
+    if bridge_line:
+        scaffold = f"{scaffold}\n{bridge_line}"
+    return render_with_data(data, scaffold, config.companion_name)
 
 
 def _parse_episode_time(timestamp: str) -> datetime | None:
@@ -889,6 +1341,9 @@ async def _handle_consider_them(
         data_lines.append(f"Recent mood trajectory: {mood_tail}")
     if absence_frame:
         data_lines.append(absence_frame)
+    affect_line = _affect_trajectory_line(config, person, now)
+    if affect_line:
+        data_lines.append(affect_line)
     held_questions = shared_open_questions_for_person(
         SelfModelStore(config.data_dir / "self_model.json"),
         person,

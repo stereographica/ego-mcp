@@ -117,6 +117,7 @@ class Memory:
     involved_person_ids: list[str] = field(default_factory=list)
     anticipated_at: str = ""
     anticipation_surfaced: bool = False
+    access_log: list[dict[str, str]] = field(default_factory=list)
 
     @staticmethod
     def now_iso() -> str:

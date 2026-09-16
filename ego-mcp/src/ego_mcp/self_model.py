@@ -70,6 +70,52 @@ def _age_days_since(timestamp: str, now: datetime | None = None) -> float:
     return delta / 86400.0
 
 
+def normalize_question_log(raw: Any) -> list[dict[str, Any]]:
+    """Normalize a raw ``question_log`` payload with backward-compatible defaults.
+
+    Shared by :meth:`SelfModelStore.get_question_log` and the read-only derived
+    layer snapshot (``ego_mcp.derived.source``), which must not instantiate the
+    store class because its constructor can write to disk.
+    """
+    if not isinstance(raw, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        question = item.get("question")
+        if not isinstance(question, str):
+            continue
+        entry = dict(item)
+        entry["id"] = str(item.get("id", ""))
+        entry["question"] = question
+        entry["resolved"] = bool(item.get("resolved", False))
+        entry["importance"] = _clamp_question_importance(item.get("importance", 3))
+        created_at = item.get("created_at", "")
+        entry["created_at"] = created_at if isinstance(created_at, str) else ""
+        person_id = item.get("person_id")
+        entry["person_id"] = (
+            person_id if isinstance(person_id, str) and person_id else None
+        )
+        companions = item.get("companions", [])
+        entry["companions"] = (
+            [dict(companion) for companion in companions if isinstance(companion, dict)]
+            if isinstance(companions, list)
+            else []
+        )
+        lineage = item.get("lineage", [])
+        entry["lineage"] = (
+            [str(question_id) for question_id in lineage if isinstance(question_id, str)]
+            if isinstance(lineage, list)
+            else []
+        )
+        last_fed_at = item.get("last_fed_at", "")
+        entry["last_fed_at"] = last_fed_at if isinstance(last_fed_at, str) else ""
+        normalized.append(entry)
+    return normalized
+
+
 def _calculate_salience(importance: int, age_days: float) -> float:
     """Decay question salience based on importance and age."""
     clamped_importance = _clamp_question_importance(importance)
@@ -229,46 +275,7 @@ class SelfModelStore:
 
     def get_question_log(self) -> list[dict[str, Any]]:
         """Return normalized question log entries with backward-compatible defaults."""
-        raw = self._data.get("question_log", [])
-        if not isinstance(raw, list):
-            return []
-
-        normalized: list[dict[str, Any]] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            question = item.get("question")
-            if not isinstance(question, str):
-                continue
-            entry = dict(item)
-            entry["id"] = str(item.get("id", ""))
-            entry["question"] = question
-            entry["resolved"] = bool(item.get("resolved", False))
-            entry["importance"] = _clamp_question_importance(item.get("importance", 3))
-            created_at = item.get("created_at", "")
-            entry["created_at"] = created_at if isinstance(created_at, str) else ""
-            person_id = item.get("person_id")
-            entry["person_id"] = (
-                person_id if isinstance(person_id, str) and person_id else None
-            )
-            companions = item.get("companions", [])
-            entry["companions"] = (
-                [dict(companion) for companion in companions if isinstance(companion, dict)]
-                if isinstance(companions, list)
-                else []
-            )
-            lineage = item.get("lineage", [])
-            entry["lineage"] = (
-                [str(question_id) for question_id in lineage if isinstance(question_id, str)]
-                if isinstance(lineage, list)
-                else []
-            )
-            last_fed_at = item.get("last_fed_at", "")
-            entry["last_fed_at"] = (
-                last_fed_at if isinstance(last_fed_at, str) else ""
-            )
-            normalized.append(entry)
-        return normalized
+        return normalize_question_log(self._data.get("question_log", []))
 
     def add_question(
         self,

@@ -648,6 +648,7 @@ If both have value, consider which perspective to keep.
 > - **Notion self-maintenance**: Ephemeral clusters are skipped. Existing notions may decay, be pruned, merge with duplicates, and gain related notion links during the same run.
 > - **Person backfill**: For memories already linked from a relationship's `shared_episode_ids` but whose `Memory.involved_person_ids` is still empty, the missing person ids are filled in (capped per run). Existing values are never overwritten. This restores the episode↔person two-way pointer for memories created before the relationship-network changes; no full migration script is run.
 > - Near-duplicate pairs (similarity >= 0.90) are reported as merge candidates for manual review.
+> - **Co-retrieval (derived layer)**: if the nightly batch produced a `coretrieval` file, pairs that keep being recalled together are handled before the merge block — already-linked pairs get `+0.1` link confidence (Hebbian), unlinked pairs are presented for the persona to link or leave apart. See "Derived Layer Hints" below.
 
 ---
 
@@ -983,6 +984,24 @@ Does every label accurately capture the underlying insight?
 ```
 
 > `person` is optional for `merge` and `relabel`. Passing an empty string clears `person_id`.
+
+---
+
+## Derived Layer Hints (optional)
+
+When the nightly batch `python -m ego_mcp.derived` has run (see README, "Derived Layer"), the tools above weave in short hints computed from the *shape* of the memory store. The batch never assigns meaning and never writes to memories, notions, questions or relationships; each hint quotes the persona's own words and leaves interpretation to the persona. If no derived file exists, or it has expired, nothing is added.
+
+| Tool | Hint | Frequency |
+|---|---|---|
+| `wake_up` | `Around this time a year ago: "..."` / `half a year ago` — a memory from the same calendar day one or more years (or six months) back | at most once a day, probability 0.5 |
+| `wake_up` | `A strange dream:` followed by two distant, unlinked memories placed side by side, ending with `They were side by side. Nothing says why.` | probability 0.15, never together with `Involuntary recall`, each pair once |
+| `introspect` | Notion landscape lines rewritten as questions: `— is this still true? Its recent ground has shifted.` (drift of the notion's source memories) / `— unrevisited for a while. Still true?` (conviction not reinforced for 45+ days) | once per batch run, 7-day cooldown per notion |
+| `introspect` | `Chapters (unnamed):` — a detected turn in the memory stream with the quotes before and after it; later only a one-line count | new boundary once, then summarized |
+| `introspect(focus="network")` | `Unconnected density:` — up to four lines naming unlinked density in the memory graph (a person with many unlinked memories, a worn-but-isolated memory, a tag no notion holds, a memory standing between two unrelated notions) | every call while the shape persists |
+| `consider_them` | `The shared moments of the last while lean brighter|darker than the ones before.` / `run livelier|quieter than before.` — shared-memory affect over the last 30 days vs the prior 90 | every call while the shift persists; silent when steady |
+| `recall` | `You've come back to [mem_xxx] before — anxious, then calm, then grateful.` — the memory was revisited three or more times in two or more distinct moods (this is runtime data, not batch) | whenever it applies, not twice in a row for the same memory |
+| `consolidate` | `Some memories keep surfacing together, unlinked:` with up to three pairs and `If they belong together, link_memories can say how. If not, leaving them apart is fine.`; linked pairs that keep co-surfacing get their link confidence strengthened | each pair once |
+| `attune` | no text; stagnation indicators (`stagnation_band`, `stagnation_score`, ...) go to telemetry only | every call |
 
 ---
 

@@ -8,8 +8,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from ego_mcp import timezone_utils
 from ego_mcp._memory_serialization import memory_to_chromadb
-from ego_mcp._server_context import _relationship_store
+from ego_mcp._server_context import _derived_reader, _relationship_store
 from ego_mcp._server_emotion_formatting import (
     _relative_time,
     _truncate_for_quote,
@@ -22,6 +23,10 @@ from ego_mcp._server_runtime import (
 from ego_mcp._server_tools import _FIELD_ALIASES
 from ego_mcp.config import EgoConfig
 from ego_mcp.consolidation import ConsolidationEngine
+from ego_mcp.derived.co_retrieval import (
+    CO_RETRIEVAL_MAX_LINKED,
+)
+from ego_mcp.derived.co_retrieval import LENS_NAME as CO_RETRIEVAL_LENS_NAME
 from ego_mcp.episode import EpisodeStore
 from ego_mcp.memory import MemoryStore
 from ego_mcp.notion import (
@@ -48,6 +53,10 @@ from ego_mcp.self_model import SelfModelStore, _clamp_question_importance
 from ego_mcp.types import Memory, MetaField
 
 logger = logging.getLogger(__name__)
+
+#: Unlinked co-retrieval pairs offered in one consolidate response (P1 D3).
+CO_RETRIEVAL_PRESENT_MAX = 3
+
 _relative_time_override: Callable[[str, datetime | None], str] | None = None
 _last_tool_context: dict[str, dict[str, object]] = {}
 
@@ -206,6 +215,38 @@ def _load_person_memory_ids(memory: MemoryStore) -> dict[str, set[str]]:
     return person_memory_ids
 
 
+def _coretrieval_pair(item: dict[str, Any]) -> tuple[str, str] | None:
+    """Return the two memory ids of a co-retrieval item, or ``None`` if malformed."""
+    if not isinstance(item.get("key"), str) or not item["key"]:
+        return None
+    memory_ids = item.get("memory_ids")
+    if not isinstance(memory_ids, list) or len(memory_ids) != 2:
+        return None
+    first, second = memory_ids
+    if not isinstance(first, str) or not isinstance(second, str):
+        return None
+    if not first or not second:
+        return None
+    return first, second
+
+
+async def _coretrieval_still_linked(
+    memory: MemoryStore, first: str, second: str
+) -> bool:
+    """Return whether the two memories are still linked *now*.
+
+    The batch classified the pair as ``linked`` up to 48 hours ago, and
+    ``consolidation.run()`` prunes links below 0.1 confidence earlier in this
+    same handler. ``bump_link_confidence`` re-creates a missing link, so
+    bumping without this check would silently resurrect a link that was just
+    pruned — or one the persona unlinked by hand.
+    """
+    source = await memory.get_by_id(first)
+    if source is None:
+        return False
+    return any(link.target_id == second for link in source.linked_ids)
+
+
 async def _handle_consolidate(
     memory: MemoryStore,
     consolidation: ConsolidationEngine,
@@ -327,6 +368,59 @@ async def _handle_consolidate(
         ripening_fed_questions = ripening_stats.fed_questions
         ripening_deposits = ripening_stats.deposits
 
+    # P1 D3: strengthen the pairs that keep arriving together and already have a
+    # link; offer the unlinked ones. Whether to connect them stays with the persona.
+    coretrieval_bumped = 0
+    coretrieval_skipped_unlinked = 0
+    coretrieval_skipped_linked = 0
+    coretrieval_presented: list[tuple[Memory, Memory, str]] = []
+    if config is not None:
+        try:
+            now = timezone_utils.now()
+            reader = _derived_reader(config)
+            coretrieval_items = reader.items(CO_RETRIEVAL_LENS_NAME, now=now)
+            linked_items = [
+                item for item in coretrieval_items if item.get("kind") == "linked"
+            ][:CO_RETRIEVAL_MAX_LINKED]
+            for item in linked_items:
+                pair = _coretrieval_pair(item)
+                if pair is None:
+                    continue
+                if not await _coretrieval_still_linked(memory, pair[0], pair[1]):
+                    # The link is gone since the batch ran (pruned here, or
+                    # unlinked by hand). Do not bump, and do not mark either:
+                    # the next batch reclassifies the pair as unlinked and it
+                    # can then be offered rather than silently re-linked.
+                    coretrieval_skipped_unlinked += 1
+                    continue
+                if await memory.bump_link_confidence(pair[0], pair[1], delta=0.1):
+                    coretrieval_bumped += 1
+                reader.mark_surfaced(str(item["key"]), now=now)
+            unlinked_items = [
+                item for item in coretrieval_items if item.get("kind") == "unlinked"
+            ][:CO_RETRIEVAL_PRESENT_MAX]
+            for item in unlinked_items:
+                pair = _coretrieval_pair(item)
+                if pair is None:
+                    continue
+                if await _coretrieval_still_linked(memory, pair[0], pair[1]):
+                    # The batch saw no link up to 48 hours ago, but there is
+                    # one now — linked by hand, or by ``consolidation.run()``
+                    # earlier in this very handler. Offering a connection that
+                    # already exists is noise, so neither present nor mark:
+                    # the next batch reclassifies the pair as linked.
+                    coretrieval_skipped_linked += 1
+                    continue
+                key = str(item["key"])
+                first = await memory.get_by_id(pair[0])
+                second = await memory.get_by_id(pair[1])
+                # Mark either way: a pair whose memory is gone was consumed too.
+                reader.mark_surfaced(key, now=now)
+                if first is not None and second is not None:
+                    coretrieval_presented.append((first, second, key))
+        except Exception:
+            pass
+
     update_tool_metadata(
         consolidation_replay_events=stats.replay_events,
         consolidation_new_links=stats.link_updates,
@@ -363,6 +457,14 @@ async def _handle_consolidate(
         dead_links_notion_ids=dead_links_notion_ids or None,
         ripening_fed_questions=ripening_fed_questions,
         ripening_deposits=ripening_deposits,
+        coretrieval_bumped=coretrieval_bumped,
+        coretrieval_skipped_unlinked=coretrieval_skipped_unlinked or None,
+        coretrieval_skipped_linked=coretrieval_skipped_linked or None,
+        coretrieval_presented=(
+            json.dumps([key for _first, _second, key in coretrieval_presented])
+            if coretrieval_presented
+            else None
+        ),
     )
     base = (
         f"Consolidation complete. "
@@ -393,6 +495,20 @@ async def _handle_consolidate(
                 f"  {dl.notion_id}.{dl.meta_key} ({dl.link_type}): {targets}"
             )
         base += f"\nDead links found ({len(dead_links)}):\n" + "\n".join(dead_link_lines)
+    if coretrieval_presented:
+        # Before the merge block on purpose: merge asks "is this the same thing",
+        # co-retrieval asks "is there a relation" — two different questions (P1 D3).
+        coretrieval_lines = [
+            f'- [{first.id}] "{_truncate_for_quote(first.content, 60)}" <-> '
+            f'[{second.id}] "{_truncate_for_quote(second.content, 60)}"'
+            for first, second, _key in coretrieval_presented
+        ]
+        base += (
+            "\nSome memories keep surfacing together, unlinked:\n"
+            + "\n".join(coretrieval_lines)
+            + "\nIf they belong together, link_memories can say how."
+            " If not, leaving them apart is fine."
+        )
     if not stats.merge_candidates:
         return base
 

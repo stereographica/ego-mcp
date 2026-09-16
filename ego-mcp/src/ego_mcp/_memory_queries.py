@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from ego_mcp import timezone_utils
@@ -13,7 +14,12 @@ from ego_mcp._memory_scoring import (
     calculate_importance_boost,
     calculate_time_decay,
 )
-from ego_mcp._memory_serialization import links_to_json, memory_from_chromadb
+from ego_mcp._memory_serialization import (
+    access_log_to_json,
+    links_to_json,
+    memory_from_chromadb,
+)
+from ego_mcp.interoception import time_phase
 from ego_mcp.preciousness import (
     PRECIOUS_DECAY_FLOOR,
     is_precious,
@@ -31,6 +37,8 @@ _SPREAD_WEIGHT = 0.3
 _DORMANT_DECAY_THRESHOLD = 0.3
 PROUST_PROBABILITY = 0.25
 _RRF_K = 60
+# D7: how many re-reading entries a memory keeps (FIFO, oldest dropped first).
+ACCESS_LOG_MAX = 12
 
 
 def _collect_involuntary_persons(
@@ -140,8 +148,12 @@ def _raw_semantic_result(memory: Memory, distance: float) -> MemorySearchResult:
 async def _increment_access_metadata(
     store: MemoryStore,
     results: list[MemorySearchResult],
+    *,
+    access_mood: str = "",
+    now: datetime | None = None,
 ) -> None:
     collection = store._ensure_connected()
+    phase = time_phase(now)
     seen_ids: set[str] = set()
     for result in results:
         memory = result.memory
@@ -150,12 +162,19 @@ async def _increment_access_metadata(
         seen_ids.add(memory.id)
         memory.access_count += 1
         memory.last_accessed = Memory.now_iso()
+        # D7: keep only *when* and *in what mood* we came back — never a
+        # re-reading of the content itself.
+        memory.access_log = [
+            *memory.access_log,
+            {"at": memory.last_accessed, "mood": access_mood, "phase": phase},
+        ][-ACCESS_LOG_MAX:]
         collection.update(
             ids=[memory.id],
             metadatas=[
                 {
                     "access_count": memory.access_count,
                     "last_accessed": memory.last_accessed,
+                    "access_log": access_log_to_json(memory.access_log),
                 }
             ],
         )
@@ -234,6 +253,7 @@ async def find_resurfacing_memories(
     similarity_threshold: float = 0.4,
     max_results: int = 2,
     exclude_ids: set[str] | None = None,
+    access_mood: str = "",
 ) -> list[MemorySearchResult]:
     excluded = exclude_ids or set()
     candidates = await _query_semantic_results(store, query, n_results=20)
@@ -245,7 +265,7 @@ async def find_resurfacing_memories(
         and result.distance < similarity_threshold
     ][:max_results]
     if resurfacing:
-        await _increment_access_metadata(store, resurfacing)
+        await _increment_access_metadata(store, resurfacing, access_mood=access_mood)
     return resurfacing
 
 
@@ -477,6 +497,7 @@ async def recall(
     arousal_range: list[float] | None = None,
     proust_probability: float = PROUST_PROBABILITY,
     relationship_store: RelationshipStore | None = None,
+    access_mood: str = "",
 ) -> list[MemorySearchResult]:
     """Recall memories using semantic search + Hopfield hybrid."""
     store._last_recall_metadata = {}
@@ -498,7 +519,7 @@ async def recall(
             arousal_range=arousal_range,
         )
         if results:
-            await _increment_access_metadata(store, results)
+            await _increment_access_metadata(store, results, access_mood=access_mood)
         store._last_recall_metadata = {
             "fuzzy_recall_count": sum(1 for result in results if result.decay < 0.5),
             "proust_triggered": False,
@@ -635,7 +656,7 @@ async def recall(
         )
 
     if base_results:
-        await _increment_access_metadata(store, base_results)
+        await _increment_access_metadata(store, base_results, access_mood=access_mood)
     involuntary_pids = [p.person_id for p in involuntary_persons]
     store._last_recall_metadata = {
         "fuzzy_recall_count": sum(1 for result in base_results if result.decay < 0.5),

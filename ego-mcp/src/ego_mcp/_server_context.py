@@ -11,6 +11,7 @@ from typing import Any
 from ego_mcp import timezone_utils
 from ego_mcp.absence import approx_duration_words
 from ego_mcp.config import EgoConfig
+from ego_mcp.derived.contract import DerivedReader
 from ego_mcp.memory import MemoryStore
 from ego_mcp.relationship import RelationshipStore
 from ego_mcp.relationship_wording import episode_words, history_words, trust_words
@@ -110,6 +111,15 @@ def _find_related_forgotten_questions(
 
 def _relationship_store(config: EgoConfig) -> RelationshipStore:
     return RelationshipStore(config.data_dir / "relationships" / "models.json")
+
+
+def _derived_reader(config: EgoConfig) -> DerivedReader:
+    """Build a derived-layer reader.
+
+    Created fresh on every call, never cached: the nightly batch replaces the
+    files underneath a running server.
+    """
+    return DerivedReader(config.data_dir)
 
 
 def _frequency_words(last_7d: int, *, matched_person: bool) -> str:

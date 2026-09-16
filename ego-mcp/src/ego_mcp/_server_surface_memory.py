@@ -33,6 +33,7 @@ from ego_mcp._server_runtime import (
 from ego_mcp._server_surface_person import _collect_resonant_persons
 from ego_mcp.absence import absence_band, approx_duration_words
 from ego_mcp.config import EgoConfig
+from ego_mcp.derived.co_retrieval_log import append_co_retrieval
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_satisfaction import SignalEmbeddingCache, infer_desire_satisfaction
 from ego_mcp.interoception import get_body_state
@@ -50,7 +51,7 @@ from ego_mcp.scaffolds import (
     compose_response,
 )
 from ego_mcp.self_model import SelfModelStore
-from ego_mcp.types import Emotion
+from ego_mcp.types import Emotion, Memory, MemorySearchResult
 
 logger = logging.getLogger(__name__)
 _REMEMBER_DUPLICATE_PREFIX = "Not saved — very similar memory already exists."
@@ -107,6 +108,14 @@ _EMOTION_REQUIRED_GUIDANCE = (
     "Example of a correct call:",
     '  {"content": "...", "emotion": "curious"}',
 )
+# D7: re-reading history. A memory earns its one line only once enough
+# *previous* returns exist and they were not all made in the same mood.
+REREAD_MIN_ACCESSES = 3
+REREAD_MIN_DISTINCT_MOODS = 2
+REREAD_MAX_MOOD_WORDS = 4
+# Deliberately process-local and single-slot: suppresses only the immediate
+# repeat of the same memory, and is forgotten on restart.
+_last_reread_presented_id: str | None = None
 
 
 def configure_overrides(
@@ -282,6 +291,9 @@ async def _handle_remember(
         memory,
         mem.content,
         exclude_ids={mem.id},
+        # The memory just saved *is* the newest one, so its primary emotion is
+        # the current mood by the same definition recall uses.
+        access_mood=mem.emotional_trace.primary.value,
     )
     top_links = sorted(linked_results, key=lambda r: r.distance)[:3]
     resonance_lines: list[str] = []
@@ -561,6 +573,82 @@ async def _handle_recall_explore(
     return compose_response(data, SCAFFOLD_RECALL_EXPLORE)
 
 
+def _collapse_consecutive(moods: list[str]) -> list[str]:
+    """Drop repeats that sit next to each other, keeping the order intact."""
+    collapsed: list[str] = []
+    for mood in moods:
+        if not collapsed or collapsed[-1] != mood:
+            collapsed.append(mood)
+    return collapsed
+
+
+async def _reread_access_mood(memory: MemoryStore) -> str:
+    """Primary emotion of the newest memory — the mood we return in.
+
+    Read from the store's in-memory cache: recall asks on every call, and
+    listing the newest memory would deserialize and sort the whole collection
+    each time. The cache is empty until this process saves something, and a
+    failure here must never cost the recall itself, so the mood degrades to ""
+    (which is then excluded from the distinct-mood count).
+    """
+    try:
+        return str(memory.latest_emotion())
+    except Exception as exc:  # noqa: BLE001 - mood is strictly optional
+        logger.debug("recall could not read the current mood: %s", exc)
+        return ""
+
+
+def _reread_line(results: list[MemorySearchResult]) -> str | None:
+    """One line naming a memory we keep coming back to, in changing moods.
+
+    Records only — the moods are listed, never interpreted, and the memory's
+    own text is left exactly as it was written.
+    """
+    global _last_reread_presented_id
+
+    candidates: list[tuple[int, int, Memory, list[str]]] = []
+    for result in results:
+        if result.is_proust:
+            continue
+        mem = result.memory
+        # The access made moments ago is not yet a "coming back".
+        log = list(mem.access_log)[:-1]
+        if len(log) < REREAD_MIN_ACCESSES:
+            continue
+        moods = [
+            str(entry.get("mood", ""))
+            for entry in log
+            if isinstance(entry, dict) and entry.get("mood")
+        ]
+        distinct = len(set(moods))
+        if distinct < REREAD_MIN_DISTINCT_MOODS:
+            continue
+        candidates.append((distinct, len(log), mem, moods))
+
+    # The marker is rewritten on every recall, not only when a line is shown:
+    # the rule is "not twice in a row for the same memory", so a recall that
+    # presents nothing has to clear it, otherwise the memory stays suppressed
+    # until the process restarts.
+    if not candidates:
+        _last_reread_presented_id = None
+        return None
+    candidates.sort(key=lambda item: (-item[0], -item[1]))
+    distinct, _log_len, mem, moods = candidates[0]
+    if mem.id == _last_reread_presented_id:
+        _last_reread_presented_id = None
+        return None
+
+    sequence = _collapse_consecutive(moods)
+    if len(sequence) > REREAD_MAX_MOOD_WORDS:
+        phrase = ", then ".join(sequence[:3]) + ", then others"
+    else:
+        phrase = ", then ".join(sequence)
+
+    _last_reread_presented_id = mem.id
+    update_tool_metadata(reread_presented=mem.id, reread_distinct_moods=distinct)
+    return f"You've come back to [{mem.id}] before — {phrase}."
+
+
 async def _handle_recall(
     config: EgoConfig, memory: MemoryStore, args: dict[str, Any]
 ) -> str:
@@ -605,6 +693,7 @@ async def _handle_recall(
         relationship_store = _relationship_store(config)
     except (AttributeError, KeyError):
         pass
+    access_mood = await _reread_access_mood(memory)
     results = await memory.recall(
         context,
         n_results=n_results,
@@ -615,7 +704,27 @@ async def _handle_recall(
         valence_range=valence_range,
         arousal_range=arousal_range,
         relationship_store=relationship_store,
+        access_mood=access_mood,
     )
+
+    # P1 D1: record what came back together. Proust hits are involuntary company,
+    # not co-retrieval; explicit filters still count — they were returned together.
+    try:
+        append_co_retrieval(
+            config.data_dir,
+            [
+                result.memory.id
+                for result in results
+                if not result.is_proust and result.memory.id
+            ],
+            now=timezone_utils.now(),
+        )
+    except Exception:
+        pass
+
+    # D7: decided for every recall, including the empty one — the suppression
+    # marker has to be refreshed even when there is nothing to present.
+    reread_line = _reread_line(results)
 
     total_count = memory.collection_count()
     if not results:
@@ -676,6 +785,10 @@ async def _handle_recall(
                             for item in associated[:2]
                         )
                     )
+        # D7: after the notions block, before the people — one line if some
+        # memory here has been returned to in more than one mood.
+        if reread_line:
+            lines.append(f"\n{reread_line}")
         # Collect resonant persons from base results (exclude Proust hits)
         resonant_persons: list[Any] = []
         involuntary_persons: list[Any] = []
