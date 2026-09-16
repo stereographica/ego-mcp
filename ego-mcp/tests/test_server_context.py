@@ -386,3 +386,20 @@ class TestSummarizeConversationTendencyFrequencyWords:
         )
 
         assert frequency == expected
+
+
+def test_derived_reader_is_built_fresh_for_the_configured_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The nightly batch replaces derived files, so the reader is never cached."""
+    from ego_mcp._server_context import _derived_reader
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("EGO_MCP_DATA_DIR", str(tmp_path))
+    config = EgoConfig.from_env()
+
+    first = _derived_reader(config)
+    second = _derived_reader(config)
+
+    assert first is not second
+    assert first.surfaced_path == tmp_path / "derived" / "surfaced.json"
