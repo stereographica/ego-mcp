@@ -13,6 +13,7 @@ ego-mcp provides AI agents with persistent memory, abstract desires, and cogniti
 - **All English Responses** — Saves 2-3x tokens compared to Japanese
 - **Token Budget** — Tool definitions stay under ~1,500 tokens
 - **Workspace Sync (optional)** — Syncs `remember` entries to OpenClaw Markdown memory files
+- **Derived Layer (optional)** — A nightly batch (`python -m ego_mcp.derived`) measures the *shape* of accumulated memories (calendar recurrence, distant juxtapositions, structural holes, notion drift, chapter boundaries, stagnation, co-retrieval, rereading, shared affect) and the surface tools weave the results in as hints. It never assigns meaning and never writes to memories, notions, questions or relationships
 
 ## Quick Start
 
@@ -44,7 +45,7 @@ export EGO_MCP_WORKSPACE_DIR="/path/to/openclaw-workspace"
 ### 3. Verify
 
 ```bash
-uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 1.6.0
+uv run python -c "import ego_mcp; print(ego_mcp.__version__)"  # → 1.9.0
 uv run python -m ego_mcp  # Starts the server
 ```
 
@@ -271,6 +272,19 @@ References:
 | `EGO_MCP_DATA_DIR` | `~/.ego-mcp/data` | Data storage directory |
 | `EGO_MCP_COMPANION_NAME` | `Master` | Name used in scaffolding templates |
 | `EGO_MCP_WORKSPACE_DIR` | — | OpenClaw workspace root for Markdown sync (`memory/YYYY-MM-DD.md`, `MEMORY.md`, `memory/inner-monologue-latest.md`) |
+
+## Derived Layer (optional nightly batch)
+
+`python -m ego_mcp.derived` reads the memory store and the JSON stores **read-only**, computes secondary information, and writes one JSON file per lens under `${EGO_MCP_DATA_DIR}/derived/` (IDs, numbers and dates only — never memory text). The server reads those files and surfaces them as hints in `wake_up`, `introspect`, `consider_them`, `attune`, `recall` and `consolidate`; missing, expired or corrupt files simply mean no hint that day.
+
+- No API key is needed. Only `EGO_MCP_DATA_DIR` and `EGO_MCP_TIMEZONE` are read; logs go to `EGO_MCP_LOG_DIR` like the server.
+- `--list` shows the registered lenses, `--dry-run` computes without writing, `--lens a,b` restricts the run.
+- Deleting `derived/` is always safe; the next run regenerates everything.
+
+```bash
+# example crontab entry (03:30 daily, aligned with the app timezone)
+30 3 * * * cd /path/to/ego-mcp/ego-mcp && EGO_MCP_DATA_DIR=$HOME/.ego-mcp/data EGO_MCP_TIMEZONE=Asia/Tokyo EGO_MCP_LOG_DIR=/tmp/ego-mcp uv run python -m ego_mcp.derived
+```
 
 ## Tool Overview
 

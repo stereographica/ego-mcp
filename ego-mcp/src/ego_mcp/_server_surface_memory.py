@@ -33,6 +33,7 @@ from ego_mcp._server_runtime import (
 from ego_mcp._server_surface_person import _collect_resonant_persons
 from ego_mcp.absence import absence_band, approx_duration_words
 from ego_mcp.config import EgoConfig
+from ego_mcp.derived.co_retrieval_log import append_co_retrieval
 from ego_mcp.desire import DesireEngine
 from ego_mcp.desire_satisfaction import SignalEmbeddingCache, infer_desire_satisfaction
 from ego_mcp.interoception import get_body_state
@@ -699,6 +700,21 @@ async def _handle_recall(
         relationship_store=relationship_store,
         access_mood=access_mood,
     )
+
+    # P1 D1: record what came back together. Proust hits are involuntary company,
+    # not co-retrieval; explicit filters still count — they were returned together.
+    try:
+        append_co_retrieval(
+            config.data_dir,
+            [
+                result.memory.id
+                for result in results
+                if not result.is_proust and result.memory.id
+            ],
+            now=timezone_utils.now(),
+        )
+    except Exception:
+        pass
 
     total_count = memory.collection_count()
     if not results:

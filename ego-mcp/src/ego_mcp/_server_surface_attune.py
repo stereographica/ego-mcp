@@ -35,6 +35,7 @@ from ego_mcp.anticipation import (
 )
 from ego_mcp.config import EgoConfig
 from ego_mcp.current_interest import derive_current_interests
+from ego_mcp.derived import stagnation as stagnation_lens
 from ego_mcp.desire import (
     CURIOSITY_TONUS_BOOST,
     DesireEngine,
@@ -139,6 +140,17 @@ async def _anticipation_surface_line(
     if not approaching.is_private:
         update_tool_metadata(anticipation_presented=approaching.id)
     return format_approaching_anticipation(approaching, now, _truncate_for_quote)
+
+
+def _as_number(value: Any) -> float | None:
+    """Return a telemetry-safe number, or ``None`` for anything else.
+
+    ``None`` components are dropped by ``update_tool_metadata``, which is how a
+    missing stagnation component stays out of the log entirely (D6 D2).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
 
 
 async def _handle_attune(
@@ -257,6 +269,54 @@ async def _handle_attune(
     except Exception:
         pass
 
+    # D6 6a: read the stagnation index for telemetry only — the response text
+    # never names the band (D6 D4). 6b modulates desire when it ships enabled.
+    stagnation_band_value: str | None = None
+    stagnation_score: float | None = None
+    stagnation_components: dict[str, Any] = {}
+    stagnation_social_thirst_boost: str | None = None
+    try:
+        from ego_mcp._server_context import _derived_reader
+
+        stagnation_items = _derived_reader(config).items(
+            stagnation_lens.LENS_NAME, now=now, exclude_surfaced=False
+        )
+        if stagnation_items:
+            stagnation_item = stagnation_items[0]
+            raw_band = stagnation_item.get("band")
+            stagnation_band_value = raw_band if isinstance(raw_band, str) else None
+            stagnation_score = _as_number(stagnation_item.get("score"))
+            raw_components = stagnation_item.get("components")
+            if isinstance(raw_components, dict):
+                stagnation_components = raw_components
+            if (
+                stagnation_lens.STAGNATION_MODULATION_ENABLED
+                and stagnation_band_value == stagnation_lens.STAGNATION_BAND_STUCK
+            ):
+                if "social_thirst" in levels:
+                    levels["social_thirst"] = round(
+                        min(
+                            1.0,
+                            levels["social_thirst"]
+                            + stagnation_lens.STAGNATION_SOCIAL_THIRST_BOOST,
+                        ),
+                        3,
+                    )
+                    stagnation_social_thirst_boost = (
+                        f"{stagnation_lens.STAGNATION_SOCIAL_THIRST_BOOST:.2f}"
+                    )
+                if "expression" in levels:
+                    levels["expression"] = round(
+                        min(
+                            1.0,
+                            levels["expression"]
+                            + stagnation_lens.STAGNATION_EXPRESSION_BOOST,
+                        ),
+                        3,
+                    )
+    except Exception:
+        pass
+
     desire_text = blend_desires(
         levels,
         ema_levels=desire.ema_levels,
@@ -334,6 +394,13 @@ async def _handle_attune(
         absence_band=absence_band_value,
         absence_person=person if absence_band_value is not None else None,
         absence_social_thirst_boost=absence_social_thirst_boost,
+        stagnation_band=stagnation_band_value,
+        stagnation_score=stagnation_score,
+        stagnation_sameness=_as_number(stagnation_components.get("sameness")),
+        stagnation_repetition=_as_number(stagnation_components.get("repetition")),
+        stagnation_link_novelty=_as_number(stagnation_components.get("novelty")),
+        stagnation_question_births=_as_number(stagnation_components.get("births")),
+        stagnation_social_thirst_boost=stagnation_social_thirst_boost,
         attune_person=person,
         active_person_ids=json.dumps(_active_person_ids) if _active_person_ids else None,
         ripening_presence_shown=True if ripening_presence_shown else None,

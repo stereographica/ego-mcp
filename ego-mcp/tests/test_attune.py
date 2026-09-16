@@ -847,3 +847,366 @@ class TestAttunePersonOption:
                 # Check that attune_person was recorded in metadata
                 call_kwargs = mock_update.call_args.kwargs if mock_update.call_args else {}
                 assert call_kwargs.get("attune_person") == "Alice"
+
+
+class TestAttuneStagnation:
+    """D6 6a/6b: the stagnation index reaches telemetry, never the response text."""
+
+    @staticmethod
+    def _write(
+        config: EgoConfig,
+        *,
+        band: str = "stuck",
+        score: float = 0.71,
+        components: dict[str, float | None] | None = None,
+        now: datetime | None = None,
+        ttl_hours: float = 36.0,
+    ) -> None:
+        from ego_mcp.derived.contract import DerivedFile, write_lens_file
+
+        generated = now or datetime(2026, 9, 17, 3, tzinfo=timezone.utc)
+        write_lens_file(
+            config.data_dir,
+            DerivedFile(
+                lens="stagnation",
+                generated_at=generated.isoformat(),
+                valid_until=(generated + timedelta(hours=ttl_hours)).isoformat(),
+                source={"memory_count": 20, "notion_count": 3, "embedding_count": 20},
+                items=[
+                    {
+                        "key": "stagnation:2026-09-17",
+                        "band": band,
+                        "score": score,
+                        "components": components
+                        if components is not None
+                        else {
+                            "sameness": 0.82,
+                            "repetition": 0.74,
+                            "novelty": 0.11,
+                            "births": 0.0,
+                        },
+                        "memory_count": 20,
+                    }
+                ],
+            ),
+        )
+
+    @staticmethod
+    def _capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+        import ego_mcp._server_surface_attune as attune_mod
+
+        captured: dict[str, Any] = {}
+
+        def _record(**kwargs: Any) -> None:
+            captured.update({k: v for k, v in kwargs.items() if v is not None})
+
+        monkeypatch.setattr(attune_mod, "update_tool_metadata", _record)
+        return captured
+
+    @pytest.mark.asyncio
+    async def test_telemetry_carries_band_score_and_components(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            timezone_utils, "now", lambda: datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
+        )
+        self._write(config, band="circling", score=0.5)
+        captured = self._capture(monkeypatch)
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["stagnation_band"] == "circling"
+        assert captured["stagnation_score"] == 0.5
+        assert captured["stagnation_sameness"] == 0.82
+        assert captured["stagnation_repetition"] == 0.74
+        assert captured["stagnation_link_novelty"] == 0.11
+        assert captured["stagnation_question_births"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_response_text_never_names_the_band(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            timezone_utils, "now", lambda: datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
+        )
+        self._write(config, band="stuck")
+
+        with_file = await _handle_attune(config, memory, {}, engine)
+        (config.data_dir / "derived" / "stagnation.json").unlink()
+        without_file = await _handle_attune(config, memory, {}, engine)
+
+        assert with_file == without_file
+        assert "stuck" not in with_file
+
+    @pytest.mark.asyncio
+    async def test_missing_components_are_omitted_not_zeroed(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        monkeypatch.setattr(
+            timezone_utils, "now", lambda: datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
+        )
+        self._write(
+            config,
+            components={
+                "sameness": None,
+                "repetition": 0.6,
+                "novelty": None,
+                "births": 2.0,
+            },
+        )
+
+        await _handle_attune(config, memory, {}, engine)
+
+        metadata = get_tool_metadata()
+        assert "stagnation_sameness" not in metadata
+        assert "stagnation_link_novelty" not in metadata
+        assert metadata["stagnation_repetition"] == 0.6
+        assert metadata["stagnation_question_births"] == 2.0
+
+    @pytest.mark.asyncio
+    async def test_no_derived_file_emits_no_stagnation_keys(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        monkeypatch.setattr(
+            timezone_utils, "now", lambda: datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
+        )
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert not [
+            key for key in get_tool_metadata() if key.startswith("stagnation_")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_expired_derived_file_emits_no_stagnation_keys(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset_tool_metadata()
+        now = datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        self._write(config, now=now - timedelta(hours=48), ttl_hours=36.0)
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert "stagnation_band" not in get_tool_metadata()
+
+    @pytest.mark.asyncio
+    async def test_modulation_disabled_leaves_levels_untouched(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ego_mcp.derived import stagnation as stagnation_lens
+
+        assert stagnation_lens.STAGNATION_MODULATION_ENABLED is False
+        monkeypatch.setattr(
+            timezone_utils, "now", lambda: datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
+        )
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"social_thirst": 0.4, "expression": 0.3},
+        )
+        self._write(config, band="stuck")
+        captured = self._capture(monkeypatch)
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["desire_levels"] == {"social_thirst": 0.4, "expression": 0.3}
+        assert "stagnation_social_thirst_boost" not in captured
+
+    @pytest.mark.asyncio
+    async def test_modulation_enabled_boosts_social_thirst_and_expression(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ego_mcp.derived import stagnation as stagnation_lens
+
+        monkeypatch.setattr(
+            stagnation_lens, "STAGNATION_MODULATION_ENABLED", True
+        )
+        monkeypatch.setattr(
+            timezone_utils, "now", lambda: datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
+        )
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"social_thirst": 0.4, "expression": 0.3},
+        )
+        self._write(config, band="stuck")
+        captured = self._capture(monkeypatch)
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["desire_levels"] == {"social_thirst": 0.46, "expression": 0.34}
+        assert captured["stagnation_social_thirst_boost"] == "0.06"
+
+    @pytest.mark.asyncio
+    async def test_modulation_enabled_clips_at_one_and_rounds(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ego_mcp.derived import stagnation as stagnation_lens
+
+        monkeypatch.setattr(
+            stagnation_lens, "STAGNATION_MODULATION_ENABLED", True
+        )
+        monkeypatch.setattr(
+            timezone_utils, "now", lambda: datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
+        )
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"social_thirst": 0.97, "expression": 0.985},
+        )
+        self._write(config, band="stuck")
+        captured = self._capture(monkeypatch)
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["desire_levels"] == {"social_thirst": 1.0, "expression": 1.0}
+
+    @pytest.mark.asyncio
+    async def test_modulation_enabled_skips_desires_not_in_levels(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ego_mcp.derived import stagnation as stagnation_lens
+
+        monkeypatch.setattr(
+            stagnation_lens, "STAGNATION_MODULATION_ENABLED", True
+        )
+        monkeypatch.setattr(
+            timezone_utils, "now", lambda: datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
+        )
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"cognitive_coherence": 0.5},
+        )
+        self._write(config, band="stuck")
+        captured = self._capture(monkeypatch)
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["desire_levels"] == {"cognitive_coherence": 0.5}
+        assert "stagnation_social_thirst_boost" not in captured
+
+    @pytest.mark.asyncio
+    async def test_circling_band_does_not_modulate_even_when_enabled(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ego_mcp.derived import stagnation as stagnation_lens
+
+        monkeypatch.setattr(
+            stagnation_lens, "STAGNATION_MODULATION_ENABLED", True
+        )
+        monkeypatch.setattr(
+            timezone_utils, "now", lambda: datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
+        )
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"social_thirst": 0.4, "expression": 0.3},
+        )
+        self._write(config, band="circling", score=0.5)
+        captured = self._capture(monkeypatch)
+
+        await _handle_attune(config, memory, {}, engine)
+
+        assert captured["desire_levels"] == {"social_thirst": 0.4, "expression": 0.3}
+
+    @pytest.mark.asyncio
+    async def test_stagnation_and_long_absence_boosts_add_up(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ego_mcp.derived import stagnation as stagnation_lens
+
+        monkeypatch.setattr(
+            stagnation_lens, "STAGNATION_MODULATION_ENABLED", True
+        )
+        now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(timezone_utils, "now", lambda: now)
+        store = RelationshipStore(config.data_dir / "relationships" / "models.json")
+        store.update("TestUser", {"name": "TestUser"})
+        store.add_interaction("TestUser", "2026-06-01T12:00:00+00:00", "calm")
+        monkeypatch.setattr(
+            engine,
+            "compute_levels_with_modulation",
+            lambda **_kwargs: {"social_thirst": 0.5, "expression": 0.2},
+        )
+        self._write(config, band="stuck", now=now)
+        captured = self._capture(monkeypatch)
+
+        await _handle_attune(config, memory, {}, engine)
+
+        # 0.5 + 0.08 (absence, long) + 0.06 (stagnation, stuck)
+        assert captured["desire_levels"] == {"social_thirst": 0.64, "expression": 0.24}
+        assert captured["absence_social_thirst_boost"] == "0.08"
+        assert captured["stagnation_social_thirst_boost"] == "0.06"
+
+    @pytest.mark.asyncio
+    async def test_reader_failure_is_swallowed(
+        self,
+        config: EgoConfig,
+        memory: AsyncMock,
+        engine: DesireEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ego_mcp._server_context as ctx_mod
+
+        reset_tool_metadata()
+        monkeypatch.setattr(
+            timezone_utils, "now", lambda: datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
+        )
+
+        def _boom(_config: EgoConfig) -> Any:
+            raise RuntimeError("derived directory is on fire")
+
+        monkeypatch.setattr(ctx_mod, "_derived_reader", _boom)
+
+        result = await _handle_attune(config, memory, {}, engine)
+
+        assert "Desire currents:" in result
+        assert "stagnation_band" not in get_tool_metadata()
