@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -411,6 +412,9 @@ class TestResurfacingAndRecall:
                     {
                         "access_count": 2,
                         "last_accessed": resurfacing[0].memory.last_accessed,
+                        "access_log": json.dumps(
+                            resurfacing[0].memory.access_log, ensure_ascii=False
+                        ),
                     }
                 ],
             )

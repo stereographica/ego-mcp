@@ -415,6 +415,7 @@ class MemoryStore:
         arousal_range: list[float] | None = None,
         proust_probability: float = _memory_queries.PROUST_PROBABILITY,
         relationship_store: Any = None,
+        access_mood: str = "",
     ) -> list[MemorySearchResult]:
         """Recall memories using semantic search + Hopfield hybrid."""
         return await _memory_queries.recall(
@@ -429,6 +430,7 @@ class MemoryStore:
             arousal_range=arousal_range,
             proust_probability=proust_probability,
             relationship_store=relationship_store,
+            access_mood=access_mood,
         )
 
     async def list_recent(

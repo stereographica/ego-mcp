@@ -41,7 +41,42 @@ def memory_to_chromadb(memory: Memory) -> dict[str, Any]:
         "involved_person_ids": ",".join(memory.involved_person_ids),
         "anticipated_at": memory.anticipated_at or "",
         "anticipation_surfaced": bool(memory.anticipation_surfaced),
+        "access_log": access_log_to_json(memory.access_log),
     }
+
+
+def access_log_to_json(access_log: list[dict[str, str]]) -> str:
+    """Serialize the re-reading access log to a JSON string for metadata."""
+    return json.dumps(access_log, ensure_ascii=False)
+
+
+def access_log_from_json(raw: Any) -> list[dict[str, str]]:
+    """Parse an ``access_log`` metadata value into normalized entries.
+
+    Anything that is not a JSON list of objects degrades to ``[]``; each
+    surviving entry is narrowed to the ``at`` / ``mood`` / ``phase`` string
+    keys so downstream code never sees a foreign shape.
+    """
+    if not isinstance(raw, str) or not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    entries: list[dict[str, str]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        entries.append(
+            {
+                "at": str(item.get("at", "")),
+                "mood": str(item.get("mood", "")),
+                "phase": str(item.get("phase", "")),
+            }
+        )
+    return entries
 
 
 def memory_from_chromadb(
@@ -130,6 +165,7 @@ def memory_from_chromadb(
         ],
         anticipated_at=str(metadata.get("anticipated_at", "") or ""),
         anticipation_surfaced=anticipation_surfaced,
+        access_log=access_log_from_json(metadata.get("access_log", "")),
     )
 
 
