@@ -276,6 +276,113 @@ async def test_presented_pairs_are_not_offered_again(config: EgoConfig) -> None:
     assert "Some memories keep surfacing together, unlinked:" not in second
 
 
+@pytest.mark.asyncio
+async def test_pair_linked_since_the_batch_is_not_presented(
+    config: EgoConfig,
+) -> None:
+    # consolidation.run() creates links earlier in this same handler, and the
+    # persona can link by hand between batches. Offering a connection that
+    # already exists is noise.
+    memories = _linked_memories([("mem_a", "mem_b")])
+    _write_items(config.data_dir, [_unlinked("mem_a", "mem_b")])
+
+    text = await _run(config, _fake_memory_store(memories))
+
+    assert "Some memories keep surfacing together, unlinked:" not in text
+
+
+@pytest.mark.asyncio
+async def test_pair_linked_since_the_batch_is_not_marked(config: EgoConfig) -> None:
+    # Not marking is deliberate: the next batch reclassifies the pair as
+    # linked, and it is then bumped rather than lost.
+    memories = _linked_memories([("mem_a", "mem_b")])
+    _write_items(config.data_dir, [_unlinked("mem_a", "mem_b")])
+
+    await _run(config, _fake_memory_store(memories))
+
+    assert not DerivedReader(config.data_dir).is_surfaced("coretrieval:mem_a:mem_b")
+
+
+@pytest.mark.asyncio
+async def test_skipped_linked_pairs_are_reported(config: EgoConfig) -> None:
+    memories = {
+        **_linked_memories([("mem_a", "mem_b")]),
+        "mem_c": _memory("mem_c", "the harbour at dusk"),
+        "mem_d": _memory("mem_d", "the smell of diesel"),
+    }
+    _write_items(
+        config.data_dir,
+        [_unlinked("mem_a", "mem_b"), _unlinked("mem_c", "mem_d")],
+    )
+
+    text = await _run(config, _fake_memory_store(memories))
+
+    metadata = get_tool_metadata()
+    assert metadata["coretrieval_skipped_linked"] == 1
+    assert json.loads(cast(str, metadata["coretrieval_presented"])) == [
+        "coretrieval:mem_c:mem_d"
+    ]
+    assert text.count(" <-> ") == 1
+
+
+@pytest.mark.asyncio
+async def test_skipped_linked_is_omitted_when_none_were_skipped(
+    config: EgoConfig,
+) -> None:
+    memories = {
+        "mem_a": _memory("mem_a", "a"),
+        "mem_b": _memory("mem_b", "b"),
+    }
+    _write_items(config.data_dir, [_unlinked("mem_a", "mem_b")])
+
+    await _run(config, _fake_memory_store(memories))
+
+    assert "coretrieval_skipped_linked" not in get_tool_metadata()
+
+
+@pytest.mark.asyncio
+async def test_a_one_sided_link_also_suppresses_the_offer(config: EgoConfig) -> None:
+    memories = {
+        "mem_a": _memory("mem_a", "a", links=["mem_b"]),
+        "mem_b": _memory("mem_b", "b"),
+    }
+    _write_items(config.data_dir, [_unlinked("mem_a", "mem_b")])
+
+    text = await _run(config, _fake_memory_store(memories))
+
+    assert "Some memories keep surfacing together, unlinked:" not in text
+    assert get_tool_metadata()["coretrieval_skipped_linked"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_pair_linked_by_this_very_run_is_not_offered(
+    config: EgoConfig,
+) -> None:
+    """The link consolidation.run() just made counts — it is read live."""
+    memories = {
+        "mem_a": _memory("mem_a", "a"),
+        "mem_b": _memory("mem_b", "b"),
+    }
+    _write_items(config.data_dir, [_unlinked("mem_a", "mem_b")])
+    store = _fake_memory_store(memories)
+
+    class _LinkingConsolidation(_FakeConsolidation):
+        async def run(self, _store: Any) -> ConsolidationStats:
+            memories["mem_a"].linked_ids.append(
+                MemoryLink(target_id="mem_b", link_type=LinkType.RELATED)
+            )
+            return await super().run(_store)
+
+    text = await backend_handlers_mod._handle_consolidate(
+        cast(MemoryStore, store),
+        cast(Any, _LinkingConsolidation()),
+        config,
+    )
+
+    assert "Some memories keep surfacing together, unlinked:" not in text
+    assert get_tool_metadata()["coretrieval_skipped_linked"] == 1
+
+
 # --- bumping linked pairs ---------------------------------------------------
 
 

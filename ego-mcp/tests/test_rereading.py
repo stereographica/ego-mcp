@@ -8,7 +8,9 @@ than one mood).
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -20,6 +22,8 @@ from ego_mcp._memory_serialization import (
     memory_from_chromadb,
     memory_to_chromadb,
 )
+from ego_mcp.config import EgoConfig
+from ego_mcp.memory import MemoryStore
 from ego_mcp.types import (
     Emotion,
     EmotionalTrace,
@@ -450,6 +454,38 @@ def test_reread_line_returns_after_a_different_memory_intervenes() -> None:
     assert _reread_line([_result(first)]) is not None
 
 
+def test_reread_line_suppression_lasts_exactly_one_recall() -> None:
+    """The rule is "not twice in a row" — the third recall may show it again."""
+    from ego_mcp._server_surface_memory import _reread_line
+
+    mem = _memory_with_log("mem_x", "anxious", "calm", "grateful", "now")
+    assert _reread_line([_result(mem)]) is not None
+    assert _reread_line([_result(mem)]) is None
+    assert _reread_line([_result(mem)]) is not None
+
+
+def test_reread_line_returns_after_a_recall_with_no_candidate() -> None:
+    """A recall that presents nothing still clears the suppression marker."""
+    from ego_mcp._server_surface_memory import _reread_line
+
+    mem = _memory_with_log("mem_x", "anxious", "calm", "grateful", "now")
+    plain = _memory_with_log("mem_plain", "calm", "calm", "calm", "now")
+
+    assert _reread_line([_result(mem)]) is not None
+    assert _reread_line([_result(plain)]) is None
+    assert _reread_line([_result(mem)]) is not None
+
+
+def test_reread_line_returns_after_an_empty_recall() -> None:
+    from ego_mcp._server_surface_memory import _reread_line
+
+    mem = _memory_with_log("mem_x", "anxious", "calm", "grateful", "now")
+
+    assert _reread_line([_result(mem)]) is not None
+    assert _reread_line([]) is None
+    assert _reread_line([_result(mem)]) is not None
+
+
 def test_reread_line_emits_telemetry() -> None:
     from ego_mcp._server_runtime import get_tool_metadata
     from ego_mcp._server_surface_memory import _reread_line
@@ -488,16 +524,13 @@ class _HandlerMemoryStore:
     def collection_count(self) -> int:
         return len(self._results)
 
+    def latest_emotion(self) -> str:
+        return self._latest_emotion
+
     async def list_recent(self, n: int = 10) -> list[Memory]:
-        if not self._latest_emotion:
-            return []
-        return [
-            Memory(
-                id="mem_latest",
-                content="latest",
-                emotional_trace=EmotionalTrace(primary=Emotion(self._latest_emotion)),
-            )
-        ]
+        raise AssertionError(
+            "recall must not list the collection to learn the current mood"
+        )
 
     async def recall(self, context: str, **kwargs: Any) -> list[MemorySearchResult]:
         self.recall_kwargs = kwargs
@@ -525,6 +558,7 @@ async def test_handler_passes_latest_emotion_as_access_mood(
 async def test_handler_access_mood_is_empty_without_memories(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Nothing saved in this process yet: the mood stays unknown, no scan."""
     import ego_mcp._server_surface_memory as mem_mod
 
     store = _HandlerMemoryStore([_result(Memory(id="mem_a", content="x"))], "")
@@ -547,10 +581,10 @@ async def test_handler_access_mood_survives_a_failing_lookup(
 
     store = _HandlerMemoryStore([_result(Memory(id="mem_a", content="x"))], "calm")
 
-    async def _boom(n: int = 10) -> list[Memory]:
+    def _boom() -> str:
         raise RuntimeError("collection unavailable")
 
-    monkeypatch.setattr(store, "list_recent", _boom)
+    monkeypatch.setattr(store, "latest_emotion", _boom)
     monkeypatch.setattr(mem_mod, "get_notion_store", lambda: _HandlerNotionStore())
     monkeypatch.setattr(mem_mod, "_collect_resonant_persons", lambda *a, **k: [])
 
@@ -635,3 +669,155 @@ async def test_handler_does_not_alter_the_memory_text(
     )
 
     assert "I was afraid the whole way home." in text
+
+
+@pytest.mark.asyncio
+async def test_handler_empty_recall_clears_the_suppression_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recall that returns nothing at all still counts as "not in a row"."""
+    import ego_mcp._server_surface_memory as mem_mod
+
+    mem = _memory_with_log("mem_x", "anxious", "calm", "grateful", "now")
+    assert mem_mod._reread_line([_result(mem)]) is not None
+
+    empty_store = _HandlerMemoryStore([], "calm")
+    monkeypatch.setattr(mem_mod, "get_notion_store", lambda: _HandlerNotionStore())
+    monkeypatch.setattr(mem_mod, "_collect_resonant_persons", lambda *a, **k: [])
+
+    text = await mem_mod._handle_recall(
+        cast(Any, SimpleNamespace()), cast(Any, empty_store), {"context": "x"}
+    )
+
+    assert "No related memories found." in text
+    assert mem_mod._last_reread_presented_id is None
+    assert mem_mod._reread_line([_result(mem)]) is not None
+
+
+@pytest.mark.asyncio
+async def test_handler_unqualified_recall_clears_the_suppression_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An intervening recall without a qualifying memory must not keep the
+    previous one suppressed until the process restarts."""
+    import ego_mcp._server_surface_memory as mem_mod
+
+    mem = _memory_with_log("mem_x", "anxious", "calm", "grateful", "now")
+    plain = _memory_with_log("mem_plain", "calm", "calm", "calm", "now")
+    monkeypatch.setattr(mem_mod, "get_notion_store", lambda: _HandlerNotionStore())
+    monkeypatch.setattr(mem_mod, "_collect_resonant_persons", lambda *a, **k: [])
+
+    reread = "You've come back to [mem_x] before"
+
+    first = await mem_mod._handle_recall(
+        cast(Any, SimpleNamespace()),
+        cast(Any, _HandlerMemoryStore([_result(mem)], "calm")),
+        {"context": "x"},
+    )
+    assert reread in first
+
+    middle = await mem_mod._handle_recall(
+        cast(Any, SimpleNamespace()),
+        cast(Any, _HandlerMemoryStore([_result(plain)], "calm")),
+        {"context": "x"},
+    )
+    assert "You've come back to" not in middle
+
+    third = await mem_mod._handle_recall(
+        cast(Any, SimpleNamespace()),
+        cast(Any, _HandlerMemoryStore([_result(mem)], "calm")),
+        {"context": "x"},
+    )
+    assert reread in third
+
+
+# ---------------------------------------------------------------------------
+# S3: the cached current mood (MemoryStore.latest_emotion)
+# ---------------------------------------------------------------------------
+
+
+class _FakeEmbeddingProvider:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0, 0.0] for _ in texts]
+
+
+@pytest.fixture
+def mood_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[MemoryStore]:
+    from ego_mcp.embedding import EgoEmbeddingFunction, EmbeddingProvider
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("EGO_MCP_DATA_DIR", str(tmp_path / "ego-data"))
+    provider: EmbeddingProvider = _FakeEmbeddingProvider()
+    store = MemoryStore(EgoConfig.from_env(), EgoEmbeddingFunction(provider))
+    store.connect()
+    yield store
+    store.close()
+
+
+def test_latest_emotion_is_empty_before_anything_is_saved(
+    mood_store: MemoryStore,
+) -> None:
+    """No startup scan: an unknown mood is allowed and costs nothing."""
+    assert mood_store.latest_emotion() == ""
+
+
+@pytest.mark.asyncio
+async def test_save_updates_the_cached_latest_emotion(
+    mood_store: MemoryStore,
+) -> None:
+    await mood_store.save("first", emotion="anxious")
+    assert mood_store.latest_emotion() == "anxious"
+
+    await mood_store.save("second", emotion="grateful")
+    assert mood_store.latest_emotion() == "grateful"
+
+
+@pytest.mark.asyncio
+async def test_save_with_auto_link_updates_the_cached_latest_emotion(
+    mood_store: MemoryStore,
+) -> None:
+    await mood_store.save_with_auto_link("a walk in the rain", emotion="melancholy")
+    assert mood_store.latest_emotion() == "melancholy"
+
+
+@pytest.mark.asyncio
+async def test_an_older_memory_does_not_overwrite_the_cached_emotion(
+    mood_store: MemoryStore,
+) -> None:
+    await mood_store.save("newest", emotion="grateful")
+
+    older = Memory(
+        id="mem_old",
+        content="written long ago",
+        timestamp="2000-01-01T00:00:00+09:00",
+        emotional_trace=EmotionalTrace(primary=Emotion.ANXIOUS),
+    )
+    mood_store._remember_latest_emotion(older)
+
+    assert mood_store.latest_emotion() == "grateful"
+
+
+@pytest.mark.asyncio
+async def test_a_memory_with_the_same_timestamp_overwrites_the_cached_emotion(
+    mood_store: MemoryStore,
+) -> None:
+    saved = await mood_store.save("newest", emotion="grateful")
+
+    same_moment = Memory(
+        id="mem_tie",
+        content="the same instant",
+        timestamp=saved.timestamp,
+        emotional_trace=EmotionalTrace(primary=Emotion.ANXIOUS),
+    )
+    mood_store._remember_latest_emotion(same_moment)
+
+    assert mood_store.latest_emotion() == "anxious"
+
+
+def test_unparsable_timestamps_never_raise() -> None:
+    from ego_mcp._memory_store import _timestamp_at_least
+
+    assert _timestamp_at_least("not a date", "") is True
+    assert _timestamp_at_least("", "2026-09-17T00:00:00+09:00") is False

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,16 @@ logger = logging.getLogger(__name__)
 chromadb = load_chromadb()
 
 
+def _timestamp_at_least(candidate: str, current: str) -> bool:
+    """Whether ``candidate`` is no older than ``current`` (ISO 8601 strings)."""
+    try:
+        return datetime.fromisoformat(candidate) >= datetime.fromisoformat(current)
+    except ValueError:
+        # Unparsable timestamps still compare lexicographically well enough to
+        # keep the newest write; never raise here, the cache is optional.
+        return candidate >= current
+
+
 class MemoryStore:
     """ChromaDB-backed memory storage with semantic search, Hopfield recall, and auto-linking."""
 
@@ -39,6 +50,11 @@ class MemoryStore:
         self._collection: Any = None
         self._hopfield = ModernHopfieldNetwork(beta=4.0, n_iters=3)
         self._last_recall_metadata: dict[str, object] = {}
+        # D7: the primary emotion of the newest memory saved in this process.
+        # Empty until something is saved — an unknown mood is acceptable and is
+        # excluded from the distinct-mood count, so no startup scan warms it.
+        self._latest_emotion: str = ""
+        self._latest_emotion_at: str = ""
         self._lexical: LexicalIndex | None = None
         if config.lexical_search_enabled:
             self._lexical = LexicalIndex(config.data_dir / "fts" / "memories.db")
@@ -123,6 +139,26 @@ class MemoryStore:
         """Return number of stored memories."""
         return int(self._ensure_connected().count())
 
+    def latest_emotion(self) -> str:
+        """Primary emotion of the newest memory saved in this process.
+
+        A cheap in-memory read: recall asks for the current mood on every call,
+        and a full listing would deserialize and sort the whole collection each
+        time. ``""`` until the first save — an unknown mood is allowed (D7
+        excludes it from the distinct-mood count) and is not worth a scan.
+        """
+        return self._latest_emotion
+
+    def _remember_latest_emotion(self, memory: Memory) -> None:
+        """Keep the cached mood pointing at the newest memory we have saved."""
+        timestamp = str(memory.timestamp or "")
+        if self._latest_emotion_at and not _timestamp_at_least(
+            timestamp, self._latest_emotion_at
+        ):
+            return
+        self._latest_emotion = str(memory.emotional_trace.primary.value)
+        self._latest_emotion_at = timestamp
+
     async def save(
         self,
         content: str,
@@ -199,6 +235,7 @@ class MemoryStore:
         )
         if self._lexical is not None:
             self._lexical.add(memory_id, content)
+        self._remember_latest_emotion(memory)
         return memory
 
     async def save_with_auto_link(

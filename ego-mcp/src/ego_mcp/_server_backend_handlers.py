@@ -372,6 +372,7 @@ async def _handle_consolidate(
     # link; offer the unlinked ones. Whether to connect them stays with the persona.
     coretrieval_bumped = 0
     coretrieval_skipped_unlinked = 0
+    coretrieval_skipped_linked = 0
     coretrieval_presented: list[tuple[Memory, Memory, str]] = []
     if config is not None:
         try:
@@ -401,6 +402,14 @@ async def _handle_consolidate(
             for item in unlinked_items:
                 pair = _coretrieval_pair(item)
                 if pair is None:
+                    continue
+                if await _coretrieval_still_linked(memory, pair[0], pair[1]):
+                    # The batch saw no link up to 48 hours ago, but there is
+                    # one now — linked by hand, or by ``consolidation.run()``
+                    # earlier in this very handler. Offering a connection that
+                    # already exists is noise, so neither present nor mark:
+                    # the next batch reclassifies the pair as linked.
+                    coretrieval_skipped_linked += 1
                     continue
                 key = str(item["key"])
                 first = await memory.get_by_id(pair[0])
@@ -450,6 +459,7 @@ async def _handle_consolidate(
         ripening_deposits=ripening_deposits,
         coretrieval_bumped=coretrieval_bumped,
         coretrieval_skipped_unlinked=coretrieval_skipped_unlinked or None,
+        coretrieval_skipped_linked=coretrieval_skipped_linked or None,
         coretrieval_presented=(
             json.dumps([key for _first, _second, key in coretrieval_presented])
             if coretrieval_presented

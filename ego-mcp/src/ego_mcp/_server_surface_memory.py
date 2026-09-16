@@ -585,17 +585,17 @@ def _collapse_consecutive(moods: list[str]) -> list[str]:
 async def _reread_access_mood(memory: MemoryStore) -> str:
     """Primary emotion of the newest memory — the mood we return in.
 
-    A failure here must never cost the recall itself, so the mood degrades
-    to "" (which is then excluded from the distinct-mood count).
+    Read from the store's in-memory cache: recall asks on every call, and
+    listing the newest memory would deserialize and sort the whole collection
+    each time. The cache is empty until this process saves something, and a
+    failure here must never cost the recall itself, so the mood degrades to ""
+    (which is then excluded from the distinct-mood count).
     """
     try:
-        latest = await memory.list_recent(n=1)
+        return str(memory.latest_emotion())
     except Exception as exc:  # noqa: BLE001 - mood is strictly optional
         logger.debug("recall could not read the current mood: %s", exc)
         return ""
-    if not latest:
-        return ""
-    return str(latest[0].emotional_trace.primary.value)
 
 
 def _reread_line(results: list[MemorySearchResult]) -> str | None:
@@ -625,11 +625,17 @@ def _reread_line(results: list[MemorySearchResult]) -> str | None:
             continue
         candidates.append((distinct, len(log), mem, moods))
 
+    # The marker is rewritten on every recall, not only when a line is shown:
+    # the rule is "not twice in a row for the same memory", so a recall that
+    # presents nothing has to clear it, otherwise the memory stays suppressed
+    # until the process restarts.
     if not candidates:
+        _last_reread_presented_id = None
         return None
     candidates.sort(key=lambda item: (-item[0], -item[1]))
     distinct, _log_len, mem, moods = candidates[0]
     if mem.id == _last_reread_presented_id:
+        _last_reread_presented_id = None
         return None
 
     sequence = _collapse_consecutive(moods)
@@ -716,6 +722,10 @@ async def _handle_recall(
     except Exception:
         pass
 
+    # D7: decided for every recall, including the empty one — the suppression
+    # marker has to be refreshed even when there is nothing to present.
+    reread_line = _reread_line(results)
+
     total_count = memory.collection_count()
     if not results:
         data = "No related memories found."
@@ -777,7 +787,6 @@ async def _handle_recall(
                     )
         # D7: after the notions block, before the people — one line if some
         # memory here has been returned to in more than one mood.
-        reread_line = _reread_line(results)
         if reread_line:
             lines.append(f"\n{reread_line}")
         # Collect resonant persons from base results (exclude Proust hits)

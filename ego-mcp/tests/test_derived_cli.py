@@ -19,6 +19,7 @@ from ego_mcp.derived.cli import (
     main,
 )
 from ego_mcp.derived.config import DerivedConfig
+from ego_mcp.derived.contract import write_lens_file
 from ego_mcp.derived.lenses import LENSES, register_lens
 from ego_mcp.derived.source import SnapshotUnavailable, SourceSnapshot
 
@@ -335,6 +336,88 @@ def test_failing_lens_leaves_the_previous_file_untouched(
     register_lens(StubLens("recurrence", raises=True))
     assert main([]) == EXIT_LENS_FAILED
     assert (_derived(data_dir) / "recurrence.json").read_bytes() == before
+
+
+def test_a_failing_write_costs_only_its_own_lens(
+    data_dir: Path,
+    snapshots: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A write failure is one failed lens, not an aborted batch."""
+    register_lens(StubLens("recurrence"))
+    register_lens(StubLens("dreams", items=[{"key": "dreams:a"}]))
+
+    real_write = write_lens_file
+
+    def _write(path: Path, file: Any) -> Path:
+        if file.lens == "recurrence":
+            raise OSError("read-only file system")
+        return real_write(path, file)
+
+    monkeypatch.setattr(cli, "write_lens_file", _write)
+
+    assert main([]) == EXIT_LENS_FAILED
+    assert not (_derived(data_dir) / "recurrence.json").exists()
+    assert (_derived(data_dir) / "dreams.json").exists()
+
+
+def test_a_failing_write_is_logged_as_a_lens_failure(
+    data_dir: Path,
+    snapshots: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    register_lens(StubLens("recurrence"))
+
+    def _write(path: Path, file: Any) -> Path:
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(cli, "write_lens_file", _write)
+
+    with caplog.at_level(logging.ERROR, logger="ego_mcp.derived"):
+        assert main([]) == EXIT_LENS_FAILED
+
+    records = [r for r in caplog.records if r.message == "Derived lens failed"]
+    assert len(records) == 1
+    assert records[0].__dict__["lens"] == "recurrence"
+    assert records[0].exc_info is not None
+
+
+def test_unserializable_items_fail_only_their_own_lens(
+    data_dir: Path, snapshots: list[dict[str, Any]]
+) -> None:
+    """Serialization sits inside the same boundary as the write."""
+    register_lens(StubLens("recurrence", items=[{"key": "r:1", "bad": {1, 2}}]))
+    register_lens(StubLens("dreams", items=[{"key": "dreams:a"}]))
+
+    assert main([]) == EXIT_LENS_FAILED
+    assert not (_derived(data_dir) / "recurrence.json").exists()
+    assert (_derived(data_dir) / "dreams.json").exists()
+
+
+def test_a_failing_write_still_completes_the_other_lens_log(
+    data_dir: Path,
+    snapshots: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    register_lens(StubLens("recurrence"))
+    register_lens(StubLens("dreams", items=[{"key": "dreams:a"}]))
+
+    real_write = write_lens_file
+
+    def _write(path: Path, file: Any) -> Path:
+        if file.lens == "recurrence":
+            raise OSError("read-only file system")
+        return real_write(path, file)
+
+    monkeypatch.setattr(cli, "write_lens_file", _write)
+
+    with caplog.at_level(logging.INFO, logger="ego_mcp.derived"):
+        assert main([]) == EXIT_LENS_FAILED
+
+    completed = [r for r in caplog.records if r.message == "Derived lens completed"]
+    assert [r.__dict__["lens"] for r in completed] == ["dreams"]
 
 
 # --- logging ----------------------------------------------------------------

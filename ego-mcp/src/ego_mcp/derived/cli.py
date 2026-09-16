@@ -89,8 +89,31 @@ def _run_lens(
 ) -> bool:
     """Compute and (unless dry-run) write one lens. Returns success."""
     started = time.monotonic()
+    # The write belongs inside this boundary too: a lens whose file cannot be
+    # serialized or written is one failed lens (exit code 3), not an aborted
+    # batch that costs every lens still queued behind it.
     try:
         items = lens.compute(snapshot)
+        if dry_run:
+            preview = ", ".join(
+                str(item.get("key", "")) for item in items[:DRY_RUN_KEY_PREVIEW]
+            )
+            print(
+                f"{lens.name}: {len(items)} item(s)"
+                + (f" [{preview}]" if preview else "")
+            )
+        else:
+            valid_until = snapshot.now + timedelta(hours=float(lens.ttl_hours))
+            write_lens_file(
+                data_dir,
+                DerivedFile(
+                    lens=lens.name,
+                    generated_at=snapshot.now.isoformat(),
+                    valid_until=valid_until.isoformat(),
+                    source=snapshot.source_stats(),
+                    items=items,
+                ),
+            )
     except Exception:
         logger.error(
             "Derived lens failed",
@@ -105,24 +128,6 @@ def _run_lens(
         return False
 
     duration_ms = int((time.monotonic() - started) * 1000)
-
-    if dry_run:
-        preview = ", ".join(
-            str(item.get("key", "")) for item in items[:DRY_RUN_KEY_PREVIEW]
-        )
-        print(f"{lens.name}: {len(items)} item(s)" + (f" [{preview}]" if preview else ""))
-    else:
-        valid_until = snapshot.now + timedelta(hours=float(lens.ttl_hours))
-        write_lens_file(
-            data_dir,
-            DerivedFile(
-                lens=lens.name,
-                generated_at=snapshot.now.isoformat(),
-                valid_until=valid_until.isoformat(),
-                source=snapshot.source_stats(),
-                items=items,
-            ),
-        )
 
     extra: dict[str, Any] = {
         "lens": lens.name,
