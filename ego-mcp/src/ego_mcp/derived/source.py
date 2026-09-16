@@ -38,6 +38,21 @@ MEMORY_COLLECTION_NAME = "ego_memories"
 #: server may be flushing an HNSW segment).
 CHROMA_RETRY_DELAY_SECONDS = 5.0
 
+#: Exception classes chromadb uses for "this collection was never created".
+#: 1.x raises ``chromadb.errors.NotFoundError``; 0.5.x raised
+#: ``chromadb.errors.InvalidCollectionException``. Looked up by name so a
+#: version that ships only one of them still works.
+_MISSING_COLLECTION_ERROR_NAMES = (
+    "NotFoundError",
+    "InvalidCollectionException",
+    "CollectionNotDefinedError",
+)
+
+#: Older chromadb signalled the same thing with a plain ``ValueError`` whose
+#: message names the collection. Matched on the message only for those two
+#: builtin types — never for an arbitrary exception.
+_MISSING_COLLECTION_MESSAGES = ("does not exist", "not found", "no such collection")
+
 
 class SnapshotUnavailable(RuntimeError):
     """Raised when the memory store could not be read even after a retry."""
@@ -109,15 +124,44 @@ def load_snapshot(
 # --- ChromaDB ---------------------------------------------------------------
 
 
+def _is_missing_collection(chromadb: Any, exc: BaseException) -> bool:
+    """Return whether ``exc`` means the collection was never created.
+
+    Anything else — a locked database, a corrupt segment, a fallback module
+    without ``get_collection`` — is a failure to read, not an absence, and must
+    not be flattened into an empty snapshot.
+    """
+    errors = getattr(chromadb, "errors", None)
+    for name in _MISSING_COLLECTION_ERROR_NAMES:
+        error_type = getattr(errors, name, None)
+        if (
+            isinstance(error_type, type)
+            and issubclass(error_type, BaseException)
+            and isinstance(exc, error_type)
+        ):
+            return True
+    if isinstance(exc, (ValueError, KeyError)):
+        message = str(exc).lower()
+        return any(fragment in message for fragment in _MISSING_COLLECTION_MESSAGES)
+    return False
+
+
 def _open_collection(data_dir: Path) -> Any | None:
-    """Open the memory collection read-only, or return ``None`` if absent."""
+    """Open the memory collection read-only, or return ``None`` if absent.
+
+    Only a genuine "no such collection" reads as ``None``; every other error
+    propagates into the retry in :func:`_load_memories` and, if it survives
+    that, into :class:`SnapshotUnavailable`.
+    """
     chromadb = load_chromadb()
     client = chromadb.PersistentClient(path=str(data_dir / "chroma"))
     try:
         return client.get_collection(name=MEMORY_COLLECTION_NAME)
     except Exception as exc:
-        logger.debug("Memory collection unavailable: %s", exc)
-        return None
+        if _is_missing_collection(chromadb, exc):
+            logger.debug("Memory collection has not been created yet: %s", exc)
+            return None
+        raise
 
 
 def _load_memories(

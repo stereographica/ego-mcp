@@ -218,11 +218,16 @@ def test_theme_repetition_without_memories_is_missing() -> None:
 
 
 def _novelty(memories: list[Memory]) -> float | None:
-    snapshot = _snapshot(memories)
+    return _novelty_in_window(memories, [])
+
+
+def _novelty_in_window(
+    window: list[Memory], older: list[Memory]
+) -> float | None:
+    """Novelty of ``window``'s links inside a graph that also holds ``older``."""
+    snapshot = _snapshot(window + older)
     graph = build_memory_graph(snapshot)
-    return link_novelty(
-        memories, graph, NOW, timestamps=memory_times(snapshot.memories)
-    )
+    return link_novelty(window, graph, NOW, timestamps=memory_times(snapshot.memories))
 
 
 def test_link_novelty_old_target_counts_as_novel() -> None:
@@ -248,28 +253,68 @@ def test_link_novelty_is_missing_without_live_links() -> None:
 
 
 def test_link_novelty_share() -> None:
-    memories = [
-        _memory("a", links=["old", "b"]),
-        _memory("b"),
-        _memory("old", age_days=STAGNATION_OLD_LINK_DAYS + 5),
+    # Both targets sit in one pre-link group, so only the 30-day rule fires.
+    older = [
+        _memory("old", age_days=STAGNATION_OLD_LINK_DAYS + 5, links=["recent"]),
+        _memory("recent", age_days=1, links=["old"]),
     ]
-    assert _novelty(memories) == 0.5
+    window = [_memory("a", links=["old", "recent"])]
+    assert _novelty_in_window(window, older) == 0.5
 
 
-def test_link_novelty_counts_a_target_in_another_component_as_novel() -> None:
-    # A hand-built graph where the endpoints sit in different components; with
-    # a real graph an edge always joins them, so this exercises the rule only.
-    graph = MemoryGraph(
-        adjacency={"a": set(), "b": set()},
-        degree={"a": 0, "b": 0},
-        components=[{"a"}, {"b"}],
-        component_of={"a": 0, "b": 1},
-        notion_members={},
-        notions_of_memory={},
+def test_link_novelty_counts_a_window_memory_bridging_two_groups() -> None:
+    # Two groups that the pre-link graph keeps apart; the window memory joins
+    # them, so both of its links reach somewhere new even though both targets
+    # are recent.
+    older = [
+        _memory("g1a", age_days=1, links=["g1b"]),
+        _memory("g1b", age_days=1, links=["g1a"]),
+        _memory("g2a", age_days=1, links=["g2b"]),
+        _memory("g2b", age_days=1, links=["g2a"]),
+    ]
+    window = [_memory("w", links=["g1a", "g2a"])]
+    assert _novelty_in_window(window, older) == 1.0
+
+
+def test_link_novelty_ignores_links_that_stay_inside_one_group() -> None:
+    older = [
+        _memory("g1a", age_days=1, links=["g1b"]),
+        _memory("g1b", age_days=1, links=["g1a"]),
+    ]
+    window = [_memory("w", links=["g1a", "g1b"])]
+    assert _novelty_in_window(window, older) == 0.0
+
+
+def test_link_novelty_ignores_the_window_own_links_when_forming_components() -> None:
+    # g1a and g2a are connected only through the window memory itself. That
+    # edge must not be allowed to prove that the link reached nothing new.
+    older = [
+        _memory("g1a", age_days=1),
+        _memory("g2a", age_days=1),
+    ]
+    window = [_memory("w", links=["g1a", "g2a"])]
+    assert _novelty_in_window(window, older) == 1.0
+
+
+def test_link_novelty_of_a_single_recent_link_is_zero() -> None:
+    older = [_memory("g1a", age_days=1, links=["g1b"]), _memory("g1b", age_days=1)]
+    window = [_memory("w", links=["g1a"])]
+    assert _novelty_in_window(window, older) == 0.0
+
+
+def test_link_novelty_component_rule_uses_the_pre_link_graph() -> None:
+    # The live graph always puts both endpoints of a link in one component, so
+    # the rule has to be read off a graph without the window's links.
+    older = [_memory("g1a", age_days=1), _memory("g2a", age_days=1)]
+    window = [_memory("w", links=["g1a", "g2a"])]
+    snapshot = _snapshot(window + older)
+    graph: MemoryGraph = build_memory_graph(snapshot)
+    assert len(graph.components) == 1
+    assert graph.component_of["w"] == graph.component_of["g1a"]
+    assert (
+        link_novelty(window, graph, NOW, timestamps=memory_times(snapshot.memories))
+        == 1.0
     )
-    memories = [_memory("a", links=["b"]), _memory("b")]
-    times = memory_times(memories)
-    assert link_novelty(memories, graph, NOW, timestamps=times) == 1.0
 
 
 # --- question_births --------------------------------------------------------

@@ -18,7 +18,12 @@ from typing import Any
 import numpy as np
 
 from ego_mcp import timezone_utils
-from ego_mcp.derived.graph import MemoryGraph, build_memory_graph, cosine_distance
+from ego_mcp.derived.graph import (
+    MemoryGraph,
+    build_memory_graph,
+    connected_components,
+    cosine_distance,
+)
 from ego_mcp.derived.source import SourceSnapshot
 from ego_mcp.types import Category, Memory
 
@@ -177,6 +182,28 @@ def theme_repetition(memories_in_window: list[Memory], now: datetime) -> float |
     return _clamp(sum(rates) / len(rates))
 
 
+def pre_link_components(
+    graph: MemoryGraph, window_ids: set[str]
+) -> dict[str, int]:
+    """Components of the graph with every edge touching a window memory removed.
+
+    ``link_novelty`` judges the window's own links, so those links cannot also
+    be part of the graph that decides what was connected before them. Removing
+    them leaves each window memory isolated and the rest of the graph in the
+    shape it had without the window.
+    """
+    adjacency: dict[str, set[str]] = {}
+    for node, neighbours in graph.adjacency.items():
+        if node in window_ids:
+            adjacency[node] = set()
+        else:
+            adjacency[node] = {
+                neighbour for neighbour in neighbours if neighbour not in window_ids
+            }
+    _components, component_of = connected_components(adjacency)
+    return component_of
+
+
 def link_novelty(
     memories_in_window: list[Memory],
     graph: MemoryGraph,
@@ -184,19 +211,28 @@ def link_novelty(
     *,
     timestamps: Mapping[str, datetime],
 ) -> float | None:
-    """Share of the window's links that reach far: another component, or an old memory.
+    """Share of the window's links that reach far: across a gap, or to an old memory.
 
     Links have no timestamp of their own, so every link held by a memory in the
-    window counts as drawn in the window. Dead links, self-links and links to a
-    memory whose timestamp cannot be read are not counted at all; no live link
-    at all leaves the component missing rather than zero.
+    window counts as drawn in the window. "Across a gap" is therefore measured
+    on the *pre-link* graph (:func:`pre_link_components`): a window memory whose
+    links land in two or more components of that graph joined regions that were
+    apart, so all of its links count as novel. A memory whose links all land
+    inside one such region reached nowhere new, and only the 30-day rule can
+    make those links novel.
+
+    Dead links, self-links and links to a memory whose timestamp cannot be read
+    are not counted at all; no live link at all leaves the component missing
+    rather than zero.
     """
     cutoff = timezone_utils.localize(now) - timedelta(days=STAGNATION_OLD_LINK_DAYS)
-    counted: set[tuple[str, str]] = set()
-    total = 0
-    novel = 0
+    window_ids = {memory.id for memory in memories_in_window if memory.id}
+    component_of = pre_link_components(graph, window_ids)
 
+    counted: set[tuple[str, str]] = set()
+    targets_by_holder: list[tuple[str, list[str]]] = []
     for memory in memories_in_window:
+        targets: list[str] = []
         for link in memory.linked_ids:
             target = link.target_id
             if not isinstance(target, str) or not target or target == memory.id:
@@ -207,12 +243,19 @@ def link_novelty(
             if pair in counted:
                 continue
             counted.add(pair)
-            target_time = timestamps.get(target)
-            if target_time is None:
+            if timestamps.get(target) is None:
                 continue
+            targets.append(target)
+        if targets:
+            targets_by_holder.append((memory.id, targets))
+
+    total = 0
+    novel = 0
+    for _holder, targets in targets_by_holder:
+        bridging = len({component_of.get(target) for target in targets}) > 1
+        for target in targets:
             total += 1
-            far = graph.component_of.get(memory.id) != graph.component_of.get(target)
-            if far or target_time <= cutoff:
+            if bridging or timestamps[target] <= cutoff:
                 novel += 1
 
     if total == 0:

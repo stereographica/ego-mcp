@@ -230,6 +230,23 @@ def _coretrieval_pair(item: dict[str, Any]) -> tuple[str, str] | None:
     return first, second
 
 
+async def _coretrieval_still_linked(
+    memory: MemoryStore, first: str, second: str
+) -> bool:
+    """Return whether the two memories are still linked *now*.
+
+    The batch classified the pair as ``linked`` up to 48 hours ago, and
+    ``consolidation.run()`` prunes links below 0.1 confidence earlier in this
+    same handler. ``bump_link_confidence`` re-creates a missing link, so
+    bumping without this check would silently resurrect a link that was just
+    pruned — or one the persona unlinked by hand.
+    """
+    source = await memory.get_by_id(first)
+    if source is None:
+        return False
+    return any(link.target_id == second for link in source.linked_ids)
+
+
 async def _handle_consolidate(
     memory: MemoryStore,
     consolidation: ConsolidationEngine,
@@ -354,6 +371,7 @@ async def _handle_consolidate(
     # P1 D3: strengthen the pairs that keep arriving together and already have a
     # link; offer the unlinked ones. Whether to connect them stays with the persona.
     coretrieval_bumped = 0
+    coretrieval_skipped_unlinked = 0
     coretrieval_presented: list[tuple[Memory, Memory, str]] = []
     if config is not None:
         try:
@@ -366,6 +384,13 @@ async def _handle_consolidate(
             for item in linked_items:
                 pair = _coretrieval_pair(item)
                 if pair is None:
+                    continue
+                if not await _coretrieval_still_linked(memory, pair[0], pair[1]):
+                    # The link is gone since the batch ran (pruned here, or
+                    # unlinked by hand). Do not bump, and do not mark either:
+                    # the next batch reclassifies the pair as unlinked and it
+                    # can then be offered rather than silently re-linked.
+                    coretrieval_skipped_unlinked += 1
                     continue
                 if await memory.bump_link_confidence(pair[0], pair[1], delta=0.1):
                     coretrieval_bumped += 1
@@ -424,6 +449,7 @@ async def _handle_consolidate(
         ripening_fed_questions=ripening_fed_questions,
         ripening_deposits=ripening_deposits,
         coretrieval_bumped=coretrieval_bumped,
+        coretrieval_skipped_unlinked=coretrieval_skipped_unlinked or None,
         coretrieval_presented=(
             json.dumps([key for _first, _second, key in coretrieval_presented])
             if coretrieval_presented

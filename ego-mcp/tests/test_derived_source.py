@@ -57,10 +57,18 @@ class FakeCollection:
 
 
 class FakeClient:
-    def __init__(self, collection: FakeCollection | None) -> None:
+    def __init__(
+        self,
+        collection: FakeCollection | None,
+        *,
+        error: Exception | None = None,
+    ) -> None:
         self._collection = collection
+        self._error = error
 
     def get_collection(self, name: str) -> FakeCollection:
+        if self._error is not None:
+            raise self._error
         if self._collection is None:
             raise ValueError(f"Collection {name} does not exist.")
         return self._collection
@@ -347,6 +355,102 @@ def test_load_snapshot_raises_snapshot_unavailable_after_second_failure(
 
     with pytest.raises(SnapshotUnavailable):
         load_snapshot(tmp_path, with_embeddings=False, now=NOW)
+
+
+# --- absent collection vs. unreadable collection ----------------------------
+
+
+class _FailingChromadb(FakeChromadb):
+    """A client whose ``get_collection`` always raises the given error."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(None)
+        self._error = error
+        self.attempts = 0
+
+    def PersistentClient(self, path: str) -> FakeClient:  # noqa: N802
+        self.attempts += 1
+        return FakeClient(None, error=self._error)
+
+
+def _install_failing(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> _FailingChromadb:
+    fake = _FailingChromadb(error)
+    monkeypatch.setattr(source, "load_chromadb", lambda: fake)
+    monkeypatch.setattr("ego_mcp.derived.source.time.sleep", lambda seconds: None)
+    return fake
+
+
+def test_generic_collection_error_is_retried_then_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A locked database is not an absent collection: reading it as an empty
+    # snapshot would let the CLI overwrite valid derived files with nothing.
+    fake = _install_failing(monkeypatch, RuntimeError("database is locked"))
+
+    with pytest.raises(SnapshotUnavailable):
+        load_snapshot(tmp_path, with_embeddings=False, now=NOW)
+    assert fake.attempts == 2
+
+
+def test_collection_error_without_get_collection_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The local_chromadb fallback has no get_collection at all; an empty
+    # in-memory store must not pass for the real one.
+    class _NoGetCollection:
+        def PersistentClient(self, path: str) -> object:  # noqa: N802
+            return object()
+
+    monkeypatch.setattr(source, "load_chromadb", lambda: _NoGetCollection())
+    monkeypatch.setattr("ego_mcp.derived.source.time.sleep", lambda seconds: None)
+
+    with pytest.raises(SnapshotUnavailable):
+        load_snapshot(tmp_path, with_embeddings=False, now=NOW)
+
+
+def test_chromadb_not_found_error_reads_as_an_absent_collection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # chromadb 1.x raises NotFoundError (not a ValueError) when the collection
+    # was never created.
+    class NotFoundError(Exception):
+        pass
+
+    class _Errors:
+        pass
+
+    _Errors.NotFoundError = NotFoundError  # type: ignore[attr-defined]
+
+    fake = _install_failing(monkeypatch, NotFoundError("Collection [x] does not exist"))
+    fake.errors = _Errors()  # type: ignore[attr-defined]
+
+    snapshot = load_snapshot(tmp_path, with_embeddings=False, now=NOW)
+    assert snapshot.memories == []
+    assert fake.attempts == 1
+
+
+def test_unrelated_chromadb_error_type_still_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class NotFoundError(Exception):
+        pass
+
+    class InternalError(Exception):
+        pass
+
+    class _Errors:
+        pass
+
+    _Errors.NotFoundError = NotFoundError  # type: ignore[attr-defined]
+
+    fake = _install_failing(monkeypatch, InternalError("hnsw index is corrupt"))
+    fake.errors = _Errors()  # type: ignore[attr-defined]
+
+    with pytest.raises(SnapshotUnavailable):
+        load_snapshot(tmp_path, with_embeddings=False, now=NOW)
+    assert fake.attempts == 2
 
 
 # --- JSON stores ------------------------------------------------------------

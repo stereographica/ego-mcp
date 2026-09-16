@@ -29,6 +29,35 @@ class MemoryGraph:
     notions_of_memory: dict[str, set[str]]
 
 
+def connected_components(
+    adjacency: dict[str, set[str]],
+) -> tuple[list[set[str]], dict[str, int]]:
+    """Return the components of an undirected adjacency map and their index.
+
+    Every key is part of exactly one component, so an isolated node forms a
+    component of its own. Neighbours that are not keys are ignored.
+    """
+    components: list[set[str]] = []
+    component_of: dict[str, int] = {}
+    for node in adjacency:
+        if node in component_of:
+            continue
+        index = len(components)
+        component: set[str] = {node}
+        component_of[node] = index
+        queue: deque[str] = deque([node])
+        while queue:
+            current = queue.popleft()
+            for neighbor in adjacency.get(current, ()):
+                if neighbor in component_of or neighbor not in adjacency:
+                    continue
+                component_of[neighbor] = index
+                component.add(neighbor)
+                queue.append(neighbor)
+        components.append(component)
+    return components, component_of
+
+
 def build_memory_graph(snapshot: SourceSnapshot) -> MemoryGraph:
     """Build the undirected memory graph, dropping dead links.
 
@@ -47,26 +76,7 @@ def build_memory_graph(snapshot: SourceSnapshot) -> MemoryGraph:
             adjacency[target].add(memory.id)
 
     degree = {memory_id: len(neighbors) for memory_id, neighbors in adjacency.items()}
-
-    components: list[set[str]] = []
-    component_of: dict[str, int] = {}
-    for memory_id in adjacency:
-        if memory_id in component_of:
-            continue
-        index = len(components)
-        component: set[str] = set()
-        queue: deque[str] = deque([memory_id])
-        component_of[memory_id] = index
-        component.add(memory_id)
-        while queue:
-            current = queue.popleft()
-            for neighbor in adjacency[current]:
-                if neighbor in component_of:
-                    continue
-                component_of[neighbor] = index
-                component.add(neighbor)
-                queue.append(neighbor)
-        components.append(component)
+    components, component_of = connected_components(adjacency)
 
     notion_members: dict[str, set[str]] = {}
     notions_of_memory: dict[str, set[str]] = {}

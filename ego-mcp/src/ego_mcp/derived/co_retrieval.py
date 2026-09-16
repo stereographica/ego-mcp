@@ -80,6 +80,14 @@ class CoRetrievalLens:
             if weight < CO_RETRIEVAL_MIN_WEIGHT:
                 continue
 
+            key = co_retrieval_key(a, b)
+            if key in snapshot.surfaced:
+                # Drop before the caps, not after: consolidate skips surfaced
+                # keys when it reads the file, so a pair that is still in the
+                # top 5 / top 20 would otherwise hold a slot forever and starve
+                # every pair below it (the dream lens filters the same way).
+                continue
+
             distance: float | None = None
             vector_a = embeddings.get(a)
             vector_b = embeddings.get(b)
@@ -91,7 +99,7 @@ class CoRetrievalLens:
 
             kind = KIND_LINKED if b in graph.adjacency.get(a, set()) else KIND_UNLINKED
             item: dict[str, Any] = {
-                "key": co_retrieval_key(a, b),
+                "key": key,
                 "memory_ids": [a, b],
                 "weight": round(weight, _VALUE_DIGITS),
                 "distance": (

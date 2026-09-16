@@ -47,6 +47,7 @@ def _snapshot(
     *,
     embeddings: dict[str, np.ndarray] | None = None,
     now: datetime = NOW,
+    surfaced: dict[str, str] | None = None,
 ) -> SourceSnapshot:
     return SourceSnapshot(
         now=now,
@@ -55,7 +56,7 @@ def _snapshot(
         notions=[],
         question_log=[],
         relationships={},
-        surfaced={},
+        surfaced=dict(surfaced or {}),
         co_retrievals=co_retrievals,
     )
 
@@ -296,3 +297,51 @@ def test_linked_items_are_capped() -> None:
     items = _items(_snapshot(memories, _recalls(ids, 3)))
     assert len(items) == CO_RETRIEVAL_MAX_LINKED
     assert {item["kind"] for item in items} == {"linked"}
+
+
+# --- surfaced ---------------------------------------------------------------
+
+
+def test_surfaced_pairs_are_dropped_before_the_cap() -> None:
+    ids = ["m0", "m1", "m2", "m3"]  # six pairs, one more than the cap
+    memories = [_memory(memory_id) for memory_id in ids]
+    log = _recalls(ids, 3) + _recalls(["m0", "m1"], 4)
+    starved = co_retrieval_key("m2", "m3")
+
+    without_marks = _by_key(_items(_snapshot(memories, log)))
+    assert len(without_marks) == CO_RETRIEVAL_MAX_UNLINKED
+    assert starved not in without_marks
+
+    # Consuming the heaviest pair has to free its slot: filtering after the cap
+    # would keep the surfaced pair in the top five forever and starve this one.
+    surfaced = {co_retrieval_key("m0", "m1"): NOW.isoformat()}
+    items = _by_key(_items(_snapshot(memories, log, surfaced=surfaced)))
+    assert co_retrieval_key("m0", "m1") not in items
+    assert starved in items
+    assert len(items) == CO_RETRIEVAL_MAX_UNLINKED
+
+
+def test_surfaced_linked_pairs_are_dropped_before_the_cap() -> None:
+    ids = [f"m{index}" for index in range(7)]  # 21 pairs, cap 20
+    memories = [
+        _memory(memory_id, links=[other for other in ids if other != memory_id])
+        for memory_id in ids
+    ]
+    log = _recalls(ids, 3)
+
+    without_marks = _by_key(_items(_snapshot(memories, log)))
+    assert len(without_marks) == CO_RETRIEVAL_MAX_LINKED
+    starved = co_retrieval_key("m5", "m6")
+    assert starved not in without_marks
+
+    surfaced = {co_retrieval_key("m0", "m1"): NOW.isoformat()}
+    items = _by_key(_items(_snapshot(memories, log, surfaced=surfaced)))
+    assert co_retrieval_key("m0", "m1") not in items
+    assert starved in items
+
+
+def test_a_surfaced_pair_is_never_written_again() -> None:
+    memories = [_memory("a", links=["b"]), _memory("b")]
+    surfaced = {co_retrieval_key("a", "b"): NOW.isoformat()}
+    items = _items(_snapshot(memories, _recalls(["a", "b"], 3), surfaced=surfaced))
+    assert items == []

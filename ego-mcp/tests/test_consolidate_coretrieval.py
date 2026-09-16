@@ -22,7 +22,7 @@ from ego_mcp.config import EgoConfig
 from ego_mcp.consolidation import ConsolidationStats, MergeCandidate
 from ego_mcp.derived.contract import DerivedFile, DerivedReader, write_lens_file
 from ego_mcp.memory import MemoryStore
-from ego_mcp.types import Memory
+from ego_mcp.types import LinkType, Memory, MemoryLink
 
 NOW = datetime(2026, 9, 17, 9, 0, tzinfo=timezone.utc)
 
@@ -75,8 +75,28 @@ class _FakeConsolidation:
         return self._stats
 
 
-def _memory(memory_id: str, content: str) -> Memory:
-    return Memory(id=memory_id, content=content, timestamp=NOW.isoformat())
+def _memory(memory_id: str, content: str, *, links: list[str] | None = None) -> Memory:
+    return Memory(
+        id=memory_id,
+        content=content,
+        timestamp=NOW.isoformat(),
+        linked_ids=[
+            MemoryLink(target_id=target, link_type=LinkType.RELATED)
+            for target in (links or [])
+        ],
+    )
+
+
+def _linked_memories(pairs: list[tuple[str, str]]) -> dict[str, Memory]:
+    """Memories that really hold the links the derived file calls ``linked``."""
+    links: dict[str, list[str]] = {}
+    for first, second in pairs:
+        links.setdefault(first, []).append(second)
+        links.setdefault(second, []).append(first)
+    return {
+        memory_id: _memory(memory_id, f"content of {memory_id}", links=targets)
+        for memory_id, targets in links.items()
+    }
 
 
 def _fake_memory_store(
@@ -261,10 +281,7 @@ async def test_presented_pairs_are_not_offered_again(config: EgoConfig) -> None:
 
 @pytest.mark.asyncio
 async def test_linked_pairs_are_bumped_and_marked(config: EgoConfig) -> None:
-    memories = {
-        "mem_a": _memory("mem_a", "a"),
-        "mem_b": _memory("mem_b", "b"),
-    }
+    memories = _linked_memories([("mem_a", "mem_b")])
     _write_items(config.data_dir, [_linked("mem_a", "mem_b")])
     bumped: set[tuple[str, str]] = set()
 
@@ -277,7 +294,7 @@ async def test_linked_pairs_are_bumped_and_marked(config: EgoConfig) -> None:
 
 @pytest.mark.asyncio
 async def test_linked_bump_uses_the_replay_delta(config: EgoConfig) -> None:
-    memories = {"mem_a": _memory("mem_a", "a"), "mem_b": _memory("mem_b", "b")}
+    memories = _linked_memories([("mem_a", "mem_b")])
     _write_items(config.data_dir, [_linked("mem_a", "mem_b")])
     store = _fake_memory_store(memories)
 
@@ -291,11 +308,9 @@ async def test_linked_bumps_are_capped(config: EgoConfig) -> None:
     from ego_mcp.derived.co_retrieval import CO_RETRIEVAL_MAX_LINKED
 
     count = CO_RETRIEVAL_MAX_LINKED + 5
-    memories = {f"mem_{i}": _memory(f"mem_{i}", f"c{i}") for i in range(count * 2)}
-    _write_items(
-        config.data_dir,
-        [_linked(f"mem_{i}", f"mem_{i + count}") for i in range(count)],
-    )
+    pairs = [(f"mem_{i}", f"mem_{i + count}") for i in range(count)]
+    memories = _linked_memories(pairs)
+    _write_items(config.data_dir, [_linked(first, second) for first, second in pairs])
     bumped: set[tuple[str, str]] = set()
 
     await _run(config, _fake_memory_store(memories, bumped=bumped))
@@ -313,6 +328,82 @@ async def test_bump_of_a_vanished_link_is_not_counted(config: EgoConfig) -> None
     assert get_tool_metadata()["coretrieval_bumped"] == 0
 
 
+@pytest.mark.asyncio
+async def test_pair_unlinked_since_the_batch_is_not_bumped(
+    config: EgoConfig,
+) -> None:
+    # consolidation.run() prunes links below 0.1 confidence earlier in this
+    # same handler, so a pair the batch called "linked" may have none left.
+    # bump_link_confidence would re-create it at 0.6.
+    memories = {"mem_a": _memory("mem_a", "a"), "mem_b": _memory("mem_b", "b")}
+    _write_items(config.data_dir, [_linked("mem_a", "mem_b")])
+    store = _fake_memory_store(memories)
+
+    await _run(config, store)
+
+    store.bump_link_confidence.assert_not_awaited()
+    assert get_tool_metadata()["coretrieval_bumped"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pair_unlinked_since_the_batch_is_not_marked(
+    config: EgoConfig,
+) -> None:
+    # Not marking is deliberate: the next batch reclassifies the pair as
+    # unlinked and it can then be offered instead of silently re-linked.
+    memories = {"mem_a": _memory("mem_a", "a"), "mem_b": _memory("mem_b", "b")}
+    _write_items(config.data_dir, [_linked("mem_a", "mem_b")])
+
+    await _run(config, _fake_memory_store(memories))
+
+    assert not DerivedReader(config.data_dir).is_surfaced("coretrieval:mem_a:mem_b")
+
+
+@pytest.mark.asyncio
+async def test_a_one_sided_link_still_counts_as_linked(config: EgoConfig) -> None:
+    memories = {
+        "mem_a": _memory("mem_a", "a", links=["mem_b"]),
+        "mem_b": _memory("mem_b", "b"),
+    }
+    _write_items(config.data_dir, [_linked("mem_a", "mem_b")])
+    bumped: set[tuple[str, str]] = set()
+
+    await _run(config, _fake_memory_store(memories, bumped=bumped))
+
+    assert bumped == {("mem_a", "mem_b")}
+
+
+@pytest.mark.asyncio
+async def test_skipped_unlinked_pairs_are_reported(config: EgoConfig) -> None:
+    memories = {
+        **_linked_memories([("mem_c", "mem_d")]),
+        "mem_a": _memory("mem_a", "a"),
+        "mem_b": _memory("mem_b", "b"),
+    }
+    _write_items(
+        config.data_dir,
+        [_linked("mem_a", "mem_b"), _linked("mem_c", "mem_d")],
+    )
+
+    await _run(config, _fake_memory_store(memories))
+
+    metadata = get_tool_metadata()
+    assert metadata["coretrieval_skipped_unlinked"] == 1
+    assert metadata["coretrieval_bumped"] == 1
+
+
+@pytest.mark.asyncio
+async def test_skipped_unlinked_is_omitted_when_none_were_skipped(
+    config: EgoConfig,
+) -> None:
+    memories = _linked_memories([("mem_a", "mem_b")])
+    _write_items(config.data_dir, [_linked("mem_a", "mem_b")])
+
+    await _run(config, _fake_memory_store(memories))
+
+    assert "coretrieval_skipped_unlinked" not in get_tool_metadata()
+
+
 # --- telemetry and the quiet path -------------------------------------------
 
 
@@ -323,8 +414,7 @@ async def test_telemetry_reports_bumped_count_and_presented_keys(
     memories = {
         "mem_a": _memory("mem_a", "a"),
         "mem_b": _memory("mem_b", "b"),
-        "mem_c": _memory("mem_c", "c"),
-        "mem_d": _memory("mem_d", "d"),
+        **_linked_memories([("mem_c", "mem_d")]),
     }
     _write_items(
         config.data_dir,
